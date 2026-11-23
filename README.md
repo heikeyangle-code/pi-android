@@ -1,17 +1,17 @@
 **English** · [简体中文](README.zh-CN.md)
 
 <p align="center">
-  <img src="./brand/pi-readme-icon.svg" alt="Pi for Android" width="112" />
+  <img src="./brand/pi-readme-icon.svg" alt="Pi for Android" width="108" />
 </p>
 
 <h1 align="center">Pi for Android</h1>
 
 <p align="center">
-  <b>Stop using your phone as a tiny remote for a distant server.<br />Put a real Linux + official Pi Coding Agent workstation straight in your pocket.</b>
+  <b>Your phone isn't an SSH remote. Put a real local Linux workstation + the official Pi Coding Agent in your pocket.</b>
 </p>
 
 <p align="center">
-  Native Jetpack Compose · Official Pi 1.6.0 SDK · Bilingual EN / 中文 · Three Linux Runtimes · Full Extension &amp; TUI Parity · Zero Root, Zero Termux
+  Native Jetpack Compose · Official Pi 1.6.0 SDK · Offline Mermaid 12 &amp; MathJax 4 · 3 Linux Runtimes · Full TUI &amp; Extension Support · Zero Root · Zero Termux
 </p>
 
 <p align="center">
@@ -19,124 +19,98 @@
   <img src="https://img.shields.io/badge/ABI-arm64--v8a-555" alt="ARM64" />
   <img src="https://img.shields.io/badge/pi-1.6.0-7C5CFF" alt="pi 1.6.0" />
   <img src="https://img.shields.io/badge/Node.js-24.22.1-339933?logo=node.js&logoColor=white" alt="Node.js 24.22.1" />
-  <img src="https://img.shields.io/badge/i18n-EN_%2F_%E4%B8%AD%E6%96%87-007ACC" alt="Bilingual EN / ZH" />
-  <img src="https://img.shields.io/badge/SDK_Host_Tests-307_PASS-2ea44f" alt="307 SDK Host Tests" />
+  <img src="https://img.shields.io/badge/i18n-EN_%2F_%E4%B8%AD%E6%96%87-007ACC" alt="Bilingual EN/ZH" />
+  <img src="https://img.shields.io/badge/SDK_Host_Tests-326_PASS-2ea44f" alt="326 SDK Host Tests" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" />
 </p>
 
 <p align="center">
   <a href="https://github.com/heikeyangle-code/pi-android/releases"><b>⬇ Download Latest APK</b></a> ·
-  <a href="https://github.com/heikeyangle-code/pi-android/actions/workflows/ci.yml">Build Status</a> ·
+  <a href="https://github.com/heikeyangle-code/pi-android/actions/workflows/ci.yml">CI Status</a> ·
   <a href="https://github.com/heikeyangle-code/pi-android/issues">Issues &amp; Ideas</a>
 </p>
 
 ---
 
-## Why Most "Mobile AI Coding Apps" Fall Flat
+## Why Pi for Android?
 
-When you're away from your desk and want an agent to actually get work done, you usually face three frustrating compromises:
-1. **Chat-box wrappers**: fine for copy-pasting snippets, useless for reading a real repository, running `git diff`, executing tests, or loading MCP servers and extensions.
-2. **SSH into a remote box**: breaks on spotty transit networks and turns reading diffs into squinting at microscopic scrolling terminal text.
-3. **Hand-rolled Termux setups**: hours of bootstrapping packages, wrestling with permissions, and fighting tiny virtual keyboards before you write a single line of code.
+Coding with AI on a phone used to mean choosing between a toy chat wrapper (no local files, no shell, no extensions), a fragile SSH session (useless offline, painful on a 6-inch screen), or hours of manual Termux setup.
 
-**Pi for Android throws all three compromises away.**
+**Pi for Android packages a complete local Linux userland + the official [Pi Coding Agent](https://github.com/earendil-works/pi) 1.6.0 SDK into one native Android app.** Install the APK, open any real folder on your phone, and go — no root, no Termux, no cloud box, no setup scripts.
 
-It bundles a complete **Ubuntu 24.04 ARM64 userspace + Node.js 24.22.1 + Git + ripgrep + fd + the official [Pi Coding Agent](https://github.com/earendil-works/pi) 1.6.0 SDK** inside a single native Jetpack Compose APK. **No root. No Termux. No cloud sandbox. Zero setup scripts.** Install the APK, open any real folder on your phone, and start working with a real local coding agent.
-
-| Capability | Typical AI Chat Apps | Termux / SSH | **Pi for Android** |
+| Capability | Mobile AI Chat Apps | Termux / SSH | **Pi for Android** |
 | :--- | :---: | :---: | :---: |
-| **Real local Linux + Node + Git + rg + fd** | ❌ Chat only | ⚠️ Manual setup | ✅ **Built-in, zero root, zero Termux** |
-| **Mobile-native diffs &amp; reading stream** | ⚠️ Chat bubbles | ❌ Tiny scrolling TTY | ✅ **Tonal tool cards, intra-line diffs, LaTeX, Mermaid** |
-| **Desktop Pi extensions &amp; interactive TUI** | ❌ Unsupported | ⚠️ Painful keyboard UX | ✅ **Virtual TUI surface projection + touch/mouse + auto-fit** |
-| **Full Pi model, MCP &amp; Code Mode ecosystem** | ❌ Closed / limited | ✅ CLI only | ✅ **Real Pi 1.6.0 SDK · 7 OAuth logins + 35+ providers** |
-| **Opt-in Android device automation** | ❌ Impossible | ⚠️ Fragile scripts | ✅ **Zero-token device bridge + native confirmation gate** |
+| **Local Linux + Node 24 + Git + `rg` + `fd`** | ❌ Text-only chat | ⚠️ Manual setup | ✅ **Built-in, zero root, zero Termux** |
+| **Mobile-native reading, diffs & rich blocks** | ⚠️ Plain chat bubbles | ❌ Scrolling wall of ANSI | ✅ **Tonal tool cards, word diffs, Mermaid 12, MathJax 4** |
+| **Desktop Pi extensions & interactive TUIs** | ❌ Unsupported | ⚠️ Awkward soft keyboard | ✅ **Virtual TUI projection + touch/mouse + 80-col fit** |
+| **Models, MCP & Code Mode ecosystem** | ❌ Closed / partial | ✅ CLI only | ✅ **100% official Pi 1.6.0 SDK · 7 OAuth · 35+ providers** |
+| **Optional Android device automation** | ❌ Impossible | ⚠️ Custom scripts | ✅ **Opt-in `builtin:pi-android-bridge` · 0 tokens when off** |
 
 <table align="center">
   <tr>
     <td align="center" width="50%">
-      <img src="docs/screenshots/chat-tools.jpg" width="280" alt="Chat stream with calm tool cards and inline diff" /><br />
-      <sub><b>Calm tool cards &amp; intra-line diffs</b> — every shell command, file read, and edit stays structured and effortless to review.</sub>
+      <img src="docs/screenshots/chat-tools.jpg" width="280" alt="Native tool cards and intra-line diffs" /><br />
+      <sub><b>Calm tool cards &amp; intra-line word diffs</b> — shell runs, file reads, and edits fold cleanly and expand in place like a mobile code review.</sub>
     </td>
     <td align="center" width="50%">
-      <img src="docs/screenshots/tools-manager.jpg" width="280" alt="Unified Tools & Codemode manager" /><br />
-      <sub><b>Live Tools &amp; Codemode Manager</b> — toggle every built-in, extension &amp; MCP tool live, save defaults, and tune Pi 1.6.0 Codemode.</sub>
+      <img src="docs/screenshots/tools-manager.jpg" width="280" alt="Live tool switches and Codemode manager" /><br />
+      <sub><b>Live tool control &amp; Codemode</b> — toggle built-in, extension, and MCP tools live, save defaults, and configure Pi 1.6.0 Codemode &amp; shell prefix.</sub>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/screenshots/system-prompt-context.jpg" width="280" alt="Unified System Prompt & Context pipeline" /><br />
-      <sub><b>Unified Prompt &amp; Context Pipeline</b> — manage global &amp; project <code>APPEND_SYSTEM.md</code>, <code>SYSTEM.md</code>, and <code>AGENTS.md</code> with 1-tap reload.</sub>
+      <img src="docs/screenshots/system-prompt-context.jpg" width="280" alt="System prompt and context pipeline manager" /><br />
+      <sub><b>System prompt &amp; context pipeline</b> — edit global and project <code>SYSTEM.md</code>, <code>APPEND_SYSTEM.md</code>, and <code>AGENTS.md</code> with 1-tap reload.</sub>
     </td>
     <td align="center" width="50%">
-      <img src="docs/screenshots/models-providers.jpg" width="280" alt="Models & Providers screen" /><br />
-      <sub><b>Full provider freedom</b> — 7 OAuth subscription logins, 35+ presets (1,698 chat models), or any OpenAI-compatible endpoint.</sub>
+      <img src="docs/screenshots/models-providers.jpg" width="280" alt="Models and providers settings" /><br />
+      <sub><b>Complete provider freedom</b> — 7 OAuth subscription logins, 35+ presets (1,698 chat models), or any OpenAI-compatible endpoint.</sub>
     </td>
   </tr>
 </table>
 
 ---
 
-## Six Engineering Pillars You Actually Feel
+## What You Can Actually Do on Your Phone
 
-### 1. Full Pi Extension & Mobile TUI Compatibility Engine (The Hard Part, Solved)
-> Most mobile agent clients hit "desktop terminal extensions & custom TUIs" and give up. **Pi for Android built a real virtual TUI projection & official renderer pipeline** so upstream Pi extensions feel right at home on a touchscreen:
-
-- **Virtual TUI Surface Projection (`ui/surfaces.mjs` → Jetpack Compose)**:
-  - Extensions calling `ctx.ui.custom()`, `setWidget()`, `setHeader()`, `setFooter()`, or `tui.showOverlay()` mount real Pi TUI components into an in-host virtual surface — **minimizable to a dock, collapsible, and reopenable at any time**.
-  - Full `OverlayHandle` (`hide` / `setHidden` / `focus` / `unfocus` / `getBounds`), `Focusable.focused`, and `OverlayOptions` (`visible(w, h)`, `nonCapturing` floating HUD overlays, anchors) parity.
-  - **Responsive 80-col width-fitting + touch & keyboard dispatch**: scales 80-column desktop TUI layouts cleanly into your phone viewport, reports real columns back via `ui.resize`, wires official `KeybindingsManager`, renders clickable **OSC 8 hyperlinks**, and translates touchscreen taps into `TuiMouseEvent` for `handleMouse()`.
-  - **Terminal control sequence bridge**: strips zero-width `CURSOR_MARKER`, turns `FAKE_CURSOR` into inverse SGR, and intercepts `BEL` (`\x07`) sound bells, `OSC 777 / 99 / 9` notifications, `OSC 0/2` window titles, and `OSC 9;4` progress indicators — even interactive TUI games with terminal bells come alive on Android.
-- **1:1 Official Extension Renderers & Hooks (`commands/catalog.mjs`)**:
-  - Extension & MCP tool cards run through Pi's own `ToolExecutionComponent` (`resolveToolRenderers`), preserving per-call `state`, `details`, `renderShell: "self"`, debounced `render.invalidate`, and clean cache invalidation on `/reload`.
-  - Complete plumbing for `registerMessageRenderer` (`CustomMessageComponent`), `registerEntryRenderer` (`CustomEntryComponent`), `registerMarkdownTransformer`, `addAutocompleteProvider`, `onTerminalInput`, `registerShortcut` (`catalog.shortcuts` / `triggerShortcut`), `ctx.ui.getAllThemes()` / `getTheme()` / `setTheme()`, `registerFlag`, `FooterDataProvider` (live git branch & provider count), plus official `resetExtensionUI` and 1-tap reload (`catalog.changed`).
-- **Bundled Native-Enhancement Extensions (`app/src/main/assets/pi-extensions/`)**:
-  - **`pi-highlight`**: exposes Pi's own guest `highlight.js` + `lovely-mermaid` over an authenticated local loopback service — instant syntax highlighting and Mermaid rendering with zero second JS runtime on Android and 100% official theme parity.
-  - **`pi-android-bridge` & `pi-android-permission-gate`**: bridges opt-in Android device automation into Pi as a standard extension — **0 tokens when off**, native 3-choice confirmation dialogs for irreversible actions.
-- **Unified Transparent Resource, Tools & Prompt Control**:
-  - **Settings → Extensions & Resources**: extensions, skills, prompt templates, themes, context files, npm/git packages, MCP servers, and project trust in one place — with quick delete for user-owned files and 100% desktop `~/.pi/agent/` & `.pi/` compatibility.
-  - **Settings → Tools**: live switches for every built-in, built-in extension (`codemode`, `mcp`), and user extension/MCP tool, with **Save as Default** (`defaultTools`), Pi 1.6.0 **Codemode** settings, and official `shellCommandPrefix`.
-  - **Unified System Prompt & Context + In-Chat Inspector**: edit global & project `APPEND_SYSTEM.md`, `SYSTEM.md`, and `AGENTS.md`/`CLAUDE.md` with 1-tap reload, or inspect the active assembled prompt with XML section filters directly from the chat top-right command center.
+- **Fix bugs & review diffs offline on the train**: search local repos with `rg` / `fd`, inspect word-level diffs, run test suites, and `git commit` directly on-device.
+- **Drop screenshots & multi-file context straight into chat**: paste clipboard images, attach documents, or `@`-mention workspace files with OOM-safe downsampling.
+- **Run real desktop Pi extensions & MCP servers**: orchestrate multi-tool scripts with Pi 1.6.0 **Code Mode**, connect MCP servers, or launch interactive fullscreen TUI extensions with touch & virtual gamepad controls.
+- **Automate your phone on demand**: opt in to Accessibility, Notifications, Clipboard, Location, Camera, App Control, or Shizuku Shell — and flip them all off in one tap (**strictly 0 prompt tokens when disabled**).
 
 ---
 
-### 2. Real Local Linux & Three Switchable Runtimes (Incremental Updates, Zero Wipes)
-First launch unpacks a deterministic, per-payload versioned Linux environment (**Ubuntu 24.04 ARM64 · Node.js 24.22.1 · Git 2.43 · ripgrep 15.2 · fd 10.2 · Pi 1.6.0**). Future APK upgrades diff per-payload digests and **only refresh what changed**, keeping packages and tools you installed inside the guest intact.
+## Core Engineering Highlights
 
-| Runtime | Role |
+### 1. 100% Official Pi 1.6.0 SDK + Real Mobile TUI Projection
+- **Direct SDK execution (`host.bundle.mjs`)**: runs `@earendil-works/pi-coding-agent` directly through a typed, epoch-isolated JSONL host — no parallel re-implementations, full desktop `~/.pi/agent/` & `.pi/` compatibility, and automatic upstream model/feature adoption.
+- **Virtual TUI surface engine (`ui/surfaces.mjs` → Jetpack Compose)**: extensions calling `ctx.ui.custom()`, `setWidget()`, `setHeader()`, `setFooter()`, or `tui.showOverlay()` mount real Pi TUI components into a mobile overlay — minimizable to a dock, 80-col responsive, supporting `OverlayHandle`, `Focusable`, clickable **OSC 8 hyperlinks**, touchscreen `TuiMouseEvent`, official `KeybindingsManager`, and terminal bells (`BEL` / `OSC 9;4` / `OSC 777`).
+- **1:1 official extension renderers**: extension and MCP tool cards render through Pi's own `ToolExecutionComponent` (`resolveToolRenderers`) with per-call state and live reload.
+
+### 2. Native Rich-Rendering Pipeline (100% Offline, Built for Mobile)
+- **Mermaid 12.2.0 Chromium/Skia high-DPI engine**: renders 20+ Mermaid 12 diagram families (flowcharts, sequence, class, state, ER, Gantt, mindmap, timeline, gitGraph, quadrant, pie, xychart, sankey, kanban, architecture, C4, packet, block) with true CSS-viewport & DPR scaling, double-rAF layout flush, automatic GPU-cull software retry, pinch-to-zoom, and 1-tap fullscreen viewer.
+- **MathJax 4 inline & display LaTeX**: crisp SVG typography for `$...$`, `\(...\)`, `\[...\]`, single/multi-line `$$...$$`, ` ```math ` fences, and standalone `egin{aligned/equation/align/gather/cases/matrix}` environments — with CJK adjacency support and currency-safe parsing.
+- **Instant `<1 ms` native syntax highlighting & rich cards**: 35+ languages highlighted synchronously with zero IPC lag, plus native viewers for SVG (static & animated), safe HTML previews, CSV/TSV tables, JSON/YAML/XML trees, stack traces, and intra-line word diffs.
+- **Zero-jitter streaming & instant scroll-back**: dual-path GFM AST parser (`Channel.CONFLATED` off-main-thread for long streams + frame-0 sync for short/cached replies), `TailFollow` bottom lock, `RowHeightCache`, and bounded cross-scroll LRU caches (`PiMarkdownDocCache` & `PiCodeHighlightCache`) wired into `PiMemoryTrimmer`.
+
+### 3. Real Local Linux & Three Switchable Runtimes
+First boot unpacks a deterministic, digest-verified Linux environment (**Ubuntu 24.04 ARM64 · Node.js 24.22.1 · Git 2.43 · ripgrep 15.2 · fd 10.2 · Pi 1.6.0**). APK upgrades diff per-payload digests and **only refresh changed payloads**, preserving everything you installed inside the guest.
+
+| Runtime | Characteristics |
 | :--- | :--- |
-| **PRoot** | Battle-tested user-space syscall translation (Termux build) — the compatibility baseline. |
-| **Proroot** | Linker + in-process hook runtime built to slash PRoot's syscall overhead. |
-| **TAWCROOT** | Single-process `seccomp` backend compiled from pinned upstream source (actively hardened). |
+| **PRoot** | Battle-tested user-space syscall translation (Termux build) — maximum device compatibility. |
+| **Proroot** | Custom linker + in-process hook runtime cutting PRoot syscall overhead. |
+| **TAWCROOT** | Single-process `seccomp` backend compiled from pinned upstream source. |
 
----
+### 4. Sub-Second Cold Start & Official `/tree` + `/resume`
+- **12 automated cold-start invariants (`tools/check-startup-perf.mjs`)**: single-file `host.bundle.mjs`, zero cold-start `jiti` / `Babel` / `undici` / `WebView` overhead, `readyHello` embedded in `host.ready`, initial `state` embedded in `session.open`, `planDirect` node launch (no `/bin/bash -c`), parallel pre-spawn I/O, APK version-stamp fast-paths, and staggered background tasks.
+- **Official `/tree` & indexed `/resume`**: all 5 official filter modes, collapsible subtrees, in-tree search, clean branching from any node, plus persistent incremental `.session-list-index.json` search across every workspace.
+- **100% Official Pi Theme parity**: full `okhsl()` / `oklch()` parsing with automatic WCAG foreground contrast on top of a clean, neutral Material 3 mobile shell with instant zero-restart EN/中文 switching.
 
-### 3. Powered Directly by Official Pi 1.6.0 SDK — Automatic Upstream Evolution
-Running the real Pi SDK via a typed, backpressured, epoch-isolated **Node.js SDK Host** means ~85% of every upstream Pi release lands automatically:
-- **Pi `1.6.0` ready**: GPT-6.2 Sol & Astra (default on OpenAI / Azure / Codex, auto-hiding unsupported `off` thinking), Qwen Token Plan new gateways & models, 1,698 chat models, `undici 8.12.4` (6 GHSA security fixes), Codex WebSocket & prompt-cache fixes.
-- **Deep 1.6.0 host integration**: `AgentSessionRuntime.takeUnreportedDiagnostics()` (reports model fallbacks and extension errors once per occurrence on startup & session switches), `commandOutput: "capture"` (prevents git/npm subprocesses from corrupting protocol stdout or hanging on password prompts), OpenAI & Anthropic dropped-reasoning notices (`showCacheMissNotices`), and collapsed-state `imageUnsupportedByModel` warnings on `read` cards.
-- **Optimized cold start & live telemetry**: loads `dist/bundle/index.js` first, defers `http-dispatcher`/`undici` unless custom proxy or timeouts are configured, embeds initial state directly in `session.open`, uses APK-stamp fast-paths to skip redundant per-boot asset hashing, and streams live context usage, token counts, and costs directly from `stateStore`.
-
----
-
-### 4. Calm Mobile Aesthetics, 100% Official Pi Theme Parity & Memory Slimming
-- **Borderless tonal stream**: clean tonal tool cards (subtle accent border only while running), quiet single-line thinking pill, intra-line word diffs, LaTeX math, Mermaid diagrams, and full-screen image viewer.
-- **100% Official Pi Theme compatibility**: full `okhsl()` / `oklch()` support with automatic foreground contrast computation — zero hardcoded white text, drop in any desktop Pi theme JSON and it looks sharp in both light and dark modes.
-- **Multi-source attachments & OOM-safe downsampling**: gallery multi-pick, documents multi-pick, clipboard image paste, and `@` workspace mentions — with `computeSafeSampleSize()` preventing 108MP camera OOMs and enforcing per-model `inputLimits.images.maxPerMessage`.
-- **Lean RAM & buttery scrolling**: SHA-256 compact image cache keys (99.999% key RAM reduction, 5–10× effective capacity), centralized `PiMemoryTrimmer` wired to `onTrimMemory()`, zero 60–120fps idle composer recompositions, and GPU-layer animations.
-
----
-
-### 5. Official `/tree` Branching & Instant Cross-Workspace `/resume` Search
-- **Rule-by-rule `/tree` port**: all 5 official filter modes, collapsible subtrees, in-tree search, active-branch-first layout, and clean forking from any entry.
-- **Incremental-indexed `/resume`**: persistent `.session-list-index.json`, workspace grouping, instant startup display, and seamless full-text relevance search across all projects.
-
----
-
-### 6. Opt-in Android Device Capabilities (Strict 0-Token When Disabled)
-Turn your phone into an agent peripheral only when you want to (**设置 → 设备能力**):
-- **3 clean groups**: Screen Automation (Accessibility), System & Hardware (Notifications, Clipboard, Location, Camera, App control), and Device Shell (Shizuku).
-- **2×2 live permission readiness tiles** + one-tap "Disable All".
-- **Zero-token & fail-safe**: disabled tools are never exposed to the model (**0 tokens**); irreversible actions (`pm uninstall`, `pm clear`, `dd`, force-stopping apps) always trigger a native 3-choice confirmation dialog.
+### 5. Opt-in Android Device Bridge (`builtin:pi-android-bridge`)
+Registered via Pi SDK's native `builtin: true, replaceable: true` mechanism (**Settings → Device Capabilities**):
+- **3 focused groups**: Screen Automation (Accessibility), System & Hardware (Notifications, Clipboard, Location, Camera, App Control), and Device Shell (Shizuku).
+- **Zero-token & fail-safe**: disabled capabilities are never exposed to the model (**0 tokens**); irreversible operations trigger a native 3-choice confirmation dialog.
 
 ---
 
@@ -147,30 +121,28 @@ Turn your phone into an agent peripheral only when you want to (**设置 → 设
 | **Android** | 8.0 (API 26) or later |
 | **ABI** | ARM64 (`arm64-v8a`) |
 | **Root / Termux** | **Not required** |
-| **In-place upgrades** | Consistent sideload signature — install newer APKs right over older versions |
+| **Upgrades** | Stable sideload signature — install newer APKs right over older builds |
 
 1. Download the latest `pi-android-*-sideload28-arm64.apk` from **[GitHub Releases](https://github.com/heikeyangle-code/pi-android/releases)**.
-2. Install & launch; wait for first-boot runtime provisioning.
-3. Connect a provider in **设置 → 模型与供应商** (OAuth subscription login, API key, or custom OpenAI-compatible endpoint).
-4. Pick any folder on your phone and start coding with your agent.
+2. Install and launch — first boot unpacks the bundled Linux & Node runtime automatically.
+3. Connect a model in **Settings → Models & Providers** (OAuth subscription login, API key, or any OpenAI-compatible URL).
+4. Pick any folder on your phone and start building.
 
 ---
 
-## Architecture & Engineering Discipline
+## Architecture & Verification
 
 ```mermaid
 flowchart TB
     A["Android App (Kotlin · Jetpack Compose · Material 3)"]
-    B["Chat Stream · Workspace · Session Tree · Virtual TUI Surfaces"]
-    C["Kotlin Host Client & Live State Store"]
+    B["Chat Stream · Rich Render (Mermaid 12 / MathJax 4) · Workspace · /tree · Virtual TUI"]
+    C["Kotlin Host Client · Live State Store · PiMemoryTrimmer"]
     D["Typed JSONL Protocol (seq · epoch · backpressure)"]
-    E["Node.js SDK Host (app/src/main/assets/guest/sdk-host)"]
-    F["@earendil-works/pi-coding-agent 1.6.0 SDK"]
-    G["Built-in Tools · Extensions · MCP · Code Mode · Models"]
-
+    E["Node.js SDK Host (host.bundle.mjs + builtin:pi-android-bridge)"]
+    F["Official @earendil-works/pi-coding-agent 1.6.0 SDK"]
+    G["Built-in Tools · Extensions · MCP · Code Mode · 35+ Providers"]
     H["Runtime Manager (PRoot · Proroot · TAWCROOT)"]
     L["Bundled Ubuntu 24.04 ARM64 · Node 24.22.1 · Git · rg · fd"]
-
     A --> B
     B --> C
     C <--> D
@@ -181,35 +153,17 @@ flowchart TB
     H --> L
 ```
 
-- **307 real-SDK host checks + 6/6 CI**: every push verifies `:protocol` JVM tests, real Pi SDK contract (`contract.mjs`), 3× SDK Host suites (`bundle`, `--no-bundle`, `--scandir-fix`), Android API & i18n parity static guards, TAWCROOT NDK build, and both signed APKs (`sideload28` + `modern36`).
-- **Automated upstream upgrade auditing**: run `node tools/pi-upgrade-audit.mjs` to scan all 9 host & app integration seams whenever upstream Pi publishes a release (full SOP in [`docs/sdk-host/upgrading.md`](docs/sdk-host/upgrading.md)).
+Every commit is verified across **6 CI jobs** (`tawcroot` NDK build, **326 real-SDK host checks** across bundled / unbundled / `--scandir-fix` modes + cold-start `import-audit`, static guards for Android APIs / i18n / 12 cold-start invariants, JVM unit tests, and both `modern36` + `sideload28` signed APKs):
 
 ```bash
 git clone https://github.com/heikeyangle-code/pi-android.git
 cd pi-android
-
-node tools/pi-upgrade-audit.mjs --check-only
 node tools/sdk-host/contract.mjs
 node tools/sdk-host/test.mjs
+node tools/check-startup-perf.mjs
 ./gradlew :protocol:test
 node tools/fetch-runtime.mjs
 ./gradlew :app:assembleRelease
 ```
 
-Docs: [`architecture.md`](docs/sdk-host/architecture.md) · [`protocol.md`](docs/sdk-host/protocol.md) · [`upgrading.md`](docs/sdk-host/upgrading.md) · [`runtime-engines.md`](docs/runtime-engines.md)
-
----
-
-## Honest Notes & Contributing
-
-- **What green CI proves**: compilation, real Pi 1.6.0 SDK contract & behavior parity, and clean signed APK assembly; hardware-level runtime switching and Android permissions are verified on real devices.
-- **Interface language**: full **English & Simplified Chinese** bilingual UI — follows your Android system language by default and switches instantly without restart under **Settings → Appearance → Language**.
-- **Star & Contribute**: if you've ever wanted a real Linux coding agent in your pocket, drop a **Star** — issues, device reports, and PRs are all welcome!
-
----
-
-## Acknowledgements & License
-
-Built on [Pi Coding Agent](https://github.com/earendil-works/pi) · [Node.js](https://nodejs.org/) · [Ubuntu](https://ubuntu.com/) · [PRoot (Termux)](https://github.com/termux/proot) · [Proroot](https://github.com/coderredlab/proroot) · [TAWCROOT](https://github.com/wmww/tawc) (MIT, © Sophie Winter) · [ripgrep](https://github.com/BurntSushi/ripgrep) · [fd](https://github.com/sharkdp/fd) · [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) · [Source Han Serif CN](https://github.com/adobe-fonts/source-han-serif).
-
-App source code is **MIT** licensed. Bundled third-party components retain their respective upstream licenses; full texts and notices ship in [`app/src/main/assets/licenses/`](app/src/main/assets/licenses/).
+**Docs**: [`architecture.md`](docs/sdk-host/architecture.md) · [`protocol.md`](docs/sdk-host/protocol.md) · [`upgrading.md`](docs/sdk-host/upgrading.md) · [`runtime-engines.md`](docs/runtime-engines.md) · [`AGENTS.md`](AGENTS.md)

@@ -202,11 +202,15 @@ internal object PiInlineMath {
                 continue
             }
 
-            // 5. 反斜杠转义与 `\(...\)` 行内公式
+            // 5. 反斜杠转义与 `\(...\)` / 行内 `\[...\]` 公式
             if (c == '\\' && i + 1 < n) {
                 val next = markdown[i + 1]
-                if (next == '(') {
-                    val close = findInlineParenClose(markdown, i + 2)
+                if (next == '(' || next == '[') {
+                    val close = if (next == '(') {
+                        findInlineParenClose(markdown, i + 2)
+                    } else {
+                        findInlineBracketClose(markdown, i + 2)
+                    }
                     if (close >= 0) {
                         val tex = markdown.substring(i + 2, close).trim()
                         if (tex.isNotEmpty()) {
@@ -558,6 +562,17 @@ internal object PiInlineMath {
     ): BlockMathMatch? {
         if (prefix.leadingColumns > 3) return null
         val p = prefix.contentStart
+        val quotePrefix = if (prefix.quoteDepth > 0) {
+            s.substring(lineStart, prefix.quotePrefixEnd)
+        } else {
+            ""
+        }
+
+        // 情况 0：独立数学环境 `\begin{equation/align/aligned/gather/cases/matrix/...} ... \end{...}`
+        if (s.startsWith("\\begin{", p)) {
+            matchStandaloneLatexEnv(s, p, lineEnd, prefix, quotePrefix)?.let { return it }
+        }
+
         val open: String
         val close: String
         when {
@@ -571,11 +586,6 @@ internal object PiInlineMath {
             }
             else -> return null
         }
-        val quotePrefix = if (prefix.quoteDepth > 0) {
-            s.substring(lineStart, prefix.quotePrefixEnd)
-        } else {
-            ""
-        }
         val afterOpen = p + open.length
         val firstLineRest = s.substring(afterOpen, lineEnd).trimEnd('\r')
 
@@ -587,14 +597,18 @@ internal object PiInlineMath {
                 return BlockMathMatch(body, lineEnd, quotePrefix)
             }
         }
+        // 开行已包含闭合定界符但后面还有非空白正文（例如 `$$x$$ 后面文字`），交给行内路径处理。
+        if (trimmedRest.contains(close)) return null
 
-        // 情况 B：多行独立块，开定界符独占一行（允许行尾空白）
-        if (trimmedRest.isNotEmpty()) return null
+        // 情况 B：多行独立块，既支持开定界符独占一行，也支持 `$$ a + b\n c + d $$` 首行直接写公式
         val n = s.length
         if (lineEnd >= n) return null
 
         var cursor = lineEnd + 1
         val bodyBuilder = StringBuilder()
+        if (trimmedRest.isNotEmpty()) {
+            bodyBuilder.append(firstLineRest.trimStart())
+        }
         while (cursor < n) {
             val nextEnd = findLineEnd(s, cursor)
             val linePrefix = parseContainerPrefix(s, cursor, nextEnd)
@@ -612,10 +626,65 @@ internal object PiInlineMath {
                 if (body.isEmpty() || looksLikeMarkdownTable(body)) return null
                 return BlockMathMatch(body, nextEnd, quotePrefix)
             }
+            if (trimmed.endsWith(close) && trimmed.length > close.length) {
+                val beforeClose = trimmed.dropLast(close.length).trimEnd()
+                if (beforeClose.isNotEmpty() && !beforeClose.contains(close)) {
+                    if (bodyBuilder.isNotEmpty()) bodyBuilder.append('\n')
+                    bodyBuilder.append(beforeClose)
+                    val body = bodyBuilder.toString().trim()
+                    if (body.isEmpty() || looksLikeMarkdownTable(body)) return null
+                    return BlockMathMatch(body, nextEnd, quotePrefix)
+                }
+            }
             // 过滤多行块级公式内部的纯空行：TeX 数学模式本就忽略空行，保留空行会被 GFM 拆成两个段落导致卡片失效
             if (trimmed.isNotEmpty()) {
                 if (bodyBuilder.isNotEmpty()) bodyBuilder.append('\n')
                 bodyBuilder.append(contentSlice)
+            }
+            cursor = if (nextEnd < n) nextEnd + 1 else n
+        }
+        return null
+    }
+
+    private fun matchStandaloneLatexEnv(
+        s: String,
+        p: Int,
+        lineEnd: Int,
+        prefix: ContainerPrefix,
+        quotePrefix: String,
+    ): BlockMathMatch? {
+        val firstLine = s.substring(p, lineEnd).trimEnd('\r')
+        val envMatch = BEGIN_ENV_REGEX.find(firstLine) ?: return null
+        val envName = envMatch.groupValues[1]
+        if (envName !in STANDALONE_MATH_ENVS) return null
+        val endTag = "\\end{$envName}"
+        val trimmedFirst = firstLine.trim()
+        if (trimmedFirst.endsWith(endTag) && trimmedFirst.length > envMatch.value.length) {
+            return BlockMathMatch(trimmedFirst, lineEnd, quotePrefix)
+        }
+        val n = s.length
+        if (lineEnd >= n) return null
+        val bodyBuilder = StringBuilder(firstLine)
+        var cursor = lineEnd + 1
+        while (cursor < n) {
+            val nextEnd = findLineEnd(s, cursor)
+            val linePrefix = parseContainerPrefix(s, cursor, nextEnd)
+            if (prefix.quoteDepth > 0 && linePrefix.quoteDepth < prefix.quoteDepth) {
+                return null
+            }
+            val contentSlice = if (prefix.quoteDepth > 0) {
+                s.substring(linePrefix.quotePrefixEnd, nextEnd).trimEnd('\r')
+            } else {
+                s.substring(cursor, nextEnd).trimEnd('\r')
+            }
+            val trimmed = contentSlice.trim()
+            if (trimmed.isNotEmpty()) {
+                bodyBuilder.append('\n').append(contentSlice)
+            }
+            if (trimmed.endsWith(endTag)) {
+                val body = bodyBuilder.toString().trim()
+                if (body.isEmpty() || looksLikeMarkdownTable(body)) return null
+                return BlockMathMatch(body, nextEnd, quotePrefix)
             }
             cursor = if (nextEnd < n) nextEnd + 1 else n
         }
@@ -633,14 +702,20 @@ internal object PiInlineMath {
         return false
     }
 
-    private fun findInlineParenClose(s: String, from: Int): Int {
+    private fun findInlineParenClose(s: String, from: Int): Int =
+        findInlineBackslashClose(s, from, ')')
+
+    private fun findInlineBracketClose(s: String, from: Int): Int =
+        findInlineBackslashClose(s, from, ']')
+
+    private fun findInlineBackslashClose(s: String, from: Int, closingChar: Char): Int {
         val n = s.length
         var p = from
         while (p < n) {
             val c = s[p]
             if (c == '\n') return -1
             if (c == '\\' && p + 1 < n) {
-                if (s[p + 1] == ')') return p
+                if (s[p + 1] == closingChar) return p
                 p += 2
                 continue
             }
@@ -723,4 +798,14 @@ internal object PiInlineMath {
     }
 
     private val TABLE_SEP_REGEX = Regex("""^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*(?::?-{3,}:?\s*)?\|?\s*$""")
+    private val BEGIN_ENV_REGEX = Regex("""^\\begin\{([A-Za-z]+\*?)\}""")
+    private val STANDALONE_MATH_ENVS = setOf(
+        "equation", "equation*",
+        "align", "align*", "aligned",
+        "gather", "gather*", "gathered",
+        "multline", "multline*",
+        "split", "cases",
+        "matrix", "pmatrix", "bmatrix", "Bmatrix", "vmatrix", "Vmatrix",
+        "array", "eqnarray", "eqnarray*",
+    )
 }

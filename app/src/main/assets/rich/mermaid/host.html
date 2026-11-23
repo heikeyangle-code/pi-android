@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'none'; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none';">
 <title>pi mermaid render host</title>
@@ -9,8 +10,11 @@
   html, body {
     margin: 0;
     padding: 0;
+    width: 100%;
+    height: 100%;
     background: transparent;
     overflow: hidden;
+    -webkit-text-size-adjust: 100%;
     -webkit-font-smoothing: antialiased;
     text-rendering: geometricPrecision;
   }
@@ -18,15 +22,17 @@
     position: absolute;
     left: 0;
     top: 0;
-    display: inline-block;
+    display: block;
     padding: 14px;
     box-sizing: border-box;
     transform-origin: 0 0;
     background: transparent;
+    overflow: visible;
   }
   #pi-stage svg {
     display: block;
     overflow: visible;
+    max-width: none !important;
   }
 </style>
 </head>
@@ -39,13 +45,15 @@
  *
  * Supports two modes:
  *  - htmlLabels = true (default): renders full HTML/CSS3/CJK Mermaid diagrams into #pi-stage
- *    so Chromium/Skia rasterizes crisp high-DPI bitmaps directly via WebView.draw(Canvas).
+ *    with strict viewport/DPR calibration so Chromium/Skia rasterizes crisp high-DPI bitmaps
+ *    directly via WebView.draw(Canvas).
  *  - htmlLabels = false (fallback): emits sanitized pure SVG for AndroidSVG fallback.
  */
 (function () {
   "use strict";
 
   var TASKS = Object.create(null);
+  var SCALE_READY = Object.create(null);
   var MAX_SVG_CHARS = 2 * 1024 * 1024;
   var SVG_NS = "http://www.w3.org/2000/svg";
   var STAGE_PADDING = 14;
@@ -100,23 +108,28 @@
     theme = theme || {};
     var background = color(theme.background, "#18181b");
     var foreground = color(theme.foreground, "#e4e4e7");
-    var accent = color(theme.accent, "#6366f1");
+    var accent = color(theme.accent, "#7aa7f7");
     var muted = color(theme.muted, "#a1a1aa");
     var font = fontFamily(theme.fontFamily);
     var useHtml = htmlLabels !== false;
-    var wrap = Math.max(160, Math.min(480, (width | 0) || 280));
-    var ganttWidth = Math.max(320, Math.min(2000, (width | 0) || 480));
+    var wrap = Math.max(160, Math.min(480, (width | 0) || 300));
+    var ganttWidth = Math.max(360, Math.min(2000, (width | 0) || 540));
 
-    // Derive crisp, luminance-aware node/cluster/edge tones harmonized with Pi's active palette.
     var bgRgb = hexToRgb(background);
     var isLight = (0.299 * bgRgb[0] + 0.587 * bgRgb[1] + 0.114 * bgRgb[2]) > 140;
-    var nodeFill = isLight ? mixHex(background, "#ffffff", 0.72) : mixHex(background, foreground, 0.075);
-    var secondaryFill = isLight ? mixHex(background, accent, 0.09) : mixHex(background, accent, 0.13);
-    var tertiaryFill = isLight ? mixHex(background, foreground, 0.03) : mixHex(background, foreground, 0.045);
-    var clusterFill = isLight ? mixHex(background, foreground, 0.035) : mixHex(background, foreground, 0.035);
-    var borderSoft = mixHex(background, accent, isLight ? 0.74 : 0.70);
-    var edgeLabelBg = isLight ? mixHex(background, "#ffffff", 0.85) : mixHex(background, foreground, 0.06);
+    var nodeFill = isLight ? mixHex(background, "#ffffff", 0.72) : mixHex(background, foreground, 0.085);
+    var secondaryFill = isLight ? mixHex(background, accent, 0.10) : mixHex(background, accent, 0.15);
+    var tertiaryFill = isLight ? mixHex(background, foreground, 0.04) : mixHex(background, foreground, 0.055);
+    var clusterFill = isLight ? mixHex(background, foreground, 0.03) : mixHex(background, foreground, 0.035);
+    var borderSoft = mixHex(background, accent, isLight ? 0.72 : 0.72);
+    var edgeLabelBg = isLight ? mixHex(background, "#ffffff", 0.88) : mixHex(background, foreground, 0.07);
     var noteFill = isLight ? mixHex(background, accent, 0.10) : mixHex(background, accent, 0.14);
+    var gridTone = mixHex(background, muted, 0.35);
+
+    // Distinct, luminance-harmonized categorical series for pie / gitGraph / mindmap / xychart
+    var series = isLight
+      ? [accent, "#0f766e", "#b45309", "#7c3aed", "#be123c", "#0369a1", "#4d7c0f", "#6d28d9"]
+      : [accent, "#34d399", "#fbbf24", "#c084fc", "#fb7185", "#38bdf8", "#a3e635", "#f472b6"];
 
     return {
       startOnLoad: false,
@@ -124,6 +137,7 @@
       htmlLabels: useHtml,
       theme: "base",
       themeVariables: {
+        darkMode: !isLight,
         background: background,
         primaryColor: nodeFill,
         primaryTextColor: foreground,
@@ -158,10 +172,74 @@
         noteBorderColor: borderSoft,
         activationBkgColor: secondaryFill,
         activationBorderColor: borderSoft,
+        sectionBkgColor: tertiaryFill,
+        altSectionBkgColor: clusterFill,
+        sectionBkgColor2: secondaryFill,
+        gridColor: gridTone,
+        taskBkgColor: secondaryFill,
+        taskBorderColor: borderSoft,
+        taskTextColor: foreground,
+        taskTextDarkColor: foreground,
+        taskTextOutsideColor: foreground,
+        activeTaskBkgColor: mixHex(background, accent, 0.30),
+        activeTaskBorderColor: accent,
+        doneTaskBkgColor: tertiaryFill,
+        doneTaskBorderColor: muted,
         pieStrokeColor: background,
         pieTitleTextColor: foreground,
-        pieSectionTextColor: foreground,
+        pieSectionTextColor: isLight ? "#111827" : "#0b0f17",
         pieLegendTextColor: foreground,
+        pie1: series[0],
+        pie2: series[1],
+        pie3: series[2],
+        pie4: series[3],
+        pie5: series[4],
+        pie6: series[5],
+        pie7: series[6],
+        pie8: series[7],
+        git0: series[0],
+        git1: series[1],
+        git2: series[2],
+        git3: series[3],
+        git4: series[4],
+        git5: series[5],
+        git6: series[6],
+        git7: series[7],
+        gitBranchLabel0: foreground,
+        gitBranchLabel1: foreground,
+        gitBranchLabel2: foreground,
+        gitBranchLabel3: foreground,
+        commitLabelColor: foreground,
+        commitLabelBackground: edgeLabelBg,
+        cScale0: secondaryFill,
+        cScale1: mixHex(background, series[1], 0.22),
+        cScale2: mixHex(background, series[2], 0.22),
+        cScale3: mixHex(background, series[3], 0.22),
+        cScale4: mixHex(background, series[4], 0.22),
+        cScale5: mixHex(background, series[5], 0.22),
+        cScale6: mixHex(background, series[6], 0.22),
+        cScale7: mixHex(background, series[7], 0.22),
+        cScaleLabel0: foreground,
+        cScaleLabel1: foreground,
+        cScaleLabel2: foreground,
+        cScaleLabel3: foreground,
+        cScaleLabel4: foreground,
+        cScaleLabel5: foreground,
+        cScaleLabel6: foreground,
+        cScaleLabel7: foreground,
+        xyChart: {
+          backgroundColor: "transparent",
+          titleColor: foreground,
+          xAxisLabelColor: foreground,
+          xAxisTitleColor: foreground,
+          xAxisTickColor: muted,
+          xAxisLineColor: muted,
+          yAxisLabelColor: foreground,
+          yAxisTitleColor: foreground,
+          yAxisTickColor: muted,
+          yAxisLineColor: muted,
+          plotColorPalette: series.join(",")
+        },
         fontFamily: font,
         fontSize: "14px"
       },
@@ -192,12 +270,35 @@
       er: { useMaxWidth: false },
       journey: { useMaxWidth: false },
       pie: { useMaxWidth: false },
-      gantt: { useMaxWidth: false, useWidth: ganttWidth }
+      gantt: { useMaxWidth: false, useWidth: ganttWidth },
+      mindmap: { useMaxWidth: false },
+      timeline: { useMaxWidth: false },
+      gitGraph: { useMaxWidth: false },
+      quadrantChart: { useMaxWidth: false },
+      sankey: { useMaxWidth: false },
+      xychart: { useMaxWidth: false },
+      kanban: { useMaxWidth: false },
+      packet: { useMaxWidth: false },
+      block: { useMaxWidth: false },
+      architecture: { useMaxWidth: false },
+      requirement: { useMaxWidth: false },
+      c4: { useMaxWidth: false }
     };
   }
 
+  function parseAbsPx(raw) {
+    if (!raw) return 0;
+    var s = String(raw).trim();
+    // Explicitly reject relative CSS units (e.g. width="100%" must NEVER parse as 100px!)
+    if (!/^[0-9]+(?:\.[0-9]+)?(?:px)?$/i.test(s)) return 0;
+    var n = parseFloat(s);
+    return isFinite(n) && n > 0 ? n : 0;
+  }
+
   function measure(svg) {
-    var viewBox = /viewBox\s*=\s*["']([^"']*)["']/i.exec(svg);
+    var rootMatch = /<svg[^>]*>/i.exec(svg);
+    var rootTag = rootMatch ? rootMatch[0] : svg.slice(0, 600);
+    var viewBox = /viewBox\s*=\s*["']([^"']*)["']/i.exec(rootTag);
     if (viewBox) {
       var parts = viewBox[1].trim().split(/[\s,]+/).map(Number);
       if (parts.length === 4 && isFinite(parts[0]) && isFinite(parts[1]) &&
@@ -211,18 +312,39 @@
         };
       }
     }
-    var width = /<svg[^>]*\bwidth\s*=\s*["']([0-9.]+)/i.exec(svg);
-    var height = /<svg[^>]*\bheight\s*=\s*["']([0-9.]+)/i.exec(svg);
-    if (width && height) {
-      return { minX: 0, minY: 0, width: Math.ceil(Number(width[1])), height: Math.ceil(Number(height[1])) };
+    var wAttr = /width\s*=\s*["']([^"']+)["']/i.exec(rootTag);
+    var hAttr = /height\s*=\s*["']([^"']+)["']/i.exec(rootTag);
+    var wPx = parseAbsPx(wAttr && wAttr[1]);
+    var hPx = parseAbsPx(hAttr && hAttr[1]);
+    if (wPx > 0 && hPx > 0) {
+      return { minX: 0, minY: 0, width: Math.ceil(wPx), height: Math.ceil(hPx) };
+    }
+    var maxWMatch = /max-width\s*:\s*([0-9.]+)px/i.exec(rootTag);
+    if (maxWMatch) {
+      var mw = parseFloat(maxWMatch[1]);
+      if (isFinite(mw) && mw > 0) {
+        var mh = hPx > 0 ? hPx : Math.ceil(mw * 0.65);
+        return { minX: 0, minY: 0, width: Math.ceil(mw), height: Math.ceil(mh) };
+      }
     }
     return { minX: 0, minY: 0, width: 0, height: 0 };
   }
 
   function cleanup(taskId) {
+    var ids = ["dpi-svg-" + taskId, "pi-svg-" + taskId];
+    for (var i = 0; i < ids.length; i++) {
+      try {
+        var el = document.getElementById(ids[i]);
+        if (el && el.parentNode && el.parentNode.id !== "pi-stage") {
+          el.parentNode.removeChild(el);
+        }
+      } catch (ignored) {}
+    }
     try {
-      var stale = document.getElementById("dpi-svg-" + taskId);
-      if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+      var tips = document.querySelectorAll(".mermaidTooltip");
+      for (var j = 0; j < tips.length; j++) {
+        if (tips[j].parentNode) tips[j].parentNode.removeChild(tips[j]);
+      }
     } catch (ignored) {}
   }
 
@@ -247,6 +369,10 @@
       return;
     }
     var size = measure(svg);
+    var dpr = (typeof window.devicePixelRatio === "number" && isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0)
+      ? window.devicePixelRatio
+      : 1;
+
     if (!useHtml) {
       clearStage();
       TASKS[taskId] = {
@@ -256,7 +382,8 @@
         height: size.height,
         stageWidth: 0,
         stageHeight: 0,
-        stageReady: false
+        stageReady: false,
+        dpr: dpr
       };
       return;
     }
@@ -264,18 +391,23 @@
     try {
       var stage = document.getElementById("pi-stage");
       stage.style.transform = "";
+      stage.style.width = "max-content";
+      stage.style.height = "max-content";
       stage.innerHTML = svg;
       var svgEl = stage.querySelector("svg");
       var w = size.width;
       var h = size.height;
+      var minX = size.minX || 0;
+      var minY = size.minY || 0;
+
       if (svgEl) {
+        svgEl.style.maxWidth = "none";
         if (w > 0 && h > 0) {
           if (!svgEl.getAttribute("viewBox")) {
-            svgEl.setAttribute("viewBox", size.minX + " " + size.minY + " " + w + " " + h);
+            svgEl.setAttribute("viewBox", minX + " " + minY + " " + w + " " + h);
           }
           svgEl.setAttribute("width", String(w));
           svgEl.setAttribute("height", String(h));
-          svgEl.style.maxWidth = "none";
           svgEl.style.width = w + "px";
           svgEl.style.height = h + "px";
         }
@@ -283,44 +415,89 @@
           var bbox = svgEl.getBBox();
           if (bbox && isFinite(bbox.width) && isFinite(bbox.height) && bbox.width > 1 && bbox.height > 1) {
             var pad = 8;
-            var bx = Math.min(size.minX || 0, bbox.x - pad);
-            var by = Math.min(size.minY || 0, bbox.y - pad);
-            var br = Math.max((size.minX || 0) + w, bbox.x + bbox.width + pad);
-            var bb = Math.max((size.minY || 0) + h, bbox.y + bbox.height + pad);
-            var fullW = Math.ceil(br - bx);
-            var fullH = Math.ceil(bb - by);
-            if (fullW > w + 2 || fullH > h + 2 || bx < (size.minX || 0) - 2 || by < (size.minY || 0) - 2) {
-              w = fullW;
-              h = fullH;
-              svgEl.setAttribute("viewBox", bx + " " + by + " " + w + " " + h);
+            if (w <= 16 || h <= 16) {
+              // Mermaid emitted a degenerate/tiny viewBox (e.g. -8 -8 16 16): trust actual bbox!
+              minX = bbox.x - pad;
+              minY = bbox.y - pad;
+              w = Math.ceil(bbox.width + pad * 2);
+              h = Math.ceil(bbox.height + pad * 2);
+              svgEl.setAttribute("viewBox", minX + " " + minY + " " + w + " " + h);
               svgEl.setAttribute("width", String(w));
               svgEl.setAttribute("height", String(h));
               svgEl.style.width = w + "px";
               svgEl.style.height = h + "px";
+            } else {
+              // Expand slightly if labels/arrowheads overhang, while ignoring pathological >6x hidden-defs outliers
+              var saneBbox = bbox.width < w * 6 && bbox.height < h * 6 &&
+                Math.abs(bbox.x - minX) < w * 3 && Math.abs(bbox.y - minY) < h * 3;
+              if (saneBbox) {
+                var bx = Math.min(minX, bbox.x - pad);
+                var by = Math.min(minY, bbox.y - pad);
+                var br = Math.max(minX + w, bbox.x + bbox.width + pad);
+                var bb = Math.max(minY + h, bbox.y + bbox.height + pad);
+                var fullW = Math.ceil(br - bx);
+                var fullH = Math.ceil(bb - by);
+                if (fullW > w + 2 || fullH > h + 2 || bx < minX - 2 || by < minY - 2) {
+                  minX = bx;
+                  minY = by;
+                  w = fullW;
+                  h = fullH;
+                  svgEl.setAttribute("viewBox", minX + " " + minY + " " + w + " " + h);
+                  svgEl.setAttribute("width", String(w));
+                  svgEl.setAttribute("height", String(h));
+                  svgEl.style.width = w + "px";
+                  svgEl.style.height = h + "px";
+                }
+              }
             }
           }
         } catch (ignored) {}
+
         var rect = svgEl.getBoundingClientRect();
-        if (rect && rect.width > 1 && rect.height > 1) {
-          w = Math.ceil(Math.max(w, rect.width));
-          h = Math.ceil(Math.max(h, rect.height));
+        if (w <= 0 || h <= 0) {
+          if (rect && rect.width > 1 && rect.height > 1) {
+            w = Math.ceil(rect.width);
+            h = Math.ceil(rect.height);
+            svgEl.setAttribute("width", String(w));
+            svgEl.setAttribute("height", String(h));
+            svgEl.style.width = w + "px";
+            svgEl.style.height = h + "px";
+          }
         }
       }
+
+      if (w <= 0 || h <= 0) {
+        clearStage();
+        TASKS[taskId] = {
+          state: "ok",
+          svg: svg,
+          width: size.width,
+          height: size.height,
+          stageWidth: 0,
+          stageHeight: 0,
+          stageReady: false,
+          dpr: dpr
+        };
+        return;
+      }
+
       var stageW = Math.max(1, w + STAGE_PADDING * 2);
       var stageH = Math.max(1, h + STAGE_PADDING * 2);
       stage.style.width = stageW + "px";
       stage.style.height = stageH + "px";
-
       requestAnimationFrame(function () {
-        TASKS[taskId] = {
-          state: "ok",
-          svg: svg,
-          width: w,
-          height: h,
-          stageWidth: stageW,
-          stageHeight: stageH,
-          stageReady: true
-        };
+        requestAnimationFrame(function () {
+          TASKS[taskId] = {
+            state: "ok",
+            svg: svg,
+            width: w,
+            height: h,
+            stageWidth: stageW,
+            stageHeight: stageH,
+            stageReady: true,
+            dpr: dpr
+          };
+        });
       });
     } catch (error) {
       clearStage();
@@ -331,7 +508,8 @@
         height: size.height,
         stageWidth: 0,
         stageHeight: 0,
-        stageReady: false
+        stageReady: false,
+        dpr: dpr
       };
     }
   }
@@ -391,6 +569,32 @@
     return true;
   };
 
+  window.__piSetStageScaleAndFlush = function (scale, token) {
+    SCALE_READY[token] = false;
+    var ok = window.__piSetStageScale(scale);
+    if (!ok) {
+      SCALE_READY[token] = true;
+      return false;
+    }
+    // Force synchronous layout flush + wait two frames so Chromium commits the scaled layer.
+    var stage = document.getElementById("pi-stage");
+    if (stage) void stage.offsetWidth;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        SCALE_READY[token] = true;
+      });
+    });
+    return true;
+  };
+
+  window.__piScaleReady = function (token) {
+    if (SCALE_READY[token]) {
+      delete SCALE_READY[token];
+      return true;
+    }
+    return false;
+  };
+
   window.__piClearStage = function () {
     clearStage();
     return true;
@@ -409,9 +613,11 @@
       fail(taskId, "mermaid.initialize failed: " + describe(error));
       return true;
     }
-
-    var text = String(source || "").replace(/%%\{[\s\S]*?\}%%/g, "");
-
+    var text = String(source || "")
+      .replace(/^\uFEFF/, "")
+      .replace(/\r\n?/g, "\n")
+      .replace(/%%\{[\s\S]*?\}%%/g, "")
+      .trim();
     try {
       var rendered = window.mermaid.render("pi-svg-" + taskId, text);
       if (rendered && typeof rendered.then === "function") {
@@ -443,7 +649,8 @@
         height: task.height,
         stageWidth: task.stageWidth || 0,
         stageHeight: task.stageHeight || 0,
-        stageReady: !!task.stageReady
+        stageReady: !!task.stageReady,
+        dpr: task.dpr || 1
       };
     }
     return { ok: false, error: task.error };

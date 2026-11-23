@@ -63,6 +63,43 @@ private const val SYNC_PARSE_SETTLED_LIMIT = 2048
 private const val SYNC_PARSE_STREAMING_LIMIT = 1500
 
 /**
+ * Bounded cross-scroll LRU cache of settled (`!streaming`) GFM AST + math/footnote parses.
+ * Scrolling back over long settled replies hits frame 0 synchronously with zero re-parse and zero blank flash.
+ */
+private object PiMarkdownDocCache {
+    private const val MAX_ENTRIES = 64
+    private const val MAX_CHARS = 512 * 1024
+    private val map = LinkedHashMap<String, ParsedMarkdownDoc>(MAX_ENTRIES, 0.75f, true)
+    private var totalChars = 0
+
+    @Synchronized
+    fun get(markdown: String): ParsedMarkdownDoc? = map[markdown]
+
+    @Synchronized
+    fun put(markdown: String, doc: ParsedMarkdownDoc) {
+        if (markdown.length > 128 * 1024) return
+        val prev = map.put(markdown, doc)
+        if (prev == null) totalChars += markdown.length
+        val it = map.entries.iterator()
+        while ((map.size > MAX_ENTRIES || totalChars > MAX_CHARS) && it.hasNext()) {
+            val evicted = it.next()
+            totalChars = (totalChars - evicted.key.length).coerceAtLeast(0)
+            it.remove()
+        }
+    }
+
+    @Synchronized
+    fun clear() {
+        map.clear()
+        totalChars = 0
+    }
+}
+
+internal fun clearPiMarkdownDocCache() {
+    PiMarkdownDocCache.clear()
+}
+
+/**
  * Pi's native Compose Markdown entry point, backed directly by JetBrains `org.jetbrains:markdown`
  * GFM AST with zero third-party Compose renderer wrappers.
  *
@@ -90,13 +127,18 @@ internal fun PiMarkdownText(
     // Synchronous fast path for immediate rows or short content; conflated async worker for
     // large/long streams so BOTH math/footnote preprocessing (PiInlineMath/PiLatex/PiFootnoteMarkdown)
     // and GFM AST parsing run completely off the main thread without cancelling in-flight work.
-    val syncParse = if (streaming) {
+    val cachedDoc = remember(markdown, streaming) {
+        if (!streaming) PiMarkdownDocCache.get(markdown) else null
+    }
+    val syncParse = cachedDoc != null || if (streaming) {
         markdown.length <= SYNC_PARSE_STREAMING_LIMIT
     } else {
         immediate || markdown.length <= SYNC_PARSE_SETTLED_LIMIT
     }
-    val syncDoc = remember(markdown, streaming, syncParse) {
-        if (!syncParse) {
+    val syncDoc = remember(markdown, streaming, syncParse, cachedDoc) {
+        if (cachedDoc != null) {
+            cachedDoc
+        } else if (!syncParse) {
             null
         } else {
             val startedNanos = if (immediate) System.nanoTime() else 0L
@@ -257,7 +299,9 @@ private fun prepareAndParseDocument(markdown: String, streaming: Boolean): Parse
             referenceLinks = refs,
             inlineMath = activeInlineMath,
             hasDisplayGrid = prepared.hasDisplayGrid,
-        )
+        ).also { doc ->
+            if (!streaming) PiMarkdownDocCache.put(markdown, doc)
+        }
     }.getOrNull()
 
 internal fun piMarkdownSource(markdown: String): String = PiLatex.preprocess(markdown)

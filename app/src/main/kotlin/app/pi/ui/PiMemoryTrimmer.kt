@@ -6,6 +6,8 @@ import app.pi.bridge.PiGuestImageTransformer
 import app.pi.ui.blocks.ParseCaches
 import app.pi.ui.blocks.PiImageCache
 import app.pi.ui.render.RowHeightCache
+import app.pi.ui.render.clearPiCodeHighlightCache
+import app.pi.ui.render.clearPiMarkdownDocCache
 import app.pi.ui.render.rich.PiTreeParseCache
 import app.pi.ui.render.rich.svg.PiMathDrawCache
 import app.pi.ui.render.rich.svg.PiMathRenderEngine
@@ -25,6 +27,8 @@ internal object PiMemoryTrimmer {
     fun onSessionReplaced() {
         ParseCaches.clear()
         PiTreeParseCache.clear()
+        clearPiMarkdownDocCache()
+        clearPiCodeHighlightCache()
         RowHeightCache.shared.clear()
     }
 
@@ -39,6 +43,8 @@ internal object PiMemoryTrimmer {
             PiAnimatedImages.clear()
             ParseCaches.clear()
             PiTreeParseCache.clear()
+            clearPiMarkdownDocCache()
+            clearPiCodeHighlightCache()
         }
         if (
             level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND ||
@@ -60,6 +66,8 @@ internal object PiMemoryTrimmer {
         PiAnimatedImages.clear()
         ParseCaches.clear()
         PiTreeParseCache.clear()
+        clearPiMarkdownDocCache()
+        clearPiCodeHighlightCache()
         PiImageCache.clear()
         PiGuestImageTransformer.clearBitmapCache()
         clearPiMermaidDrawCache()

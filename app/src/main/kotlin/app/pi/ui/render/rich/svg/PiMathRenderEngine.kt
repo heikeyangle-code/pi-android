@@ -474,6 +474,7 @@ internal object PiMathRenderEngine : PiSvgEngine {
         val density = context.resources.displayMetrics.density
         val viewWidthPx = (HOST_VIEWPORT_CSS_WIDTH * density).roundToInt().coerceAtLeast(1)
         val viewHeightPx = (HOST_VIEWPORT_CSS_HEIGHT * density).roundToInt().coerceAtLeast(1)
+        PiWebViewBootstrap.ensureWholeDocumentDraw()
         val webView = WebView(context)
         val assetLoader = WebViewAssetLoader.Builder()
             .addPathHandler(ASSET_URL_PREFIX, MathAssetHandler(context))

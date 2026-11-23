@@ -1770,12 +1770,19 @@ private fun PiCodeSurface(
         PiSvgFenceView(source = code, settled = settled)
         return
     }
-    if (normalized?.lowercase() == "math" && settled && code.isNotBlank()) {
-        val src = code.trim().removePrefix("$$").removeSuffix("$$").trim()
+    if (normalized?.lowercase() == "math" && (code.isNotBlank() || !settled)) {
+        val trimmed = code.trim()
+        val src = when {
+            trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length > 4 ->
+                trimmed.removePrefix("$$").removeSuffix("$$").trim()
+            trimmed.startsWith("\\[") && trimmed.endsWith("\\]") && trimmed.length > 4 ->
+                trimmed.removePrefix("\\[").removeSuffix("\\]").trim()
+            else -> trimmed
+        }
         val fallback = remember(src) {
             runCatching { PiLatex.toUnicode(src, display = true) }.getOrNull() ?: src
         }
-        PiMathView(source = src, display = true, settled = true, fallbackText = fallback)
+        PiMathView(source = src, display = true, settled = settled, fallbackText = fallback)
         return
     }
     when (kind) {
@@ -1839,13 +1846,54 @@ internal data class PiHighlightedCode(val text: AnnotatedString, val languageKno
  * synchronously in <1 ms with zero IPC latency and zero 200 ms repaint flash. For obscure languages
  * outside the native table, falls back asynchronously to [LocalPiCodeHighlighter] (plain, uncoloured by default).
  */
+private data class PiCodeHighlightKey(val code: String, val language: String)
+
+private object PiCodeHighlightCache {
+    private const val MAX_ENTRIES = 128
+    private const val MAX_CHARS = 512 * 1024
+    private val map = LinkedHashMap<PiCodeHighlightKey, PiCodeHighlight>(MAX_ENTRIES, 0.75f, true)
+    private var totalChars = 0
+
+    @Synchronized
+    fun get(key: PiCodeHighlightKey): PiCodeHighlight? = map[key]
+
+    @Synchronized
+    fun put(key: PiCodeHighlightKey, value: PiCodeHighlight) {
+        if (key.code.length > 64 * 1024) return
+        val prev = map.put(key, value)
+        if (prev == null) totalChars += key.code.length
+        val it = map.entries.iterator()
+        while ((map.size > MAX_ENTRIES || totalChars > MAX_CHARS) && it.hasNext()) {
+            val evicted = it.next()
+            totalChars = (totalChars - evicted.key.code.length).coerceAtLeast(0)
+            it.remove()
+        }
+    }
+
+    @Synchronized
+    fun clear() {
+        map.clear()
+        totalChars = 0
+    }
+}
+
+internal fun clearPiCodeHighlightCache() {
+    PiCodeHighlightCache.clear()
+}
+
 @Composable
 internal fun rememberPiHighlightedCode(code: String, language: String?): PiHighlightedCode {
     val palette = PiTheme.palette
     val unspecified = PiCodeLanguage.isUnspecified(language)
     val nativeResult = remember(code, language, unspecified) {
-        if (unspecified) PiCodeHighlight()
-        else PiFastCodeHighlighter.highlight(code, language)
+        if (unspecified) {
+            PiCodeHighlight()
+        } else {
+            val key = PiCodeHighlightKey(code, language!!.lowercase())
+            PiCodeHighlightCache.get(key) ?: PiFastCodeHighlighter.highlight(code, language).also {
+                PiCodeHighlightCache.put(key, it)
+            }
+        }
     }
     return remember(code, nativeResult, palette) {
         PiHighlightedCode(

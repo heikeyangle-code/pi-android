@@ -1,5 +1,6 @@
 package app.pi.ui.render
 
+import app.pi.ui.render.rich.PiFenceSniff
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
@@ -546,6 +547,48 @@ class PiRichRenderTest {
         assertTrue(csvRes.spans.any { it.token == PiSyntaxToken.Keyword })
         assertTrue(csvRes.spans.any { it.token == PiSyntaxToken.Number })
         assertTrue(csvRes.spans.any { it.token == PiSyntaxToken.StringLiteral })
+    }
+
+    @Test
+    fun `PiFenceSniff detects Mermaid 12 headers, leading comments, YAML frontmatter, and aliases`() {
+        val noJson: (String) -> Boolean = { false }
+        assertEquals("mermaid", PiFenceSniff.alias("mermaidjs"))
+        assertEquals("math", PiFenceSniff.alias("mathjax"))
+        assertEquals("svg", PiFenceSniff.alias("svg+xml"))
+
+        val samples = listOf(
+            "xychart-beta\n  title \"Latency\"\n  x-axis [a, b]\n  bar [1, 2]",
+            "sankey-beta\n  A,B,10",
+            "kanban\n  Todo\n    id1[Fix Mermaid]",
+            "architecture-beta\n  service api(server)[API]",
+            "C4Context\n  Person(u, \"User\")",
+            "%% leading comment\nflowchart TD\n  A --> B",
+            "---\ntitle: Sample\n---\nsequenceDiagram\n  A->>B: Hi",
+        )
+        for (sample in samples) {
+            assertEquals("Expected mermaid for: $sample", "mermaid", PiFenceSniff.sniff(sample, noJson))
+        }
+    }
+
+    @Test
+    fun `PiInlineMath extracts standalone latex env, opening-line multiline dollars, and inline brackets`() {
+        val envMd = "推导如下：\n\\begin{aligned}\na &= b + c \\\\\nd &= e + f\n\\end{aligned}\n当\$x>0\$时成立。"
+        val envRes = PiInlineMath.extract(envMd)
+        assertTrue(envRes.hasBlockMath)
+        assertTrue(envRes.hasInlineMath)
+        assertTrue(envRes.markdown.contains("\$\$\n\\begin{aligned}"))
+        assertTrue(envRes.markdown.contains("\\end{aligned}\n\$\$"))
+
+        val openLineMd = "结论：\n\$\$ a + b\n+ c = d \$\$\n完成。"
+        val openLineRes = PiInlineMath.extract(openLineMd)
+        assertTrue(openLineRes.hasBlockMath)
+        assertTrue(openLineRes.markdown.contains("\$\$\na + b\n+ c = d\n\$\$"))
+
+        val inlineBracketMd = "质能方程 \\[ E = mc^2 \\] 很著名。"
+        val bracketRes = PiInlineMath.extract(inlineBracketMd)
+        assertTrue(bracketRes.hasInlineMath)
+        assertEquals(1, bracketRes.entries.size)
+        assertEquals("E = mc^2", bracketRes.entries[0].tex)
     }
 
     private fun parseGfm(markdown: String): ASTNode =

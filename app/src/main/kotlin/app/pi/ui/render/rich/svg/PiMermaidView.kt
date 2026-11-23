@@ -36,14 +36,22 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.OpenInFull
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -60,8 +68,10 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -190,9 +200,11 @@ fun PiMermaidView(
     }
     var scale by remember(source) { mutableStateOf(PI_MERMAID_FIT_ZOOM) }
     var offset by remember(source) { mutableStateOf(Offset.Zero) }
+    var retryTick by remember(source) { mutableIntStateOf(0) }
+    val haptic = LocalHapticFeedback.current
 
     Box(modifier.fillMaxWidth()) {
-        LaunchedEffect(source, settled, widthPx, theme) {
+        LaunchedEffect(source, settled, widthPx, theme, retryTick) {
             if (!settled) {
                 draw = PiMermaidDraw.Streaming
                 return@LaunchedEffect
@@ -207,9 +219,11 @@ fun PiMermaidView(
                 )
                 return@LaunchedEffect
             }
-            PiMermaidDrawCache.get(PiMermaidDrawKey(source, widthPx, theme))?.let {
-                draw = it
-                return@LaunchedEffect
+            if (retryTick == 0) {
+                PiMermaidDrawCache.get(PiMermaidDrawKey(source, widthPx, theme))?.let {
+                    draw = it
+                    return@LaunchedEffect
+                }
             }
             draw = PiMermaidDraw.Rendering
             val result = try {
@@ -226,6 +240,8 @@ fun PiMermaidView(
                     baseWidthPx = result.baseWidthPx,
                     baseHeightPx = result.baseHeightPx,
                     aspect = result.aspect,
+                    cssWidth = result.cssWidth,
+                    cssHeight = result.cssHeight,
                 )
 
                 is PiMermaidRendered.Vector -> withContext(Dispatchers.Default) {
@@ -285,6 +301,13 @@ fun PiMermaidView(
                         },
                     )
                 }
+                if (draw is PiMermaidDraw.Unavailable) {
+                    add(
+                        PiCardMenuItem(tr("重新渲染", "Retry render")) {
+                            retryTick += 1
+                        },
+                    )
+                }
             },
         ) {
             if (image != null) {
@@ -292,14 +315,31 @@ fun PiMermaidView(
                     ?: PI_MERMAID_FALLBACK_ASPECT
                 val diagramDesc = tr("Mermaid 渲染图：$source", "Mermaid diagram: $source")
                 // Deterministic canvas height without SubcomposeLayout/BoxWithConstraints inside LazyColumn,
-                // eliminating mid-scroll height jumps while keeping tall diagrams readable on large screens.
+                // eliminating mid-scroll height jumps while respecting small diagrams' natural CSS dimensions.
                 val estimatedWidthDp = (configuration.screenWidthDp - 48).coerceAtLeast(220).dp
                 val heightCap = maxOf(
                     PI_MERMAID_MAX_IMAGE_HEIGHT,
                     (configuration.screenHeightDp * 0.7f).dp,
                 )
-                val canvasHeight = (estimatedWidthDp / aspect.coerceIn(0.05f, 60f))
-                    .coerceIn(PI_MERMAID_MIN_IMAGE_HEIGHT, heightCap)
+                val canvasHeight = if (image.cssWidth > 0 && image.cssHeight > 0) {
+                    val naturalW = image.cssWidth.dp
+                    val naturalH = image.cssHeight.dp
+                    if (naturalW <= estimatedWidthDp) {
+                        naturalH.coerceIn(76.dp, heightCap)
+                    } else {
+                        (estimatedWidthDp / aspect.coerceIn(0.05f, 60f))
+                            .coerceIn(PI_MERMAID_MIN_IMAGE_HEIGHT, heightCap)
+                    }
+                } else {
+                    (estimatedWidthDp / aspect.coerceIn(0.05f, 60f))
+                        .coerceIn(PI_MERMAID_MIN_IMAGE_HEIGHT, heightCap)
+                }
+                val maxFitScale = if (image.cssWidth > 0 && image.baseWidthPx > 0) {
+                    val naturalPxPerBasePx = (image.cssWidth * density.density) / image.baseWidthPx.toFloat()
+                    (naturalPxPerBasePx * 1.15f).coerceAtLeast(0.25f)
+                } else {
+                    Float.POSITIVE_INFINITY
+                }
                 Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)) {
                     Canvas(
                         modifier = Modifier
@@ -309,7 +349,7 @@ fun PiMermaidView(
                                 clip = true
                                 compositingStrategy = CompositingStrategy.Offscreen
                             }
-                            .pointerInput(image) {
+                            .pointerInput(image, maxFitScale) {
                                 detectTapGestures(
                                     onDoubleTap = { tap ->
                                         if (scale > PI_MERMAID_FIT_ZOOM + 0.05f) {
@@ -328,14 +368,16 @@ fun PiMermaidView(
                                                 viewHeight = size.height.toFloat(),
                                                 baseWidthPx = image.baseWidthPx,
                                                 baseHeightPx = image.baseHeightPx,
+                                                maxFitScale = maxFitScale,
                                             )
                                         }
                                     },
                                 )
                             }
-                            .pointerInput(image) {
+                            .pointerInput(image, maxFitScale) {
                                 piMermaidTransformGestures(
                                     image = image,
+                                    maxFitScale = maxFitScale,
                                     readScale = { scale },
                                     readOffset = { offset },
                                 ) { nextScale, nextOffset ->
@@ -350,6 +392,7 @@ fun PiMermaidView(
                             viewHeight = size.height,
                             baseWidthPx = image.baseWidthPx,
                             baseHeightPx = image.baseHeightPx,
+                            maxFitScale = maxFitScale,
                         ) * scale
                         drawIntoCanvas { canvas ->
                             val native = canvas.nativeCanvas
@@ -373,6 +416,35 @@ fun PiMermaidView(
                                 image.picture?.let { native.drawPicture(it) }
                             }
                             native.restore()
+                        }
+                    }
+                    if (onImageClick != null) {
+                        Surface(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                scope.launch {
+                                    val exported = withContext(Dispatchers.Default) {
+                                        encodeMermaidReadyToPiImage(image, palette.cardBg.toArgb())
+                                    }
+                                    if (exported != null) onImageClick(exported)
+                                }
+                            },
+                            shape = CircleShape,
+                            color = palette.cardBg.copy(alpha = 0.88f),
+                            border = BorderStroke(0.75.dp, palette.borderMuted.copy(alpha = 0.45f)),
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(4.dp)
+                                .size(30.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.OpenInFull,
+                                    contentDescription = tr("全屏查看", "View fullscreen"),
+                                    tint = palette.muted,
+                                    modifier = Modifier.size(15.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -477,6 +549,8 @@ private sealed interface PiMermaidDraw {
         val baseWidthPx: Int,
         val baseHeightPx: Int,
         val aspect: Float,
+        val cssWidth: Int = 0,
+        val cssHeight: Int = 0,
     ) : PiMermaidDraw
 
     /** No diagram will be shown for this source; the reason goes on the source block. */
@@ -589,6 +663,7 @@ private fun piMermaidAspect(svg: SVG, result: PiSvgResult.Ok): Float {
  */
 private suspend fun PointerInputScope.piMermaidTransformGestures(
     image: PiMermaidDraw.Ready,
+    maxFitScale: Float,
     readScale: () -> Float,
     readOffset: () -> Offset,
     onTransform: (scale: Float, offset: Offset) -> Unit,
@@ -637,6 +712,7 @@ private suspend fun PointerInputScope.piMermaidTransformGestures(
                     viewHeight = viewHeight,
                     baseWidthPx = image.baseWidthPx,
                     baseHeightPx = image.baseHeightPx,
+                    maxFitScale = maxFitScale,
                 )
                 scale = nextScale
                 onTransform(scale, offset)
@@ -653,9 +729,10 @@ private fun piMermaidFitScale(
     viewHeight: Float,
     baseWidthPx: Int,
     baseHeightPx: Int,
+    maxFitScale: Float = Float.POSITIVE_INFINITY,
 ): Float {
     if (viewWidth <= 0f || viewHeight <= 0f || baseWidthPx <= 0 || baseHeightPx <= 0) return 1f
-    return min(viewWidth / baseWidthPx, viewHeight / baseHeightPx)
+    return min(min(viewWidth / baseWidthPx, viewHeight / baseHeightPx), maxFitScale)
 }
 
 /**
@@ -672,8 +749,9 @@ private fun piMermaidClampOffset(
     viewHeight: Float,
     baseWidthPx: Int,
     baseHeightPx: Int,
+    maxFitScale: Float = Float.POSITIVE_INFINITY,
 ): Offset {
-    val fit = piMermaidFitScale(viewWidth, viewHeight, baseWidthPx, baseHeightPx) * scaleScale
+    val fit = piMermaidFitScale(viewWidth, viewHeight, baseWidthPx, baseHeightPx, maxFitScale) * scaleScale
     val drawnWidth = baseWidthPx * fit
     val drawnHeight = baseHeightPx * fit
     val maxX = ((drawnWidth - viewWidth) / 2f).coerceAtLeast(0f)

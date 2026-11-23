@@ -88,6 +88,7 @@ internal fun PiSvgAnimatedView(svg: String, modifier: Modifier = Modifier) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
+                    PiWebViewBootstrap.ensureWholeDocumentDraw()
                     WebView(ctx).apply {
                         setBackgroundColor(0)
                         isVerticalScrollBarEnabled = false

@@ -1,7 +1,7 @@
 [English](README.md) · **简体中文**
 
 <p align="center">
-  <img src="./brand/pi-readme-icon.svg" alt="Pi for Android" width="112" />
+  <img src="./brand/pi-readme-icon.svg" alt="Pi for Android" width="108" />
 </p>
 
 <h1 align="center">Pi for Android</h1>
@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  原生 Jetpack Compose · 官方 Pi 1.6.0 SDK · 中英双语零重启切换 · 三引擎 Linux 容器 · 完整扩展与 TUI 兼容 · 免 Root · 免 Termux
+  原生 Jetpack Compose · 官方 Pi 1.6.0 SDK · 离线 Mermaid 12 &amp; MathJax 4 · 三引擎 Linux 容器 · 完整扩展与 TUI 兼容 · 免 Root · 免 Termux
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/pi-1.6.0-7C5CFF" alt="pi 1.6.0" />
   <img src="https://img.shields.io/badge/Node.js-24.22.1-339933?logo=node.js&logoColor=white" alt="Node.js 24.22.1" />
   <img src="https://img.shields.io/badge/i18n-%E4%B8%AD%E8%8B%B1%E5%8F%8C%E8%AF%AD-007ACC" alt="中英双语" />
-  <img src="https://img.shields.io/badge/SDK_Host_Tests-307_PASS-2ea44f" alt="307 SDK Host Tests" />
+  <img src="https://img.shields.io/badge/SDK_Host_Tests-326_PASS-2ea44f" alt="326 SDK Host Tests" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" />
 </p>
 
@@ -32,24 +32,22 @@
 
 ---
 
-## 为什么绝大多数「手机 AI 编程工具」都让人用不下去？
+## 为什么绝大多数「手机 AI 编程工具」都用不下去？
 
-如果你想在地铁上、沙发上、出门没带电脑的时候，真正让 AI 帮你干点活，过去你只有三个糟糕的选择：
-1. **套壳聊天 App**：只能贴几段代码干聊，不能读本地仓库、不能跑 `git diff`、不能执行命令、更没有扩展和 MCP。
-2. **手机 SSH 连远程服务器**：没网就废，断线重连吐血，在 6 寸竖屏里看终端满屏滚动的 ANSI 字符和 diff 简直是折磨眼睛。
-3. **手搓 Termux**：装环境、配 Node、配 Git、折腾权限、忍受反人类的虚拟键盘，光把环境搭起来就已经不想写代码了。
+想在地铁上、沙发上、出门没带电脑时真正让 AI 帮你干活，过去只有三个糟糕的选项：
+1. **套壳聊天 App**：只能贴代码干聊，读不了本地仓库、跑不了 `git diff`、没有扩展和 MCP。
+2. **手机 SSH 终端**：断网就废，在 6 寸竖屏里看满屏滚动的 ANSI 字符和 diff 极度折磨眼睛。
+3. **手搓 Termux**：装环境、配 Node/Git、调权限、忍受反人类虚拟键盘，环境还没搭完就已经不想写了。
 
-**Pi for Android 把这三条路的痛点一次性掀翻了。**
-
-它把完整的 **Ubuntu 24.04 ARM64 用户态 + Node.js 24.22.1 + Git + ripgrep + fd + 官方 [Pi Coding Agent](https://github.com/earendil-works/pi) 1.6.0 SDK** 直接打包进一个原生 Android APK 里。**不用 Root，不用装 Termux，不用买云服务器，不用敲任何初始化命令。** 装完打开，选一个手机里的真实文件夹，你的手机立刻变成一台离线也能跑的本地 Coding Agent 工作站。
+**Pi for Android 把完整本地 Linux 用户态（Ubuntu 24.04 ARM64 + Node.js 24.22.1 + Git + ripgrep + fd）与官方 [Pi Coding Agent](https://github.com/earendil-works/pi) 1.6.0 SDK 直接装进一个原生 Android APK。** 免 Root、免 Termux、免云服务器、免初始化命令——装完打开，选一个手机里的真实目录，立刻开干。
 
 | 维度 | 普通手机 AI 聊天 App | Termux / SSH 终端 | **Pi for Android** |
 | :--- | :---: | :---: | :---: |
-| **真正本地 Linux + Node + Git + rg + fd** | ❌ 只能文字聊天 | ⚠️ 手动折腾半天 | ✅ **开箱即用，免 Root 免 Termux** |
-| **移动端原生阅读与 Diff 体验** | ⚠️ 只有气泡框 | ❌ 竖屏小字滚动地狱 | ✅ **原生工具卡、行内字级 Diff、公式与 Mermaid** |
-| **运行桌面端 Pi 扩展与交互式 TUI** | ❌ 完全不支持 | ⚠️ 虚拟键盘反人类 | ✅ **虚拟 TUI 表面投影 + 触控/键鼠 + 80 列自适应** |
-| **完整模型与 MCP / Code Mode 生态** | ❌ 封闭或阉割 | ✅ 仅纯命令行 | ✅ **原汁原味 Pi 1.6.0 SDK，7 家 OAuth + 35+ 供应商** |
-| **调用手机原生能力（无障碍/通知/Shizuku）** | ❌ 做不到 | ⚠️ 折腾脚本 | ✅ **内置 0-Token 设备桥 + 高危操作原生确认框** |
+| **真本地 Linux + Node 24 + Git + `rg` + `fd`** | ❌ 只能文字聊天 | ⚠️ 手动折腾半天 | ✅ **开箱即用，免 Root 免 Termux** |
+| **移动端原生阅读、Diff 与富渲染体验** | ⚠️ 只有气泡框 | ❌ 竖屏小字滚动地狱 | ✅ **工具卡、行内字级 Diff、Mermaid 12、MathJax 4** |
+| **桌面端 Pi 扩展与全屏交互式 TUI** | ❌ 完全不支持 | ⚠️ 虚拟键盘反人类 | ✅ **虚拟 TUI 表面投影 + 触控/键鼠 + 80 列自适应** |
+| **模型、MCP 与 Code Mode 完整生态** | ❌ 封闭或阉割 | ✅ 仅纯命令行 | ✅ **100% 官方 Pi 1.6.0 SDK · 7 家 OAuth · 35+ 供应商** |
+| **手机原生自动化能力（无障碍/通知/Shizuku）** | ❌ 做不到 | ⚠️ 折腾脚本 | ✅ **可选内置设备桥 · 关闭时严格 0 Token** |
 
 <table align="center">
   <tr>
@@ -59,13 +57,13 @@
     </td>
     <td align="center" width="50%">
       <img src="docs/screenshots/tools-manager.jpg" width="280" alt="全部工具实时开关与 Codemode 管理" /><br />
-      <sub><b>全部工具实时总控与 Codemode</b> —— 内置/扩展/MCP 工具一键启停、设为新会话默认，完整对齐 Pi 1.6.0 Codemode 与 Shell 前缀。</sub>
+      <sub><b>全部工具实时总控与 Codemode</b> —— 内置/扩展/MCP 工具一键启停、设为默认，完整对齐 Pi 1.6.0 Codemode 与 Shell 前缀。</sub>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
       <img src="docs/screenshots/system-prompt-context.jpg" width="280" alt="系统提示词与上下文管线管理页" /><br />
-      <sub><b>统一系统提示词与上下文管线</b> —— 全局与项目级 <code>APPEND_SYSTEM.md</code> / <code>SYSTEM.md</code> / <code>AGENTS.md</code> 一站编辑与即时重载。</sub>
+      <sub><b>统一系统提示词与上下文管线</b> —— 全局与项目级 <code>SYSTEM.md</code> / <code>APPEND_SYSTEM.md</code> / <code>AGENTS.md</code> 一站编辑与即时重载。</sub>
     </td>
     <td align="center" width="50%">
       <img src="docs/screenshots/models-providers.jpg" width="280" alt="模型与供应商设置页" /><br />
@@ -76,116 +74,78 @@
 
 ---
 
-## 你在手机上真的可以这样用
+## 在手机上真正能干的事
 
-- **通勤路上修 Bug / 审 PR**：在本地项目里直接让 Pi 跑 `rg` 定位代码、做 `edit`、看红绿行内 Diff、跑单测并 `git commit`。
-- **随手拍张报错截图或粘贴剪贴板图片**：直接甩进对话，甚至混着 `@文件名` 和多份文档一起发给视觉模型定位问题。
-- **装上社区 Pi 扩展与 MCP 服务器**：无论是 Code Mode 写脚本编排多工具调用、连 MCP 查文档/数据库，还是跑带交互式浮层的复杂扩展，在手机上照样跑得飞起。
-- **把 Agent 变成手机自动化副驾**：按需开启无障碍屏幕操作、通知监听、剪贴板或 Shizuku Shell，让它帮你操作手机；不用的时候一键全关，**严格 0 Token 占用**。
-
----
-
-## 六大硬核杀手锏
-
-### 1. 硬核级 Pi 扩展与移动端 TUI 兼容引擎（把桌面终端生态搬上触屏）
-> 移动端 Agent 客户端最容易「偷工减料」的地方就是扩展兼容。别人做不到的交互式终端组件、自定义工具卡片、扩展补全和终端控制符，**Pi for Android 全部啃了下来，而且做到了近乎 1:1 的官方还原。**
-
-- **虚拟 TUI 表面实时投影（`ui/surfaces.mjs` → 原生 Compose 交互面板）**：
-  - 扩展调用 `ctx.ui.custom()`、`setWidget()`、`setHeader()`、`setFooter()`、`tui.showOverlay()` 时，宿主把真实 Pi TUI 组件挂载到虚拟终端表面，按帧去重推送给 Android 原生界面，**支持最小化常驻停靠栏、随时收起与重开**。
-  - 完整实现官方 `OverlayHandle`（`hide` / `setHidden` / `focus` / `unfocus` / `getBounds`）、`Focusable.focused` 焦点流转与 `OverlayOptions`（`visible(w, h)`、`nonCapturing` 悬浮 HUD 浮层等）。
-  - **小屏自适应宽度 + 触控键鼠双打通 + OSC 8 链接**：默认「适配宽度」把 80 列桌面 TUI 自动缩放进手机屏幕，并按真实列数回传 `ui.resize`；原生支持可点击 **OSC 8 超链接**；接入官方 `KeybindingsManager` 匹配快捷键，并把触屏点按实时翻译为 `TuiMouseEvent` 交给组件的 `handleMouse()`。
-  - **终端控制序列原生桥接**：精准剥离零宽 `CURSOR_MARKER`、把 `FAKE_CURSOR` 转为反显 SGR，并实时拦截 `tui.terminal.write()` 发出的 **`BEL`（`\x07`）响铃**、**OSC 777 / 99 / 9 通知**、**OSC 0/2 窗口标题**与 **OSC 9;4 进度指示** —— 连社区写的终端小游戏音效和进度条，在手机上都能活起来！
-- **1:1 官方扩展渲染与拦截管线（`commands/catalog.mjs`）**：
-  - 第三方扩展与 MCP 工具直接交给官方 `ToolExecutionComponent`（经 `resolveToolRenderers`）渲染，完整保留 `details`、跨帧持久化 `state`、`renderShell: "self"` 自绘框架、防抖异步重绘（`render.invalidate`）与 `/reload` 缓存清理。
-  - 全面接通 `registerMessageRenderer`（`CustomMessageComponent`）、`registerEntryRenderer`（`CustomEntryComponent`）、`registerMarkdownTransformer`、`addAutocompleteProvider`（输入框实时补全扩展命令与参数）、`onTerminalInput`、`registerShortcut`（`catalog.shortcuts` / `triggerShortcut`）、`ctx.ui.getAllThemes()` / `getTheme()` / `setTheme()`、`registerFlag` 与真实 `FooterDataProvider`（实时 Git 分支与可用供应商计数）。
-  - 会话切换与 `/reload` 严格同步官方 `resetExtensionUI`（`ui.reset`）与 `catalog.changed` —— 装完新扩展包，**一键重载，命令面板、工具列表与模型目录秒级同步**。
-- **随包内置的自研原生增强扩展（`app/src/main/assets/pi-extensions/`）**：
-  - **`pi-highlight`**：通过认证本地回环服务直接复用 guest 里 Pi 自带的 `highlight.js` 与 `lovely-mermaid`，不在 Android 端塞第二套 JS 引擎，就能实现毫秒级语法高亮与 Mermaid 排版，且配色 100% 跟随官方主题。
-  - **`pi-android-bridge` + `pi-android-permission-gate`**：把 Android 设备能力封装为标准 Pi 扩展，关闭即零消耗，高危操作按规则拦截弹窗。
-- **透明统一的资源、工具与提示词总控台**：
-  - **设置 → 扩展与资源**：扩展、技能（Skills）、提示模板、主题、上下文文件、npm/git 包、MCP 服务器与项目信任一站直达，支持用户资源快捷删除，与桌面端 `~/.pi/agent/` 和 `.pi/` 配置 100% 互通。
-  - **设置 → 工具**：内置核心工具、Pi 内置高级工具（`codemode` / `mcp`）与全部用户扩展/MCP 工具实时分组开关，支持一键「设为新会话默认（`defaultTools`）」与「恢复默认」，完整集成 Pi 1.6.0 Codemode 与 `shellCommandPrefix`。
-  - **系统提示词与上下文管线 + 对话内一键查阅**：按 Pi 1.6.0 真实拼装顺序管理全局与项目级 `APPEND_SYSTEM.md` / `SYSTEM.md` / `AGENTS.md` 并就地重载；对话页右上角命令中心一键弹出「当前生效系统提示词」并按 `<tools>/<rules>/<addendum>/<project_context>/<skills>` 分段筛选。
+- **通勤路上修 Bug / 审 PR**：在本地项目里直接跑 `rg` / `fd` 定位代码、看红绿行内字级 Diff、跑单测并 `git commit`。
+- **随手甩截图与多文件上下文**：支持相册多选、文档多选、剪贴板粘贴图片与 `@文件名` 补全，内置大像素防 OOM 下采样与模型图片上限保护。
+- **把桌面端 Pi 扩展与 MCP 搬上手机**：用 Pi 1.6.0 **Code Mode** 编排多工具脚本、接 MCP 查文档/数据库，甚至在手机上直接畅玩带全屏交互式 TUI 与音效提示的扩展。
+- **按需唤醒手机自动化副驾**：按需开启无障碍屏幕操作、通知监听、剪贴板、位置、相机或 Shizuku Shell；不用时一键全关，**严格 0 Token 占用**。
 
 ---
 
-### 2. 真 Linux 装进口袋，三套容器引擎随心切
-不用 Root、不用 Termux，首次打开自动展开确定性打包的完整用户态：**Ubuntu 24.04 ARM64 · Node.js 24.22.1 · Git 2.43 · ripgrep 15.2 · fd 10.2 · Pi 1.6.0**。
+## 五大核心工程能力
 
-更重要的是**按载荷增量更新机制**：每个组件独立校验摘要与文件清单，以后升级 App 只替换变动的 `pi-engine`，**你在容器里自己装的工具和环境全部原样保留，绝不白洗盘。**
+### 1. 100% 官方 Pi 1.6.0 SDK + 移动端真实 TUI 投影引擎
+- **直跑官方 SDK（单文件 `host.bundle.mjs`）**：通过强类型、带背压与 Epoch 隔离的 JSONL 宿主直接驱动 `@earendil-works/pi-coding-agent`——不魔改核心语义，100% 兼容桌面端 `~/.pi/agent/` 与 `.pi/` 目录，上游新版本特性自然跟进。
+- **虚拟 TUI 表面投影（`ui/surfaces.mjs` → Jetpack Compose）**：扩展调用 `ctx.ui.custom()`、`setWidget()`、`setHeader()`、`setFooter()`、`tui.showOverlay()` 时自动投影为可折叠/最小化停靠的原生浮层，完整支持 `OverlayHandle`、`Focusable`、80 列自适应排版、可点击 **OSC 8 超链接**、触屏 `TuiMouseEvent`、官方 `KeybindingsManager` 与终端响铃/进度序列（`BEL` / `OSC 9;4` / `OSC 777`）。
+- **1:1 官方扩展工具渲染**：扩展与 MCP 工具卡片直走官方 `ToolExecutionComponent`（`resolveToolRenderers`），保留逐调用状态与热重载。
 
-三套运行时后端按机型自由切换：
+### 2. 桌面级离线富渲染管线（专为移动端打磨）
+- **离线 Mermaid 12.2.0 高清 Chromium/Skia 引擎**：支持 20+ 种 Mermaid 12 全系图表（流程图、时序图、类图、状态图、ER、甘特图、思维导图、时间线、Git 图、象限图、饼图、XYChart、桑基图、看板、架构图、C4 等），锁定真实 CSS 视口与 DPR 缩放、双 `rAF` 同步抓取、自动软件层重试防 ROM 离屏白图、双指缩放与一键全屏看图。
+- **离线 MathJax 4 全语法数学公式**：精准渲染行内 `$...$` / `\(...\)` / `\[...\]`、单/多行 `$$...$$`、` ```math ` 代码块以及独立 `egin{aligned/equation/align/gather/cases/matrix}` 环境，完美支持中文紧邻排版并自动避开 `$5 and $10` 货币误判。
+- **原生 `<1 ms` 代码高亮与全能富卡片**：35+ 编程语言本地零延迟同步着色，内置静态/动态 SVG、安全 HTML 预览、CSV/TSV 表格、JSON/YAML/XML 可折叠树、堆栈追踪与行内字级 Diff 卡片。
+- **流式零抖动与回滚瞬开**：自研双路径 GFM AST 解析（长流式走 `Channel.CONFLATED` 后台并发 + 短内容/缓存命中帧 0 同步）、`TailFollow` 精准锁底、`RowHeightCache` 防跳高，配合跨滚动 LRU 缓存（`PiMarkdownDocCache` & `PiCodeHighlightCache`）与 `PiMemoryTrimmer` 统一内存回收。
 
-| 运行时 | 定位与优势 |
+### 3. 真本地 Linux 与三引擎可切换运行时
+首次启动按摘要校验自动解压完整本地环境（**Ubuntu 24.04 ARM64 · Node.js 24.22.1 · Git 2.43 · ripgrep 15.2 · fd 10.2 · Pi 1.6.0**）。后续升级 APK 仅增量更新变化的分包，**绝不清空你在容器里装好的包与工具**。
+
+| 运行时引擎 | 定位与特点 |
 | :--- | :--- |
-| **PRoot** | Termux 构建的经典用户态系统调用翻译层，最稳的兼容性基线。 |
-| **Proroot** | 基于链接器与进程内 hook 的轻量替代运行时，大幅削减 PRoot 系统调用开销。 |
-| **TAWCROOT** | 基于单进程 `seccomp` 的高速方案（从固定上游源码编译），持续打磨稳定性。 |
+| **PRoot** | 久经考验的用户态系统调用翻译（Termux 构建），兼容性基线。 |
+| **Proroot** | 自定义动态链接器 + 进程内 Hook，大幅削减 PRoot 系统调用开销。 |
+| **TAWCROOT** | 基于上游源码编译的单进程 `seccomp` 后端，低开销原生体验。 |
+
+### 4. 极速冷启动、官方 `/tree` 分支与全工作区 `/resume`
+- **12 项冷启动自动化防回退守卫（`tools/check-startup-perf.mjs`）**：单文件 `host.bundle.mjs`、冷启动零 `jiti` / `Babel` / `undici` / `WebView` 初始化、`host.ready` 内嵌握手载荷、`session.open` 直出初始状态快照、`planDirect` 直拉 Node（无 `/bin/bash -c`）、并行 I/O 预处理、APK 版本戳 O(1) 跳过重复校验与后台错峰拉取。
+- **原汁原味 `/tree` 与增量索引 `/resume`**：完整移植官方 5 种过滤模式、子树折叠、树内搜索与任意节点分叉；持久 `.session-list-index.json` 实现跨项目秒搜秒切。
+- **100% 官方 Pi 主题兼容 + 中英双语零重启切换**：完整支持 `okhsl()` / `oklch()` 与自动前景对比度计算，克制中性的现代 Material 3 视觉层级，直接丢进桌面端 Pi 主题 JSON 即可明暗通透。
+
+### 5. 可选 Android 设备能力桥（`builtin:pi-android-bridge`）
+以官方 Pi SDK 原生 `builtin: true, replaceable: true` 机制内建（**设置 → 设备能力**）：
+- **三大分组**：屏幕自动化（无障碍）、系统与硬件（通知、剪贴板、位置、相机、应用控制）、设备 Shell（Shizuku）。
+- **零占用 + 防误操作**：关闭的工具完全不注入模型上下文（**严格 0 Token**）；不可逆高危操作强制弹出原生三选一确认框。
 
 ---
 
-### 3. 直接跑官方 Pi 1.6.0 SDK —— 上游一进化，你立刻白吃
-Pi for Android 不是山寨重写，也不是脆弱的 CLI 文本解析器，而是由独立 **Node.js SDK Host** 通过带背压、带序号校验（`seq`）、带会话代际隔离（`epoch`）的 JSONL 协议直接驱动官方 SDK：
-
-- **第一时间享受上游最新进化**：已升级至 **Pi `1.6.0`** —— 内置 **GPT-6.2 Sol / GPT-6.2 Astra**（OpenAI / Azure / Codex 默认切换，自动隐藏不支持的 `off` 思考档位）、通义 Token Plan 新网关与 `qwen4-max-preview` / `deepseek-v4.1-flash`、1,698 个官方 chat 模型、`undici 8.12.4`（6 项 GHSA 安全修复）、Codex 长思考断连续传与缓存命中优化。
-- **深度吃透 1.6.0 宿主新特性**：接入 `takeUnreportedDiagnostics()`（启动与每次会话替换精准推送模型回退与扩展报错）、`commandOutput: "capture"`（彻底防止 `git`/`npm` 污染管道或卡死密码输入）、OpenAI & Anthropic 推理块被丢弃实时诊断通知、以及 `read` 非视觉模型读图折叠态警告。
-- **全链路冷启动提速与实时状态推流**：优先加载 `dist/bundle/index.js`、未配置自定义代理/超时时延迟加载 `http-dispatcher`/`undici`、`session.open` 响应直出初始状态快照、APK 版本戳跳过重复资产哈希、延后后台会话列表扫描；上下文用量、Token 计数与费用全部由宿主 `stateStore` 实时推送，告别卡顿轮询。
-
----
-
-### 4. 为手机审美与流畅度重做的阅读体验 + 100% 官方主题兼容
-- **克制、耐看的无描边色块美学**：对话流工具卡彻底告别刺眼重边框（仅运行中保留柔和呼吸微描边），思考过程收敛为不打扰阅读的单行胶囊（`思考中…` / `已思考 12s`），代码 Diff、LaTeX 公式、Mermaid 图表与全屏看图浑然一体。
-- **100% 兼容官方 Pi 主题**：完整解析官方主题 JSON 与 `okhsl()` / `oklch()` 色彩空间，所有主题色块自动计算前景对比度，零硬编码白字，随便导入社区深浅主题都能保证高对比、高颜值。
-- **全能多源附件 + 防亿像素 OOM**：相册多选、文档多选、剪贴板图片一键粘贴、`@` 工作区文件引用一站配齐；内置 `computeSafeSampleSize()` 安全下采样，完美对齐 Pi 图片压缩档位与每模型单条消息图片上限，亿像素原图也不爆内存。
-- **移动端内存精简与丝滑滚动**：图片缓存采用 SHA-256 紧凑键（键内存直降 99.999%，有效容量暴涨 5–10×），统一 `PiMemoryTrimmer` 响应系统 `onTrimMemory()` 与会话切换回收；消除输入框静止态 60–120fps 无效重组，动画全部下沉 `graphicsLayer`。
-
----
-
-### 5. 官方级 `/tree` 分支导航 + 毫秒级跨项目 `/resume` 搜索
-- **1:1 复刻官方会话树（`/tree`）**：完整支持 5 档过滤（默认 / 无工具结果 / 仅用户消息 / 仅书签 / 全部）、分支折叠、树内搜索、当前分支优先与任意节点无损分叉。
-- **增量索引会话列表（`/resume`）**：持久化 `.session-list-index.json` 增量索引 + 按工作区分组，打开即秒出；输入关键词自动无缝回源官方全文相关性搜索，跨几十个历史项目也能瞬间找回那段对话。
-
----
-
-### 6. 按需开启的 Android 设备能力（关闭即严格 0 Token）
-在 **设置 → 设备能力** 中，你可以把手机本身变成 Agent 的扩展外设：
-- **三大清爽分组**：屏幕自动化（无障碍读取/点击/滑动/输入/截屏）、系统交互与硬件（通知监听、剪贴板、定位、相机、应用启停）、设备 Shell（Shizuku / ADB）。
-- **2×2 实时就绪状态看板** + 一键「全部关闭」按钮，权限状态一目了然。
-- **安全与省钱双底线**：未启用的工具**绝不注册给模型（严格 0 Token）**；一旦涉及 `pm uninstall`、`pm clear`、`dd`、强制停止应用等不可逆高危操作，权限闸门强制弹出原生三选一确认框，绝不替你自作主张。
-
----
-
-## 30 秒极速上手
+## 快速开始
 
 | 运行要求 | 说明 |
 | :--- | :--- |
-| **系统版本** | Android 8.0（API 26）及以上 |
-| **CPU 架构** | ARM64（`arm64-v8a`） |
-| **Root / Termux** | **都不需要** |
-| **覆盖升级** | 固定侧载签名，新版直接覆盖安装，保留全部会话与容器环境 |
+| **Android 版本** | Android 8.0 (API 26) 及以上 |
+| **CPU 架构** | ARM64 (`arm64-v8a`) |
+| **Root / Termux** | **均不需要** |
+| **覆盖升级** | 固定 sideload 签名，新版本 APK 直接覆盖安装不丢数据 |
 
-1. 前往 **[GitHub Releases](https://github.com/heikeyangle-code/pi-android/releases)** 下载最新 `pi-android-*-sideload28-arm64.apk`。
-2. 安装并打开，等待首次内置 Linux + Pi 引擎自动解包完成。
-3. 在 **设置 → 模型与供应商** 登录你的账号（支持 7 家 OAuth 订阅直登、API Key 或自定义 OpenAI 兼容接口）。
-4. 选一个手机上的项目目录，开始你的口袋 Coding Agent 体验。
+1. 前往 **[GitHub Releases](https://github.com/heikeyangle-code/pi-android/releases)** 下载最新版 `pi-android-*-sideload28-arm64.apk`。
+2. 安装并打开，等待首次自动解压内置 Linux 与 Node 运行时。
+3. 在 **设置 → 模型与供应商** 中登录订阅 OAuth 账号、填写 API Key 或自定义 OpenAI 兼容端点。
+4. 选中手机里的任意项目目录，即可开始编码。
 
 ---
 
-## 系统架构与工程严谨度
+## 架构与工程质量
 
 ```mermaid
 flowchart TB
-    A["Android 原生应用（Kotlin · Jetpack Compose · Material 3）"]
-    B["对话流 · 工作区 · 会话树 · 虚拟 TUI 交互表面"]
-    C["Kotlin Host Client & 实时状态仓"]
-    D["类型化 JSONL 协议（seq 序号 · epoch 隔离 · 背压控制）"]
-    E["Node.js SDK Host（app/src/main/assets/guest/sdk-host）"]
-    F["@earendil-works/pi-coding-agent 1.6.0 官方 SDK"]
-    G["内置工具 · 扩展生态 · MCP · Code Mode · 模型目录"]
-
-    H["三运行时调度（PRoot · Proroot · TAWCROOT）"]
+    A["Android 客户端 (Kotlin · Jetpack Compose · Material 3)"]
+    B["对话流 · 离线富渲染 (Mermaid 12 / MathJax 4) · 工作区 · /tree · 虚拟 TUI"]
+    C["Kotlin 宿主客户端 · 实时状态库 · PiMemoryTrimmer"]
+    D["强类型 JSONL 帧协议 (seq · epoch · backpressure)"]
+    E["Node.js SDK 宿主 (host.bundle.mjs + builtin:pi-android-bridge)"]
+    F["官方 @earendil-works/pi-coding-agent 1.6.0 SDK"]
+    G["内置工具 · 社区扩展 · MCP · Code Mode · 35+ 供应商"]
+    H["三引擎容器管理 (PRoot · Proroot · TAWCROOT)"]
     L["内置 Ubuntu 24.04 ARM64 · Node 24.22.1 · Git · rg · fd"]
-
     A --> B
     B --> C
     C <--> D
@@ -196,46 +156,17 @@ flowchart TB
     H --> L
 ```
 
-### 面向开发者的工程护城河
-- **307 项真引擎集成测试 + 契约守卫**：每次提交都在真实 Pi SDK 上跑满 `contract.mjs`（覆盖公开导出 + 全部内部 `dist/` 路径）与 3 套 `test.mjs`（`bundle` / `--no-bundle` / `--scandir-fix`），再叠加 `:protocol` JVM 单测、Android API 与双语 i18n 静态守卫、TAWCROOT NDK 编译与双变体签名 APK 构建（6/6 GitHub Actions CI）。
-- **自动化上游升级审计流**：内置 [tools/pi-upgrade-audit.mjs](tools/pi-upgrade-audit.mjs) 与 [docs/sdk-host/upgrading.md](docs/sdk-host/upgrading.md)，上游 Pi 一发新包，一条命令自动扫描 9 条集成接缝并精确列出宿主层与 App 层改动清单。
+每次推送均通过 **6 项完整 GitHub Actions CI**（TAWCROOT NDK 编译、**326 项真实 SDK 宿主测试**覆盖 bundle / unbundled / `--scandir-fix` 与冷启动 `import-audit`、Android API / 双语 / 12 项冷启动静态守卫、JVM 单元测试以及 `modern36` + `sideload28` 双签名 APK 构建）：
 
 ```bash
 git clone https://github.com/heikeyangle-code/pi-android.git
 cd pi-android
-
-# 检查上游 Pi 更新并审计全部 9 条集成接缝
-node tools/pi-upgrade-audit.mjs --check-only
-
-# 运行真实 Pi SDK 契约检查与 299 项宿主测试
 node tools/sdk-host/contract.mjs
 node tools/sdk-host/test.mjs
-
-# 运行协议单测并构建发布版 APK
+node tools/check-startup-perf.mjs
 ./gradlew :protocol:test
 node tools/fetch-runtime.mjs
 ./gradlew :app:assembleRelease
 ```
 
-相关技术文档：
-- [`docs/sdk-host/architecture.md`](docs/sdk-host/architecture.md) — SDK Host 架构与生命周期
-- [`docs/sdk-host/protocol.md`](docs/sdk-host/protocol.md) — 线协议 v1 规范
-- [`docs/sdk-host/upgrading.md`](docs/sdk-host/upgrading.md) — 上游 Pi 发包六步升级标准流程
-- [`docs/runtime-engines.md`](docs/runtime-engines.md) — PRoot / Proroot / TAWCROOT 对比说明
-
----
-
-## 坦诚说明与参与贡献
-
-- **CI 绿灯能证明什么**：6/6 CI 全绿证明代码可编译、与锁定版本 Pi SDK 契约 100% 对齐、双签名 APK 装配完整；具体机型的三运行时切换与硬件权限体验需以真机实测为准。
-- **界面语言**：已全面支持 **简体中文 / English 双语界面**，默认跟随系统语言，并可在 **设置 → 外观 → 界面语言** 中秒切零重启生效。
-- **欢迎 Star 与 PR**：如果你喜欢「把真正的 Coding Agent 塞进手机」这件事，欢迎点一颗 **Star** 支持！无论你是想提 Issue、补充更多机型实测反馈，还是参与多语言与扩展生态建设，都非常欢迎。
-
----
-
-## 致谢与许可证
-
-本项目建立在以下优秀项目之上：
-[Pi Coding Agent](https://github.com/earendil-works/pi) · [Node.js](https://nodejs.org/) · [Ubuntu](https://ubuntu.com/) · [PRoot (Termux)](https://github.com/termux/proot) · [Proroot](https://github.com/coderredlab/proroot) · [TAWCROOT](https://github.com/wmww/tawc)（MIT, © Sophie Winter）· [ripgrep](https://github.com/BurntSushi/ripgrep) · [fd](https://github.com/sharkdp/fd) · [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) · [思源宋体 CN](https://github.com/adobe-fonts/source-han-serif)
-
-应用源代码采用 **MIT License** 开源。随包分发的第三方组件保留各自上游许可证（PRoot 取自 Termux 构建、Proroot 为未修改专有二进制、TAWCROOT 为 MIT 等），完整许可文本与声明随包内置在 [`app/src/main/assets/licenses/`](app/src/main/assets/licenses/)。
+**相关文档**：[`架构设计`](docs/sdk-host/architecture.md) · [`通信协议`](docs/sdk-host/protocol.md) · [`升级指南`](docs/sdk-host/upgrading.md) · [`运行时引擎`](docs/runtime-engines.md) · [`AGENTS.md`](AGENTS.md)
