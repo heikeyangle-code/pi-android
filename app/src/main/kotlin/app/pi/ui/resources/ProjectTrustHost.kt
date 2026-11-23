@@ -10,7 +10,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
  */
 @Composable
 internal fun ProjectTrustHost(session: PiSessionViewModel) {
-    val prompt by session.trustPrompt.collectAsState()
+    val prompt by session.trustPrompt.collectAsStateWithLifecycle()
     val state = prompt ?: return
     val scope = rememberCoroutineScope()
     var error by remember(state.cwd) { mutableStateOf<String?>(null) }

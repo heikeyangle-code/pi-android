@@ -15,6 +15,8 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -22,11 +24,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,12 +47,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -76,6 +78,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextRange
@@ -150,19 +155,9 @@ internal fun Composer(
     onTerminalInputKey: ((String) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
+    val haptic = LocalHapticFeedback.current
     val isBash = bashModeOf(draft)
     val isBashExcluded = bashExcludedOf(draft)
-
-    val targetBorderColor = if (isBash) {
-        palette.bashMode
-    } else {
-        palette.thinking(thinkingLevel)
-    }
-    val borderColor by animateColorAsState(
-        targetValue = targetBorderColor,
-        animationSpec = tween(COMPOSER_BORDER_MS),
-        label = "composerBorderColor",
-    )
 
     val inputShape = RoundedCornerShape(PiSpacing.composerRadius)
     val composerProse = PiTheme.text.prose
@@ -175,16 +170,25 @@ internal fun Composer(
     val fieldMaxHeight = lineHeightDp * COMPOSER_MAX_LINES
 
     var focused by remember { mutableStateOf(false) }
+    val activeChrome = focused || isBash || streaming
+    val targetBorderColor = when {
+        isBash -> palette.bashMode
+        activeChrome -> palette.thinking(thinkingLevel)
+        else -> palette.borderMuted
+    }
+    val borderColor by animateColorAsState(
+        targetValue = targetBorderColor,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+        label = "composerBorderColor",
+    )
     val borderWidth by animateDpAsState(
-        targetValue = if (focused || isBash) 1.75.dp else 1.dp,
-        animationSpec = tween(COMPOSER_BORDER_MS),
+        targetValue = if (focused || isBash) 1.5.dp else 0.75.dp,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
         label = "composerBorderWidth",
     )
 
     val animationsEnabled = ValueAnimator.areAnimatorsEnabled()
-    // 仅在流式输出且未聚焦时启动呼吸动画，且只传 State 到绘制阶段读取：
-    // 以前无条件运行 rememberInfiniteTransition 并用 `by` 在组合期读取，导致空闲时
-    // 整个输入框也 60~120fps 空转重组！现在空闲零开销、流式零重组。
+    // 仅在流式输出且未聚焦时启动呼吸动画，且只传 State 到绘制阶段读取：空闲零开销、流式零重组。
     val pulseState: androidx.compose.runtime.State<Float>? = if (streaming && !focused && animationsEnabled) {
         rememberInfiniteTransition(label = "composerPulse").animateFloat(
             initialValue = 1f,
@@ -198,13 +202,13 @@ internal fun Composer(
     } else {
         null
     }
-    val idleAlpha = if (focused || isBash || streaming) 0.92f else 0.55f
+    val idleAlpha = if (activeChrome) 0.85f else 0.52f
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(inputShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow, inputShape)
+            .background(MaterialTheme.colorScheme.surfaceContainer, inputShape)
             .drawWithContent {
                 drawContent()
                 val factor = pulseState?.value ?: 1f
@@ -427,28 +431,54 @@ internal fun Composer(
             if (streaming) {
                 if (canSteer || canFollowUp) {
                     DeliveryActionPill(
-                        icon = Icons.Filled.ArrowForward,
+                        icon = Icons.AutoMirrored.Filled.ArrowForward,
                         label = tr("引导", "Steer"),
                         tint = palette.warning,
                         enabled = canSteer,
-                        onClick = onSteer,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onSteer()
+                        },
                     )
                     DeliveryActionPill(
                         icon = Icons.Filled.ArrowDownward,
                         label = tr("后续", "Follow-up"),
                         tint = palette.accent,
                         enabled = canFollowUp,
-                        onClick = onFollowUp,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onFollowUp()
+                        },
                     )
                 }
-                // 流式停止按钮：醒目红色，草稿为空时展开成「■ 停止」胶囊
+                // 流式停止按钮：高对比紧凑停止钮，带触觉确认反馈
                 val showStopLabel = !(canSteer || canFollowUp)
+                val stopInteraction = remember { MutableInteractionSource() }
+                val stopPressed by stopInteraction.collectIsPressedAsState()
+                val stopScale by animateFloatAsState(
+                    targetValue = if (stopPressed) 0.93f else 1f,
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh),
+                    label = "stopScale",
+                )
                 Row(
                     modifier = Modifier
                         .height(36.dp)
+                        .graphicsLayer {
+                            scaleX = stopScale
+                            scaleY = stopScale
+                        }
                         .clip(CircleShape)
                         .background(palette.error)
-                        .clickable(role = Role.Button, onClickLabel = tr("停止生成", "Stop generating"), onClick = onStop)
+                        .clickable(
+                            interactionSource = stopInteraction,
+                            indication = ripple(color = palette.contrastOn(palette.error)),
+                            role = Role.Button,
+                            onClickLabel = tr("停止生成", "Stop generating"),
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onStop()
+                            },
+                        )
                         .padding(horizontal = if (showStopLabel) 13.dp else 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -471,33 +501,58 @@ internal fun Composer(
                 }
             } else {
                 val hasPayload = draft.isNotBlank() || canClear
+                val sendInteraction = remember { MutableInteractionSource() }
+                val sendPressed by sendInteraction.collectIsPressedAsState()
+                val sendScale by animateFloatAsState(
+                    targetValue = when {
+                        sendPressed && hasPayload -> 0.9f
+                        hasPayload -> 1f
+                        else -> 0.95f
+                    },
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+                    label = "sendScale",
+                )
+                val isBashReady = isBash && draft.trim().length > 1
                 val sendBg by animateColorAsState(
                     targetValue = when {
-                        isBash && draft.trim().length > 1 -> palette.bashMode
-                        hasPayload -> palette.accent
+                        isBashReady -> palette.bashMode
+                        hasPayload -> MaterialTheme.colorScheme.onSurface
                         else -> MaterialTheme.colorScheme.surfaceContainerHighest
                     },
-                    animationSpec = tween(150),
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
                     label = "sendBtnBg",
                 )
-                val sendFg = if (hasPayload) palette.contrastOn(sendBg) else palette.muted
+                val sendFg = when {
+                    isBashReady -> palette.contrastOn(palette.bashMode)
+                    hasPayload -> MaterialTheme.colorScheme.surface
+                    else -> palette.dim
+                }
                 Box(
                     modifier = Modifier
                         .size(36.dp)
+                        .graphicsLayer {
+                            scaleX = sendScale
+                            scaleY = sendScale
+                        }
                         .clip(CircleShape)
                         .background(sendBg)
                         .clickable(
+                            interactionSource = sendInteraction,
+                            indication = ripple(color = sendFg),
                             enabled = hasPayload,
                             role = Role.Button,
                             onClickLabel = if (isBash) tr("运行命令", "Run command") else tr("发送", "Send"),
-                            onClick = onSend,
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSend()
+                            },
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        imageVector = if (isBash) Icons.Filled.PlayArrow else Icons.Filled.Send,
+                        imageVector = if (isBash) Icons.Filled.PlayArrow else Icons.Filled.ArrowUpward,
                         contentDescription = if (isBash) tr("运行", "Run") else tr("发送", "Send"),
-                        modifier = Modifier.size(if (isBash) 20.dp else 17.dp),
+                        modifier = Modifier.size(if (isBash) 20.dp else 19.dp),
                         tint = sendFg,
                     )
                 }
@@ -514,22 +569,26 @@ private fun ComposerModelPill(
     onLongClick: () -> Unit,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(999.dp)
+    val haptic = LocalHapticFeedback.current
+    val shape = RoundedCornerShape(8.dp)
     Row(
         modifier = Modifier
-            .height(30.dp)
+            .height(28.dp)
             .widthIn(max = 176.dp)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.65f))
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = ripple(color = MaterialTheme.colorScheme.onSurface),
                 onClickLabel = tr("选择模型", "Select model"),
                 onClick = onClick,
                 onLongClickLabel = tr("切换到下一个模型", "Cycle to next model"),
-                onLongClick = onLongClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                },
             )
-            .padding(start = 9.dp, end = 6.dp),
+            .padding(start = 8.dp, end = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
@@ -558,24 +617,31 @@ private fun ThinkingLevelPill(
     onLongClick: () -> Unit,
 ) {
     val palette = PiTheme.palette
+    val haptic = LocalHapticFeedback.current
     val dotColor = palette.thinking(level)
     val active = !level.equals("off", ignoreCase = true)
-    val shape = RoundedCornerShape(999.dp)
+    val shape = RoundedCornerShape(8.dp)
     Row(
         modifier = Modifier
-            .height(30.dp)
+            .height(28.dp)
             .clip(shape)
             .background(
-                if (active) dotColor.copy(alpha = 0.14f)
-                else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f),
+                if (active) dotColor.copy(alpha = 0.12f)
+                else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.55f),
             )
             .combinedClickable(
                 onClickLabel = tr("切换思考等级：${thinkingLabelOf(level)}", "Cycle thinking level: ${thinkingLabelOf(level)}"),
-                onClick = onClick,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onClick()
+                },
                 onLongClickLabel = tr("选择思考等级", "Select thinking level"),
-                onLongClick = onLongClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                },
             )
-            .padding(horizontal = 9.dp),
+            .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
@@ -602,14 +668,14 @@ private fun ContextUsagePill(
     val palette = PiTheme.palette
     val percent = usage?.percent
     val tone = percent?.let { contextProgressColor(it, palette) } ?: palette.muted
-    val shape = RoundedCornerShape(999.dp)
+    val shape = RoundedCornerShape(8.dp)
     Row(
         modifier = Modifier
-            .height(30.dp)
+            .height(28.dp)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.55f))
             .clickable(onClickLabel = tr("查看上下文与用量", "View context and usage"), onClick = onClick)
-            .padding(horizontal = 8.dp),
+            .padding(horizontal = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
@@ -622,7 +688,7 @@ private fun ContextUsagePill(
         if (percent != null) {
             Text(
                 text = String.format(Locale.US, "%.0f%%", percent),
-                style = PiTheme.text.monoSmall,
+                style = PiTheme.text.monoSmall.copy(fontFeatureSettings = "tnum"),
                 color = tone,
                 maxLines = 1,
             )
@@ -638,16 +704,16 @@ private fun ComposerExtensionChip(
     onLongClick: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(999.dp)
-    val bgAlpha = if (chip.hasInteractive) 0.16f else 0.11f
-    val borderAlpha = if (chip.hasInteractive) 0.42f else 0.25f
+    val shape = RoundedCornerShape(8.dp)
     Row(
         modifier = Modifier
-            .height(30.dp)
+            .height(28.dp)
             .widthIn(max = 152.dp)
             .clip(shape)
-            .background(palette.accent.copy(alpha = bgAlpha))
-            .border(PiSpacing.hairline, palette.accent.copy(alpha = borderAlpha), shape)
+            .background(
+                if (chip.hasInteractive) palette.accent.copy(alpha = 0.14f)
+                else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.65f),
+            )
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = ripple(color = palette.accent),
@@ -752,17 +818,12 @@ private fun DeliveryActionPill(
     onClick: () -> Unit,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(999.dp)
+    val shape = RoundedCornerShape(10.dp)
     Row(
         modifier = Modifier
             .height(34.dp)
             .clip(shape)
-            .background(if (enabled) tint.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh)
-            .border(
-                width = 1.dp,
-                color = if (enabled) tint.copy(alpha = 0.35f) else Color.Transparent,
-                shape = shape,
-            )
+            .background(if (enabled) tint.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceContainerHigh)
             .clickable(enabled = enabled, role = Role.Button, onClickLabel = label, onClick = onClick)
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,

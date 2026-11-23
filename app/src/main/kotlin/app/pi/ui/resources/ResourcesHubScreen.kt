@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Extension
@@ -24,7 +24,7 @@ import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Inventory2
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
@@ -306,7 +306,7 @@ private fun Hub(
                         }
                         ModelsDivider()
                         HubRow(
-                            icon = Icons.Filled.Article,
+                            icon = Icons.AutoMirrored.Filled.Article,
                             iconTint = palette.muted,
                             title = tr("上下文与系统提示", "Context & System Prompt"),
                             summary = if (model.hasLoaded) contextSummary(model) else "",
@@ -465,7 +465,7 @@ private fun HubRow(
         }
         badge?.let { TagPill(it, tone = PiTheme.palette.warning) }
         Icon(
-            Icons.Filled.KeyboardArrowRight,
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
             tint = PiTheme.palette.dim,
             modifier = Modifier.size(18.dp),

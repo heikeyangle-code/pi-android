@@ -20,7 +20,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,7 +78,7 @@ fun ExtensionUiHost(
     // 仅订阅扩展 UI / 通知 / 响铃切片：流式每 token 与 1Hz 工具计时不再触发全应用顶层宿主重组。
     val hostSlice by remember(session) {
         session.state.map { it.toExtensionHostSlice() }.distinctUntilChanged()
-    }.collectAsState(initial = session.state.value.toExtensionHostSlice())
+    }.collectAsStateWithLifecycle(initialValue = session.state.value.toExtensionHostSlice())
     val hostState = remember { SnackbarHostState() }
     var bellMuted by remember { mutableStateOf(false) }
     var minimizedSurfaceId by remember { mutableStateOf<String?>(null) }

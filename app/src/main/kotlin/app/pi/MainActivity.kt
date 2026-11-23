@@ -11,7 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.toArgb
@@ -56,11 +56,11 @@ class MainActivity : ComponentActivity() {
             // against this value — the same job `resolveThemeSetting` does for
             // pi's own terminal background detection (`theme.ts:597-608`).
             val systemDark = isSystemInDarkTheme()
-            val theme by session.theme.collectAsState()
+            val theme by session.theme.collectAsStateWithLifecycle()
             // 仅订阅 typographyProfile：避免流式输出每 token / 1Hz 工具计时都触发整个 MainActivity 根重组。
             val typographyProfile by remember(session) {
                 session.state.map { it.prefs.typographyProfile }.distinctUntilChanged()
-            }.collectAsState(initial = session.state.value.prefs.typographyProfile)
+            }.collectAsStateWithLifecycle(initialValue = session.state.value.prefs.typographyProfile)
 
             LaunchedEffect(systemDark) { session.startUiPreferences(systemDark) }
 

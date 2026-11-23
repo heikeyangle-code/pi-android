@@ -3,7 +3,7 @@ package app.pi.ui.settings
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ColorLens
-import androidx.compose.material.icons.filled.CompareArrows
+import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
@@ -852,7 +852,7 @@ private fun buildGroups(zh: Boolean): List<PiSettingsGroup> {
         PiSettingsGroup(G_PROMPTS, t("系统提示词与上下文", "System Prompt & Context"), Icons.Filled.Edit) {
             "APPEND_SYSTEM.md · SYSTEM.md · AGENTS.md"
         },
-        PiSettingsGroup(G_MESSAGES, t("对话与消息", "Chat & Messages"), Icons.Filled.CompareArrows) { store ->
+        PiSettingsGroup(G_MESSAGES, t("对话与消息", "Chat & Messages"), Icons.AutoMirrored.Filled.CompareArrows) { store ->
             t(
                 "引导：${PiSettingsCatalog.summaryText(store, "steeringMode")} · 后续：${PiSettingsCatalog.summaryText(store, "followUpMode")} · 续接：${PiSettingsCatalog.summaryText(store, "app.sessions.resumeLast")}",
                 "Steer: ${PiSettingsCatalog.summaryText(store, "steeringMode")} · Follow-up: ${PiSettingsCatalog.summaryText(store, "followUpMode")} · Resume: ${PiSettingsCatalog.summaryText(store, "app.sessions.resumeLast")}",

@@ -895,27 +895,44 @@ private fun PiSessionViewModel.navigateFailureText(error: Throwable): String {
  * error, so no empty-name check is duplicated here.
  */
 internal fun PiSessionViewModel.renameSessionImpl(name: String) {
+    val trimmed = name.trim()
     call(tr("重命名会话", "Rename session")) { api ->
-        api.setSessionName(name)
+        api.setSessionName(trimmed)
         _state.update { s -> s.copy(
-            meta = s.meta.copy(sessionName = name.trim()),
+            meta = s.meta.copy(sessionName = trimmed),
         ) }
+        applyActiveRow()
+        if (sessionListLoadedOnce) refreshSessions()
+        pushNotice(tr("已重命名为「$trimmed」", "Renamed to "$trimmed""), Notice.Tone.Info)
     }
 }
 
 /**
- * 会话列表里长按「重命名」：当前正在用的会话走 RPC（引擎正往它的文件里追加，不能同时写），
- * 其余会话由宿主用 `SessionManager.open(path).appendSessionInfo(name)` 追加一条 `session_info`（[SessionLibrary.rename]）。
+ * 会话列表里长按「重命名」：当前正在用的会话（含尚未落盘的 0 消息新会话）统一走 SDK `setSessionName`，
+ * 其余会话由宿主用 `SessionManager.open(path).appendSessionInfo(name)` 追加一条 `session_info`（[SessionLibrary.rename]），
+ * 并立即乐观更新列表行再静默与磁盘对账。
  */
 internal fun PiSessionViewModel.renameSessionFromListImpl(summary: SessionSummary, name: String) {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return
     val open = _state.value.meta.sessionFile?.substringAfterLast('/')
-    if (open != null && open == summary.file.name) {
-        renameSession(name)
+    val activeId = _state.value.meta.sessionId?.takeIf { it.isNotBlank() }
+    val isCurrent = summary.isCurrent ||
+        (open != null && open == summary.file.name) ||
+        (activeId != null && summary.id == activeId)
+    if (isCurrent) {
+        renameSession(trimmed)
         return
     }
     viewModelScope.launch {
-        val ok = sessionLibrary.rename(summary.file, name)
+        val ok = sessionLibrary.rename(summary.file, trimmed)
         if (ok) {
+            _sessionList.value = _sessionList.value.copy(
+                rows = _sessionList.value.rows.map { row ->
+                    if (row.file.absolutePath == summary.file.absolutePath) row.copy(name = trimmed) else row
+                },
+            )
+            pushNotice(tr("已重命名为「$trimmed」", "Renamed to "$trimmed""), Notice.Tone.Info)
             refreshSessions()
         } else {
             pushNotice(tr("重命名失败：${summary.file.name}", "Rename failed: ${summary.file.name}"), Notice.Tone.Warning)

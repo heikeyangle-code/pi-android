@@ -639,14 +639,15 @@ private fun PiPalette.colorScheme(): androidx.compose.material3.ColorScheme {
         onSurface = text,
         surfaceVariant = cardBg,
         onSurfaceVariant = muted,
-        surfaceTint = accent,
+        // Disable M3 tonal tint wash so elevated surfaces stay pure neutral grayscale.
+        surfaceTint = Color.Transparent,
 
-        // Elevation ladder: crisp layered separation for both dark obsidian and light paper themes.
+        // Neutral surfaceContainer ladder: crisp, restrained tonal depth without accent color bleed.
         surfaceContainerLowest = pageBg,
         surfaceContainerLow = cardBg,
-        surfaceContainer = if (isDark) cardBg.elevate(text, 0.04f) else pageBg.elevate(text, 0.025f),
-        surfaceContainerHigh = if (isDark) cardBg.elevate(text, 0.075f) else pageBg.elevate(text, 0.05f),
-        surfaceContainerHighest = if (isDark) cardBg.elevate(text, 0.12f) else pageBg.elevate(text, 0.085f),
+        surfaceContainer = if (isDark) cardBg.elevate(text, 0.035f) else pageBg.elevate(text, 0.022f),
+        surfaceContainerHigh = if (isDark) cardBg.elevate(text, 0.068f) else pageBg.elevate(text, 0.045f),
+        surfaceContainerHighest = if (isDark) cardBg.elevate(text, 0.11f) else pageBg.elevate(text, 0.078f),
         surfaceBright = cardBg.elevate(text, 0.14f),
         surfaceDim = pageBg.elevate(text, 0.02f),
 

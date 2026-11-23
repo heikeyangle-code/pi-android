@@ -112,12 +112,17 @@ async function parseSessionMetaFile(filePath, fileStats, signal) {
     let firstMessage = "";
     let name;
     let lastActivityTime;
-    const rl = createInterface({
-      input: createReadStream(filePath, { encoding: "utf8", signal }),
-      crlfDelay: Infinity,
-    });
-    for await (const line of rl) {
-      const trimmed = line.trim();
+    // 对齐官方 session-manager.js (#11956)：不把 signal 直接交给 createReadStream，
+    // 防止提前跳出循环后 abort 触发未监听的 stream error；循环内显式检查并在 finally 销毁流。
+    const stream = createReadStream(filePath, { encoding: "utf8" });
+    try {
+      const rl = createInterface({
+        input: stream,
+        crlfDelay: Infinity,
+      });
+      for await (const line of rl) {
+        signal?.throwIfAborted();
+        const trimmed = line.trim();
       if (!trimmed) continue;
       let entry;
       try {
@@ -147,7 +152,11 @@ async function parseSessionMetaFile(filePath, fileStats, signal) {
         const textContent = extractTextContent(message);
         if (textContent) firstMessage = textContent;
       }
+      }
+    } finally {
+      stream.destroy();
     }
+    signal?.throwIfAborted();
     if (!header) return null;
     const cwd = typeof header.cwd === "string" ? header.cwd : "";
     const parentSessionPath = header.parentSession;
@@ -421,8 +430,10 @@ export function register(reg, { controller }) {
     if (!dir || !existsSync(dir)) return null;
     const existing = await readDiskIndex(dir);
     if (!existing) return null;
-    const dirEntries = await readdir(dir);
-    const jsonlNames = dirEntries.filter((f) => f.endsWith(".jsonl"));
+    const dirEntries = await readdir(dir, { withFileTypes: true });
+    // 若存在子目录（例如内置终端运行官方 pi CLI 生成的 --cwd--/ 目录），回落官方 SessionManager.listAll 确保 100% 不漏会话。
+    if (dirEntries.some((d) => d.isDirectory())) return null;
+    const jsonlNames = dirEntries.filter((d) => d.isFile() && d.name.endsWith(".jsonl")).map((d) => d.name);
     const statList = await mapWithConcurrency(
       jsonlNames,
       STAT_CONCURRENCY,

@@ -24,7 +24,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileCopy
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.UploadFile
@@ -383,7 +383,7 @@ internal fun WorkspaceMenuSheet(
             MenuAction(tr("在对话里引用（@）", "Mention in chat (@)"), onMention, tone = palette.accent, icon = Icons.Filled.AlternateEmail)
             WsHairline()
             MenuAction(tr("分享文件", "Share file"), onShareFile, icon = Icons.Filled.Share)
-            MenuAction(tr("用其他应用打开", "Open with another app"), onOpenWithApp, icon = Icons.Filled.OpenInNew)
+            MenuAction(tr("用其他应用打开", "Open with another app"), onOpenWithApp, icon = Icons.AutoMirrored.Filled.OpenInNew)
             MenuAction(tr("导出到 Download", "Export to Downloads"), onExport, icon = Icons.Filled.Download)
             WsHairline()
             MenuAction(tr("复制副本", "Duplicate"), onDuplicate, icon = Icons.Filled.FileCopy)

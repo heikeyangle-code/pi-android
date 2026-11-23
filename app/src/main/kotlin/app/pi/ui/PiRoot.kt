@@ -4,11 +4,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -47,7 +48,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,6 +65,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,6 +76,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.pi.R
 import app.pi.i18n.piStr
 import app.pi.i18n.tr
+import app.pi.ui.components.PiDialog
+import app.pi.ui.components.PiDialogAction
+import app.pi.ui.components.PiDialogActions
+import app.pi.ui.components.PiDialogBody
+import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.extension.ExtensionUiHost
 import app.pi.ui.screens.ChatScreen
 import app.pi.ui.screens.ProjectScreen
@@ -350,6 +359,8 @@ fun PiSeg(
     modifier: Modifier = Modifier,
     disabledIndices: Set<Int> = emptySet(),
 ) {
+    val haptic = LocalHapticFeedback.current
+    val segSpring = spring<Color>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
     Row(
         modifier = modifier
             .clip(SEG_SHAPE)
@@ -361,8 +372,8 @@ fun PiSeg(
             val selected = index == selectedIndex
             val enabled = index !in disabledIndices
             val bg by animateColorAsState(
-                targetValue = if (selected) PiTheme.palette.selectedBg else Color.Transparent,
-                animationSpec = tween(160),
+                targetValue = if (selected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                animationSpec = segSpring,
                 label = "seg-bg-$index",
             )
             val fg by animateColorAsState(
@@ -371,7 +382,7 @@ fun PiSeg(
                     selected -> MaterialTheme.colorScheme.onSurface
                     else -> PiTheme.palette.muted
                 },
-                animationSpec = tween(160),
+                animationSpec = segSpring,
                 label = "seg-fg-$index",
             )
             Box(
@@ -380,7 +391,12 @@ fun PiSeg(
                     .alpha(if (enabled) 1f else 0.48f)
                     .clip(SEG_ITEM_SHAPE)
                     .background(bg)
-                    .clickable(enabled = enabled) { onSelect(index) }
+                    .clickable(enabled = enabled) {
+                        if (!selected) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onSelect(index)
+                        }
+                    }
                     .padding(horizontal = SEG_ITEM_PADDING),
                 contentAlignment = Alignment.Center,
             ) {
@@ -509,12 +525,12 @@ fun PiRoot() {
     // The theme picker lists what pi would load, not only what the `themes`
     // setting names, and the active theme's caveats are shown with it. Both come
     // from the ViewModel, which is the one place that reads pi's theme files.
-    val theme by session.theme.collectAsState()
-    val themeEntries by session.themeEntries.collectAsState()
+    val theme by session.theme.collectAsStateWithLifecycle()
+    val themeEntries by session.themeEntries.collectAsStateWithLifecycle()
 
     // 「运行时加速（实验性）」开关当场生效的进度。拨完开关探针要跑 10~60 秒，设置页那一行
     // 必须在那段时间里说它在跑 —— 这是这个状态唯一的用途（见 `RuntimeSwitchAction`）。
-    val runtimeSwitch by session.runtimeSwitch.collectAsState()
+    val runtimeSwitch by session.runtimeSwitch.collectAsStateWithLifecycle()
 
     // Commands that need a destination are requested by the ViewModel through
     // state, because they finish inside a coroutine after an RPC answer — by then
@@ -528,11 +544,11 @@ fun PiRoot() {
     // 按需切片订阅 session.state，彻底避免流式输出每 token / 1Hz 工具计时引发整个 PiRoot 重组。
     val navEvent by remember(session) {
         session.state.map { it.navRequest to it.navSeq }.distinctUntilChanged()
-    }.collectAsState(initial = session.state.value.navRequest to session.state.value.navSeq)
+    }.collectAsStateWithLifecycle(initialValue = session.state.value.navRequest to session.state.value.navSeq)
     val availableModels by remember(session) {
         session.state.map { it.models }.distinctUntilChanged()
-    }.collectAsState(initial = session.state.value.models)
-    val overlayState by session.overlay.collectAsState()
+    }.collectAsStateWithLifecycle(initialValue = session.state.value.models)
+    val overlayState by session.overlay.collectAsStateWithLifecycle()
     var pendingTerminalCwd by remember { mutableStateOf<String?>(null) }
     val (navRequest, navSeq) = navEvent
     LaunchedEffect(navRequest, navSeq) {
@@ -610,13 +626,20 @@ fun PiRoot() {
                 targetState = current,
                 transitionSpec = {
                     val forward = targetState.ordinal > initialState.ordinal
-                    val ease = FastOutSlowInEasing
+                    val slideSpec = spring<IntOffset>(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow,
+                    )
+                    val fadeSpec = spring<Float>(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMedium,
+                    )
                     if (forward) {
-                        (slideInHorizontally(tween(210, easing = ease)) { it / 6 } + fadeIn(tween(190)))
-                            .togetherWith(slideOutHorizontally(tween(180, easing = ease)) { -it / 12 } + fadeOut(tween(140)))
+                        (slideInHorizontally(slideSpec) { it / 6 } + fadeIn(fadeSpec))
+                            .togetherWith(slideOutHorizontally(slideSpec) { -it / 12 } + fadeOut(fadeSpec))
                     } else {
-                        (slideInHorizontally(tween(210, easing = ease)) { -it / 12 } + fadeIn(tween(190)))
-                            .togetherWith(slideOutHorizontally(tween(180, easing = ease)) { it / 5 } + fadeOut(tween(140)))
+                        (slideInHorizontally(slideSpec) { -it / 12 } + fadeIn(fadeSpec))
+                            .togetherWith(slideOutHorizontally(slideSpec) { it / 5 } + fadeOut(fadeSpec))
                     }
                 },
                 label = "root-destination",
@@ -699,17 +722,25 @@ fun PiRoot() {
             if (overlayState != null) lastOverlay = overlayState
             val renderOverlay = overlayState ?: lastOverlay
             val isSessionDrawer = renderOverlay?.slot == OverlaySlot.SessionList
+            val ovSlideSpec = spring<IntOffset>(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow,
+            )
+            val ovFadeSpec = spring<Float>(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMedium,
+            )
             AnimatedVisibility(
                 visible = overlayState != null,
                 enter = if (isSessionDrawer) {
-                    slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { -it / 4 } + fadeIn(tween(180))
+                    slideInHorizontally(ovSlideSpec) { -it / 4 } + fadeIn(ovFadeSpec)
                 } else {
-                    slideInVertically(tween(220, easing = FastOutSlowInEasing)) { it / 6 } + fadeIn(tween(180))
+                    slideInVertically(ovSlideSpec) { it / 6 } + fadeIn(ovFadeSpec)
                 },
                 exit = if (isSessionDrawer) {
-                    slideOutHorizontally(tween(180, easing = FastOutSlowInEasing)) { -it / 4 } + fadeOut(tween(140))
+                    slideOutHorizontally(ovSlideSpec) { -it / 4 } + fadeOut(ovFadeSpec)
                 } else {
-                    slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { it / 6 } + fadeOut(tween(140))
+                    slideOutVertically(ovSlideSpec) { it / 6 } + fadeOut(ovFadeSpec)
                 },
                 label = "root-overlay",
             ) {
@@ -790,6 +821,7 @@ fun PiRoot() {
             // 系统导航条 inset（底栏拆掉之后不再有 56dp），再加 8dp 的呼吸；
             // `maxOf` 兜住「再也报告不出来」那一下，否则 snackbar 落到手势条下面。
             app.pi.ui.resources.ProjectTrustHost(session)
+            CwdMissingHost(session)
             ExtensionUiHost(
                 session = session,
                 snackbarBottomPadding = maxOf(
@@ -797,6 +829,43 @@ fun PiRoot() {
                     OVERLAY_SNACKBAR_INSET,
                 ),
             )
+        }
+    }
+}
+
+/**
+ * 全局「原工作目录不可用」弹窗宿主：
+ * 同时服务会话列表切换与对话页 `/import`，不再依赖某单一覆盖层处于挂载状态。
+ */
+@Composable
+private fun CwdMissingHost(session: PiSessionViewModel) {
+    val missingPrompt by session.cwdMissing.collectAsStateWithLifecycle()
+    if (missingPrompt != null) {
+        val prompt = missingPrompt!!
+        PiDialog(onDismissRequest = { session.dismissCwdMissing() }) {
+            PiDialogTitle(
+                title = tr("原工作目录不可用", "Original Directory Unavailable"),
+                glyph = "!",
+                glyphTone = PiTheme.palette.warning,
+            )
+            PiDialogBody(
+                buildString {
+                    append(prompt.reason)
+                    prompt.issue?.takeIf { it.isNotBlank() }?.let { append("
+
+").append(it) }
+                    append(tr("
+
+可在当前项目继续打开，或分支一份新会话到当前项目。", "
+
+You can resume it in the current project, or fork a new session here."))
+                },
+            )
+            PiDialogActions {
+                PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = { session.dismissCwdMissing() })
+                PiDialogAction(label = tr("继续打开", "Resume"), primary = false, onClick = { session.resolveCwdMissingContinue() })
+                PiDialogAction(label = tr("分支到此", "Fork here"), primary = true, onClick = { session.resolveCwdMissingFork() })
+            }
         }
     }
 }

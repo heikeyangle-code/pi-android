@@ -8,8 +8,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -21,7 +22,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -70,7 +70,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -95,9 +95,12 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
@@ -183,12 +186,12 @@ fun SessionsScreen(
     onBack: () -> Unit,
     initialView: SessionsView = SessionsView.List,
 ) {
-    val list by session.sessionList.collectAsState()
-    val cwdMissing by session.cwdMissing.collectAsState()
+    val list by session.sessionList.collectAsStateWithLifecycle()
+    val haptics = LocalHapticFeedback.current
     // 仅订阅会话列表/会话树所需字段，避免后台流式生成逐 token 触发整张覆盖层重组。
     val sessionSlice by remember(session) {
         session.state.map { it.toSessionsOverlaySlice() }.distinctUntilChanged()
-    }.collectAsState(initial = session.state.value.toSessionsOverlaySlice())
+    }.collectAsStateWithLifecycle(initialValue = session.state.value.toSessionsOverlaySlice())
     var treeReselect by remember { mutableStateOf<String?>(null) }
 
     var confirming by remember { mutableStateOf<SessionSummary?>(null) }
@@ -223,10 +226,11 @@ fun SessionsScreen(
     val activeFile = sessionSlice.sessionFile?.substringAfterLast('/')
     val zh = PiLocale.isZh
 
-    val forkParentNames = remember(list.rows, zh) {
-        val nameOf = HashMap<String, String>(list.rows.size)
-        for (r in list.rows) nameOf.putIfAbsent(r.file.name, sessionTitleOf(r))
-        list.rows.associate { r ->
+    val uniqueRows = remember(list.rows) { list.rows.distinctBy { it.file.absolutePath } }
+    val forkParentNames = remember(uniqueRows, zh) {
+        val nameOf = HashMap<String, String>(uniqueRows.size)
+        for (r in uniqueRows) nameOf.putIfAbsent(r.file.name, sessionTitleOf(r))
+        uniqueRows.associate { r ->
             r.file.absolutePath to r.parentSession
                 ?.takeIf { it.isNotBlank() }
                 ?.substringAfterLast('/')
@@ -236,7 +240,7 @@ fun SessionsScreen(
     }
 
     val context = LocalContext.current
-    val labelsKey = list.rows.size
+    val labelsKey = Triple(sessionSlice.workspaceGuestPath, uniqueRows.size, uniqueRows.firstOrNull()?.file?.name)
     val workspaceLabels by produceState(emptyMap<String, String>(), labelsKey) {
         value = withContext(Dispatchers.IO) { WorkspaceStore.labels(context) }
     }
@@ -254,9 +258,9 @@ fun SessionsScreen(
         }.distinct()
     }
     var collapsedGroups by remember { mutableStateOf(emptySet<String>()) }
-    val allGroups = remember(list.rows, currentCwds, workspaceLabels, activeFile, list.query.query, list.query.namedOnly) {
+    val allGroups = remember(uniqueRows, currentCwds, workspaceLabels, activeFile, list.query.query, list.query.namedOnly) {
         buildSessionGroups(
-            rows = list.rows,
+            rows = uniqueRows,
             currentCwds = currentCwds,
             workspacesRoot = workspacesRoot,
             labels = workspaceLabels,
@@ -266,6 +270,9 @@ fun SessionsScreen(
     }
     val visibleGroups = remember(allGroups, currentProjectOnly) {
         if (currentProjectOnly) allGroups.filter { it.current } else allGroups
+    }
+    val visibleRowCount = remember(visibleGroups) {
+        visibleGroups.sumOf { it.rows.size }
     }
 
     val tree = list.query.sort == SessionSort.Threaded && list.query.query.isBlank()
@@ -386,13 +393,16 @@ fun SessionsScreen(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             transitionSpec = {
                 val toTree = targetState == SessionsView.Tree
-                val ease = FastOutSlowInEasing
+                val slideSpec = spring<IntOffset>(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow,
+                )
                 if (toTree) {
-                    (slideInHorizontally(tween(190, easing = ease)) { it / 10 } + fadeIn(tween(170)))
-                        .togetherWith(slideOutHorizontally(tween(150, easing = ease)) { -it / 10 } + fadeOut(tween(130)))
+                    (slideInHorizontally(slideSpec) { it / 10 } + fadeIn(tween(170)))
+                        .togetherWith(slideOutHorizontally(slideSpec) { -it / 10 } + fadeOut(tween(130)))
                 } else {
-                    (slideInHorizontally(tween(190, easing = ease)) { -it / 10 } + fadeIn(tween(170)))
-                        .togetherWith(slideOutHorizontally(tween(150, easing = ease)) { it / 10 } + fadeOut(tween(130)))
+                    (slideInHorizontally(slideSpec) { -it / 10 } + fadeIn(tween(170)))
+                        .togetherWith(slideOutHorizontally(slideSpec) { it / 10 } + fadeOut(tween(130)))
                 }
             },
             label = "sessions-view-switch",
@@ -447,7 +457,8 @@ fun SessionsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            if (allGroups.size > 1 && list.query.query.isBlank()) {
+                            val searching = list.query.query.isNotBlank()
+                            if (!searching && (allGroups.size > 1 || currentProjectOnly)) {
                                 SessionFilterPill(
                                     text = if (currentProjectOnly) tr("当前项目", "Current") else tr("全部项目", "All projects"),
                                     icon = Icons.Filled.FolderOpen,
@@ -455,14 +466,18 @@ fun SessionsScreen(
                                     onClick = { currentProjectOnly = !currentProjectOnly },
                                 )
                             }
-                            val searching = list.query.query.isNotBlank()
+                            val effectiveSort = if (!searching && list.query.sort == SessionSort.Relevance) {
+                                SessionSort.Threaded
+                            } else {
+                                list.query.sort
+                            }
                             SessionFilterPill(
-                                text = when (list.query.sort) {
+                                text = when (effectiveSort) {
                                     SessionSort.Threaded -> if (searching) tr("按时间", "Recent") else tr("按分支", "Threaded")
                                     SessionSort.Recent -> tr("按时间", "Recent")
                                     SessionSort.Relevance -> tr("最相关", "Relevance")
                                 },
-                                icon = when (list.query.sort) {
+                                icon = when (effectiveSort) {
                                     SessionSort.Threaded -> if (searching) Icons.Filled.Schedule else Icons.Filled.AccountTree
                                     SessionSort.Recent -> Icons.Filled.Schedule
                                     SessionSort.Relevance -> Icons.Filled.Sort
@@ -470,9 +485,9 @@ fun SessionsScreen(
                                 active = false,
                                 onClick = {
                                     val next = if (searching) {
-                                        if (list.query.sort == SessionSort.Relevance) SessionSort.Recent else SessionSort.Relevance
+                                        if (effectiveSort == SessionSort.Relevance) SessionSort.Recent else SessionSort.Relevance
                                     } else {
-                                        if (list.query.sort == SessionSort.Threaded) SessionSort.Recent else SessionSort.Threaded
+                                        if (effectiveSort == SessionSort.Threaded) SessionSort.Recent else SessionSort.Threaded
                                     }
                                     session.setSessionSort(next)
                                 },
@@ -486,7 +501,10 @@ fun SessionsScreen(
                         }
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = sessionCountText(list),
+                            text = sessionCountText(
+                                list = list,
+                                visibleCount = if (!searching && currentProjectOnly) visibleRowCount else uniqueRows.size,
+                            ),
                             style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
                             color = if (list.loading) PiTheme.palette.accent else PiTheme.palette.muted,
                             maxLines = 1,
@@ -507,7 +525,7 @@ fun SessionsScreen(
                     }
 
                     Box(Modifier.weight(1f).fillMaxWidth()) {
-                        val rows = list.rows
+                        val rows = uniqueRows
                         val noQuery = list.query.query.isBlank()
                         val searching = !noQuery
                         when {
@@ -548,6 +566,13 @@ fun SessionsScreen(
                                 title = tr("没有匹配的会话", "No matching sessions"),
                                 body = tr("换一个关键词，或关掉「已命名」。", "Try a different keyword or turn off \"Named\"."),
                             )
+                            noQuery && visibleGroups.isEmpty() -> SessionsEmpty(
+                                icon = Icons.Filled.FolderOpen,
+                                title = tr("当前项目没有符合条件的会话", "No matching sessions in this project"),
+                                body = tr("可以切换到「全部项目」查看其他工作区的历史会话。", "Switch to \"All projects\" to browse sessions from other workspaces."),
+                                actionLabel = tr("查看全部项目", "Show all projects"),
+                                onAction = { currentProjectOnly = false },
+                            )
                             else -> LazyColumn(
                                 state = listState,
                                 modifier = Modifier.fillMaxSize(),
@@ -559,6 +584,7 @@ fun SessionsScreen(
                                 if (searching) {
                                     // 对照官方 SDK：搜索态严格保留相关度/时间平铺排序，不打散分组。
                                     itemsIndexed(rows, key = { _, r -> r.file.absolutePath }) { index, summary ->
+                                        val isActive = summary.isCurrent || (activeFile != null && summary.file.name == activeFile)
                                         val wsLabel = WorkspaceChoice.sessionGroupLabel(
                                             summary.cwd.trimEnd('/'),
                                             workspacesRoot,
@@ -566,7 +592,7 @@ fun SessionsScreen(
                                         )
                                         SessionListRow(
                                             summary = summary,
-                                            active = summary.isCurrent || (activeFile != null && summary.file.name == activeFile),
+                                            active = isActive,
                                             tree = false,
                                             first = index == 0,
                                             last = index == rows.lastIndex,
@@ -574,10 +600,13 @@ fun SessionsScreen(
                                             forkedFrom = forkParentNames[summary.file.absolutePath],
                                             workspaceTag = wsLabel,
                                             onOpen = {
-                                                session.switchSession(summary)
-                                                onOpenChat()
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                if (isActive) onOpenChat() else session.switchSession(summary)
                                             },
-                                            onLongPress = { actions = summary },
+                                            onLongPress = {
+                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                actions = summary
+                                            },
                                         )
                                     }
                                 } else {
@@ -589,8 +618,9 @@ fun SessionsScreen(
                                                 count = group.rows.size,
                                                 current = group.current,
                                                 collapsed = collapsed,
-                                                alone = collapsed || group.rows.isEmpty(),
+                                                alone = collapsed,
                                                 onToggle = {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                     collapsedGroups = if (group.cwd in collapsedGroups) {
                                                         collapsedGroups - group.cwd
                                                     } else {
@@ -615,6 +645,7 @@ fun SessionsScreen(
                                                         .padding(
                                                             start = PiSettingsMetrics.rowPaddingHorizontal,
                                                             end = PiSettingsMetrics.rowPaddingHorizontal,
+                                                            top = 10.dp,
                                                             bottom = 12.dp,
                                                         ),
                                                     style = PiTheme.text.meta,
@@ -623,19 +654,23 @@ fun SessionsScreen(
                                             }
                                         }
                                         itemsIndexed(group.rows, key = { _, r -> r.file.absolutePath }) { index, summary ->
+                                            val isActive = summary.isCurrent || (activeFile != null && summary.file.name == activeFile)
                                             SessionListRow(
                                                 summary = summary,
-                                                active = summary.isCurrent || (activeFile != null && summary.file.name == activeFile),
+                                                active = isActive,
                                                 tree = tree,
                                                 first = false,
                                                 last = index == group.rows.lastIndex,
                                                 showPath = list.showPath,
                                                 forkedFrom = if (tree) null else forkParentNames[summary.file.absolutePath],
                                                 onOpen = {
-                                                    session.switchSession(summary)
-                                                    onOpenChat()
+                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    if (isActive) onOpenChat() else session.switchSession(summary)
                                                 },
-                                                onLongPress = { actions = summary },
+                                                onLongPress = {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    actions = summary
+                                                },
                                             )
                                         }
                                         item(key = "gap:${group.cwd}") { Spacer(Modifier.height(10.dp)) }
@@ -712,7 +747,7 @@ fun SessionsScreen(
                     actions = null
                     renaming = acting
                 }
-                if (isOtherProject) {
+                if (acting.file.isFile || acting.messageCount > 0) {
                     HorizontalDivider(
                         modifier = Modifier.padding(start = 56.dp),
                         thickness = PiSpacing.hairlineThin,
@@ -720,14 +755,17 @@ fun SessionsScreen(
                     )
                     SessionActionRow(
                         icon = Icons.Filled.AccountTree,
-                        label = tr("分支到当前项目", "Fork into current project"),
-                        subtitle = tr("保留历史上下文，以当前项目目录继续对话", "Keep history and branch into the current project directory"),
+                        label = if (isOtherProject) tr("分支到当前项目", "Fork into current project") else tr("分支为新会话", "Fork as new session"),
+                        subtitle = if (isOtherProject) {
+                            tr("保留历史上下文，以当前项目目录继续对话", "Keep history and branch into the current project directory")
+                        } else {
+                            tr("从当前历史分出一条独立新会话", "Start an independent session from this history")
+                        },
                         tone = MaterialTheme.colorScheme.onSurface,
                         iconTint = PiTheme.palette.success,
                     ) {
                         actions = null
                         session.forkSessionToCurrentWorkspace(acting)
-                        onOpenChat()
                     }
                 }
                 HorizontalDivider(
@@ -795,40 +833,21 @@ fun SessionsScreen(
         }
     }
 
-    val missingPrompt = cwdMissing
-    if (missingPrompt != null) {
-        PiDialog(onDismissRequest = { session.dismissCwdMissing() }) {
-            PiDialogTitle(
-                title = tr("原工作目录不可用", "Original Directory Unavailable"),
-                glyph = "!",
-                glyphTone = PiTheme.palette.warning,
-            )
-            PiDialogBody(
-                buildString {
-                    append(missingPrompt.reason)
-                    missingPrompt.issue?.takeIf { it.isNotBlank() }?.let { append("\n\n").append(it) }
-                    append(tr("\n\n可在当前项目继续打开，或分支一份新会话到当前项目。", "\n\nYou can resume it in the current project, or fork a new session here."))
-                },
-            )
-            PiDialogActions {
-                PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = { session.dismissCwdMissing() })
-                PiDialogAction(label = tr("继续打开", "Resume"), primary = false, onClick = { session.resolveCwdMissingContinue() })
-                PiDialogAction(label = tr("分支到此", "Fork here"), primary = true, onClick = { session.resolveCwdMissingFork() })
-            }
-        }
-    }
 }
 
 private fun sessionTitleOf(summary: SessionSummary): String =
     displayText(summary.name, summary.firstMessage).ifEmpty { tr("（空会话）", "(Empty session)") }
 
-private fun sessionCountText(list: PiSessionViewModel.SessionListState): String = when {
+private fun sessionCountText(
+    list: PiSessionViewModel.SessionListState,
+    visibleCount: Int = list.rows.size,
+): String = when {
     list.loading && list.query.query.isNotBlank() && list.loadTotal > 0 -> tr("搜索 ${list.loaded}/${list.loadTotal}", "${list.loaded}/${list.loadTotal}")
     list.loading && list.query.query.isNotBlank() -> tr("搜索中…", "Searching…")
     list.rows.isEmpty() && list.loading && list.loadTotal > 0 -> tr("读取 ${list.loaded}/${list.loadTotal}", "${list.loaded}/${list.loadTotal}")
     list.rows.isEmpty() && list.loading -> tr("读取中…", "Loading…")
-    list.total > list.rows.size -> tr("${list.rows.size}/${list.total} 条", "${list.rows.size}/${list.total}")
-    else -> tr("${list.rows.size} 条", "${list.rows.size}")
+    list.total > visibleCount -> tr("$visibleCount/${list.total} 条", "$visibleCount/${list.total}")
+    else -> tr("$visibleCount 条", "$visibleCount")
 }
 
 @Composable
@@ -1013,7 +1032,7 @@ private fun SessionListRow(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (active) Modifier.background(accent.copy(alpha = 0.08f)) else Modifier)
+                .then(if (active) Modifier.background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.055f)) else Modifier)
                 .drawBehind {
                     val unit = SESSIONS_TREE_UNIT.toPx()
                     val stroke = 1.2.dp.toPx()
@@ -1083,7 +1102,7 @@ private fun SessionListRow(
                             text = sessionTitleOf(summary),
                             modifier = Modifier.weight(1f, fill = false),
                             style = if (active || named) PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold) else PiType.rowTitle,
-                            color = if (active) accent else MaterialTheme.colorScheme.onSurface,
+                            color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -1293,7 +1312,7 @@ private fun WorkspaceGroupHeader(
     }
 }
 
-/** 统一矢量图标筛选胶囊（无 ASCII 符号，34dp 舒适触控高度）。 */
+/** 极简克制筛选片：中性高对比激活态 + 物理弹簧色彩过渡 + 轻触觉反馈。 */
 @Composable
 private fun SessionFilterPill(
     text: String,
@@ -1301,26 +1320,27 @@ private fun SessionFilterPill(
     active: Boolean,
     onClick: () -> Unit,
 ) {
-    val accent = PiTheme.palette.accent
+    val haptics = LocalHapticFeedback.current
+    val shape = RoundedCornerShape(10.dp)
     val bg by animateColorAsState(
-        targetValue = if (active) accent.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceContainerHigh,
-        animationSpec = tween(150),
+        targetValue = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerHigh,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "pill-bg",
     )
     val fg by animateColorAsState(
-        targetValue = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-        animationSpec = tween(150),
+        targetValue = if (active) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "pill-fg",
     )
     Row(
         modifier = Modifier
             .heightIn(min = 32.dp)
-            .clip(CircleShape)
+            .clip(shape)
             .background(bg)
-            .then(
-                if (active) Modifier.border(1.dp, accent.copy(alpha = 0.3f), CircleShape) else Modifier,
-            )
-            .clickable(onClick = onClick)
+            .clickable {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
             .padding(horizontal = 11.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),

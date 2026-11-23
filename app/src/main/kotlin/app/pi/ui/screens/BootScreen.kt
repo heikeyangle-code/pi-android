@@ -1,7 +1,8 @@
 package app.pi.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -73,19 +74,19 @@ fun BootScreen(
         verticalArrangement = Arrangement.Center,
     ) {
         val isFailed = boot is Boot.Failed
-        val emblemTint = if (isFailed) palette.error else palette.accent
         Box(
             modifier = Modifier
-                .size(64.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(emblemTint.copy(alpha = 0.14f))
-                .border(1.dp, emblemTint.copy(alpha = 0.36f), RoundedCornerShape(20.dp)),
+                .size(56.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(
+                    if (isFailed) palette.error.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                ),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = if (isFailed) "!" else "π",
-                style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Bold),
-                color = emblemTint,
+                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = if (isFailed) palette.error else MaterialTheme.colorScheme.onSurface,
             )
         }
         Spacer(Modifier.height(20.dp))
@@ -111,7 +112,6 @@ fun BootScreen(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    border = BorderStroke(1.dp, palette.borderMuted.copy(alpha = 0.45f)),
                 ) {
                     Column(
                         modifier = Modifier
@@ -368,7 +368,7 @@ private fun StepBar(step: RuntimeProvisioner.Step) {
     val targetFraction = reached.toFloat() / total.toFloat()
     val animatedFraction by animateFloatAsState(
         targetValue = targetFraction,
-        animationSpec = tween(260),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessLow),
         label = "bootProgress",
     )
     Box(

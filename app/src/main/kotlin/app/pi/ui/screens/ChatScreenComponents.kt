@@ -12,7 +12,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,7 +42,13 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.pi.protocol.TranscriptItem
@@ -252,110 +257,48 @@ internal data class TailObservation(
 )
 
 /**
- * 新会话极简欢迎画布：不写废话说明，只提供工作区身份胶囊和三条高频起手快捷提示。
+ * 极简空对话画布（对齐 Pi 原生极简哲学）：
+ * 彻底移除中心图标框、胶囊标签与预制起手问候语，只保留克制的项目与模型低噪上下文，
+ * 让视觉重心直接落回底部输入工作台。
  */
 @Composable
 internal fun ChatEmptyWelcome(
     workspaceName: String,
     modelLabel: String?,
-    onPickPrompt: (String) -> Unit,
-    onOpenSessions: () -> Unit,
     onOpenWorkspace: () -> Unit,
+    onOpenModel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
     Column(
-        modifier = modifier.padding(horizontal = 24.dp),
+        modifier = modifier.padding(horizontal = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(palette.accent.copy(alpha = 0.14f))
-                .border(1.dp, palette.accent.copy(alpha = 0.35f), RoundedCornerShape(18.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "π",
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                color = palette.accent,
-            )
-        }
-        Spacer(Modifier.height(14.dp))
         Text(
-            text = tr("准备就绪", "Ready"),
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = palette.text,
+            text = workspaceName.ifBlank { tr("默认项目", "Default Project") },
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClickLabel = tr("打开项目与文件", "Open project & files"), onClick = onOpenWorkspace)
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+            color = palette.muted.copy(alpha = 0.85f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
-        Spacer(Modifier.height(6.dp))
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        if (!modelLabel.isNullOrBlank()) {
+            Spacer(Modifier.height(2.dp))
             Text(
-                text = workspaceName.ifBlank { tr("默认项目", "Default Project") },
+                text = modelLabel,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .clickable(onClick = onOpenWorkspace)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClickLabel = tr("选择模型", "Select model"), onClick = onOpenModel)
+                    .padding(horizontal = 10.dp, vertical = 3.dp),
                 style = PiTheme.text.monoSmall,
-                color = palette.muted,
+                color = palette.dim,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                overflow = TextOverflow.MiddleEllipsis,
             )
-            if (!modelLabel.isNullOrBlank()) {
-                Text(
-                    text = modelLabel,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    style = PiTheme.text.monoSmall,
-                    color = palette.accent,
-                    maxLines = 1,
-                    overflow = TextOverflow.MiddleEllipsis,
-                )
-            }
-        }
-        Spacer(Modifier.height(22.dp))
-        val starters = listOf(
-            tr("帮我梳理当前项目的目录结构和核心文件", "Summarize the directory structure and key files in this project"),
-            tr("检查项目里最近的改动和潜在问题", "Review recent changes and potential issues in this project"),
-            "/resume",
-        )
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            starters.forEach { prompt ->
-                val isResume = prompt == "/resume"
-                val label = if (isResume) tr("查看历史会话与会话树…", "Browse past sessions & session tree…") else prompt
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                        .border(1.dp, palette.borderMuted.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
-                        .clickable {
-                            if (isResume) onOpenSessions() else onPickPrompt(prompt)
-                        }
-                        .padding(horizontal = 14.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = label,
-                        modifier = Modifier.weight(1f),
-                        style = PiTheme.text.prose,
-                        color = palette.text,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
         }
     }
 }
@@ -368,36 +311,49 @@ internal fun ScrollArrowButton(
     unreadCount: Int = 0,
 ) {
     val palette = PiTheme.palette
+    val haptic = LocalHapticFeedback.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.92f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh),
+        label = "scrollBtnScale",
+    )
     val hasUnread = unreadCount > 0
     val shape = RoundedCornerShape(999.dp)
     Row(
         modifier = Modifier
-            .alpha(if (pressed || hasUnread) 1f else 0.88f)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                alpha = if (pressed || hasUnread) 1f else 0.92f
+            }
             .clip(shape)
             .background(
-                if (hasUnread) palette.accent else MaterialTheme.colorScheme.surfaceContainerHigh,
+                if (hasUnread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerHigh,
             )
             .border(
-                width = 1.dp,
-                color = if (hasUnread) palette.accent else palette.borderMuted.copy(alpha = 0.65f),
+                width = PiSpacing.hairlineThin,
+                color = if (hasUnread) MaterialTheme.colorScheme.onSurface else palette.borderMuted.copy(alpha = 0.65f),
                 shape = shape,
             )
             .clickable(
                 interactionSource = interaction,
                 indication = ripple(color = MaterialTheme.colorScheme.onSurface),
                 onClickLabel = label,
-                onClick = onClick,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onClick()
+                },
             )
             .padding(
-                horizontal = if (hasUnread) 11.dp else 9.dp,
+                horizontal = if (hasUnread) 12.dp else 10.dp,
                 vertical = 8.dp,
             ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        val fg = if (hasUnread) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+        val fg = if (hasUnread) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface
         Icon(
             imageVector = icon,
             contentDescription = label,
@@ -407,7 +363,7 @@ internal fun ScrollArrowButton(
         if (hasUnread) {
             Text(
                 text = if (unreadCount > 99) "99+" else "$unreadCount",
-                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
+                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
                 color = fg,
                 maxLines = 1,
             )

@@ -3,7 +3,8 @@ package app.pi.ui.tree
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -11,7 +12,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -80,7 +80,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -136,7 +138,7 @@ fun SessionTreeView(
     onScrolledChange: ((Boolean) -> Unit)? = null,
 ) {
     var filterName by rememberSaveable { mutableStateOf(initialFilter.name) }
-    val filter = TreeFilter.valueOf(filterName)
+    val filter = TreeFilter.entries.firstOrNull { it.name == filterName } ?: initialFilter
     var query by rememberSaveable { mutableStateOf("") }
     var folded by rememberSaveable(
         stateSaver = listSaver<Set<String>, String>(save = { it.toList() }, restore = { it.toSet() }),
@@ -386,24 +388,27 @@ private fun localizedTypeTitle(raw: String): String = when (raw) {
 
 @Composable
 private fun TreeFilterPill(text: String, active: Boolean, onClick: () -> Unit) {
-    val accent = PiTheme.palette.accent
+    val haptics = LocalHapticFeedback.current
+    val shape = RoundedCornerShape(10.dp)
     val bg by animateColorAsState(
-        targetValue = if (active) accent.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceContainerHigh,
-        animationSpec = tween(150),
+        targetValue = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerHigh,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "tree-pill-bg",
     )
     val fg by animateColorAsState(
-        targetValue = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-        animationSpec = tween(150),
+        targetValue = if (active) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "tree-pill-fg",
     )
     Box(
         modifier = Modifier
             .heightIn(min = 32.dp)
-            .clip(CircleShape)
+            .clip(shape)
             .background(bg)
-            .then(if (active) Modifier.border(1.dp, accent.copy(alpha = 0.3f), CircleShape) else Modifier)
-            .clickable(onClick = onClick)
+            .clickable {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
             .padding(horizontal = 11.dp, vertical = 5.dp),
         contentAlignment = Alignment.Center,
     ) {

@@ -18,7 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -738,7 +738,7 @@ private fun CustomRow(id: String, name: String?, detail: String?, overrides: Boo
             )
         }
         Icon(
-            Icons.Filled.KeyboardArrowRight,
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
             tint = PiTheme.palette.dim,
             modifier = Modifier.size(18.dp),
@@ -784,7 +784,7 @@ private fun ActionRow(
             Text(detail, style = PiTheme.text.meta, color = PiTheme.palette.dim)
         }
         Icon(
-            Icons.Filled.KeyboardArrowRight,
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
             tint = PiTheme.palette.dim,
             modifier = Modifier.size(18.dp),

@@ -17,7 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
@@ -134,7 +134,7 @@ internal fun QueueRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (steering > 0) {
-                    QueueCountPill(icon = Icons.Filled.ArrowForward, label = tr("引导 $steering", "Steer $steering"), tone = palette.warning)
+                    QueueCountPill(icon = Icons.AutoMirrored.Filled.ArrowForward, label = tr("引导 $steering", "Steer $steering"), tone = palette.warning)
                 }
                 if (followUp > 0) {
                     QueueCountPill(icon = Icons.Filled.ArrowDownward, label = tr("后续 $followUp", "Follow-up $followUp"), tone = palette.accent)

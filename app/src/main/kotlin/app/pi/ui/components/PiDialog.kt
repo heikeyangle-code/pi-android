@@ -2,8 +2,8 @@ package app.pi.ui.components
 
 import android.view.WindowManager
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -112,7 +112,10 @@ fun PiDialog(
         ClearPlatformDim()
         val enter = remember { Animatable(0f) }
         LaunchedEffect(Unit) {
-            enter.animateTo(1f, tween(140, easing = FastOutSlowInEasing))
+            enter.animateTo(
+                1f,
+                spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium),
+            )
         }
         Box(
             modifier = Modifier

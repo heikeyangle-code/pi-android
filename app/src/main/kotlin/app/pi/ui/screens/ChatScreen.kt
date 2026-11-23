@@ -57,7 +57,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -161,7 +161,7 @@ fun ChatScreen(
     /** 设置（`PiDestination.Settings`），同上。 */
     onOpenSettings: () -> Unit,
 ) {
-    val state by session.state.collectAsState()
+    val state by session.state.collectAsStateWithLifecycle()
     val bottomInset = contentPadding.calculateBottomPadding()
 
     // D31: the boot surface is for **work** and for **failure** only.
@@ -215,7 +215,7 @@ internal fun ChatBody(
     // 扩展渲染器的键：宿主让 App 重取渲染结果时 +1，三个 `remember(renderRev)` 靠它失效。
     // 拆文件之前这个值在 `ChatScreen` 里读；`ChatBody` 现在自己读，否则 2010 行附近那三个
     // `remember(renderRev)` 引用的就是不存在的东西（0.1.7.1 之后的编译红）。
-    val renderRev by session.renderRev.collectAsState()
+    val renderRev by session.renderRev.collectAsStateWithLifecycle()
     // `draft` and `attachments` are the **ViewModel's** state, not this composable's:
     // `session.composerDraft` ([ComposerDraft]). Nothing about them reaches the Bundle.
     //
@@ -615,7 +615,7 @@ internal fun ChatBody(
     }
 
     // 扩展的 `custom` 条目只在扩展注册了 `registerEntryRenderer` 时可见（pi：没渲染器就不添加任何子组件）。
-    val entryRenderable by session.entryRenderable.collectAsState()
+    val entryRenderable by session.entryRenderable.collectAsStateWithLifecycle()
     val visibleItems = remember(state.transcript, prefs.showTimestamps, entryRenderable) {
         state.transcript.filter { item ->
             when (item) {
@@ -1609,9 +1609,8 @@ internal fun ChatBody(
                 ChatEmptyWelcome(
                     workspaceName = state.workspace.displayName,
                     modelLabel = modelLabel,
-                    onPickPrompt = { prompt -> draft = prompt },
-                    onOpenSessions = onOpenSessions,
                     onOpenWorkspace = onOpenWorkspace,
+                    onOpenModel = { perform(ChatAction.PickModel) },
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(bottom = dockHeightDp),

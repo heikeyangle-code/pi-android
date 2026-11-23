@@ -18,11 +18,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
@@ -528,7 +528,7 @@ internal fun ContextScreen(
                     ModelsCard {
                         Column {
                             PromptSlotRow(
-                                icon = Icons.Filled.Article,
+                                icon = Icons.AutoMirrored.Filled.Article,
                                 iconTint = palette.accent,
                                 title = "AGENTS.md",
                                 roleBadge = tr("标准", "Standard"),
@@ -544,7 +544,7 @@ internal fun ContextScreen(
                             )
                             ModelsDivider()
                             PromptSlotRow(
-                                icon = Icons.Filled.Article,
+                                icon = Icons.AutoMirrored.Filled.Article,
                                 iconTint = palette.borderAccent,
                                 title = "CLAUDE.md",
                                 roleBadge = tr("兼容 Claude", "Claude Compat"),
@@ -686,7 +686,7 @@ private fun PromptSlotRow(
             else -> TagPill(tr("点击编写", "Tap to write"), tone = palette.muted)
         }
         Icon(
-            Icons.Filled.KeyboardArrowRight,
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
             tint = palette.dim,
             modifier = Modifier.size(18.dp),

@@ -22,7 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
@@ -421,7 +421,7 @@ internal fun ExpandLabel(
             imageVector = if (expanded) {
                 Icons.Filled.KeyboardArrowDown
             } else {
-                Icons.Filled.KeyboardArrowRight
+                Icons.AutoMirrored.Filled.KeyboardArrowRight
             },
             contentDescription = null,
             modifier = Modifier.size(EXPAND_CHEVRON_SIZE),

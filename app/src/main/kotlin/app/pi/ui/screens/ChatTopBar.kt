@@ -27,7 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
@@ -301,7 +301,7 @@ private fun ChatCommandCenterSheet(
                         onClick = { onAction(ChatAction.OpenTree) },
                     )
                     QuickTile(
-                        icon = Icons.Filled.Article,
+                        icon = Icons.AutoMirrored.Filled.Article,
                         label = tr("系统提示词", "System Prompt"),
                         tint = palette.borderAccent,
                         modifier = Modifier.weight(1f),

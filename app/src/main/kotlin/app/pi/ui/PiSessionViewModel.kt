@@ -882,14 +882,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private var sessionQueryJob: kotlinx.coroutines.Job? = null
 
-    /** 搜索词（官方语法：`re:<正则>`、`"短语"`、模糊词）。输入防抖，宿主读的是缓存，所以很快。 */
+    /** 搜索词（官方语法：`re:<正则>`、`"短语"`、模糊词）。清空时立即恢复视图并把「最相关」自动切回「按分支」，输入时轻量防抖。 */
     fun setSessionQuery(text: String) {
-        val next = _sessionList.value.query.copy(query = text)
-        _sessionList.value = _sessionList.value.copy(query = next)
+        val prev = _sessionList.value.query
+        val restoredSort = if (text.isBlank() && prev.sort == SessionSort.Relevance) SessionSort.Threaded else prev.sort
+        val next = prev.copy(query = text, sort = restoredSort)
+        _sessionList.value = _sessionList.value.copy(
+            query = next,
+            queryError = if (text.isBlank()) null else _sessionList.value.queryError,
+        )
         sessionQueryJob?.cancel()
-        sessionQueryJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(180)
+        if (text.isBlank()) {
             loadSessionList(refresh = false)
+        } else {
+            sessionQueryJob = viewModelScope.launch {
+                kotlinx.coroutines.delay(180)
+                loadSessionList(refresh = false)
+            }
         }
     }
 
