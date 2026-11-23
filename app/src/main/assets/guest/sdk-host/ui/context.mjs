@@ -155,7 +155,9 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
     },
     getEditorText: () => state.editorText,
     pasteToEditor(text) {
-      hub.emit("ui.paste", { text: String(text) });
+      const chunk = String(text);
+      state.editorText += chunk;
+      hub.emit("ui.paste", { text: chunk });
     },
     setWorkingMessage(message) {
       hub.emit("ui.working", { message: message === undefined ? null : String(message) });
@@ -224,6 +226,7 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
             : typeof options?.blocked?.message === "string" && options.blocked.message
               ? options.blocked.message
               : null;
+        const blockedKind = typeof options?.blocked?.kind === "string" ? options.blocked.kind : null;
         Promise.resolve(lazyLoaders.ensureKeybindings?.())
           .then(() =>
             surfaces.mount({
@@ -231,6 +234,7 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
               overlay: Boolean(options?.overlay),
               overlayOptions: options?.overlayOptions ?? null,
               blocked,
+              blockedKind,
               onHandle: options?.onHandle,
               // 被外部关掉（用户点了 ✕ / 会话被替换）：以 undefined 结束，扩展的 await 不能悬着。
               onClose: () => finish(undefined),
@@ -302,13 +306,24 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
     setTheme(themeOrName) {
       const name = typeof themeOrName === "string" ? themeOrName.trim() : typeof themeOrName?.name === "string" ? themeOrName.name.trim() : "";
       if (!name) return { success: false, error: "主题名不能为空" };
+      const all = this.getAllThemes();
+      if (typeof themeOrName === "string" && !all.some((t) => t.name === name)) {
+        return { success: false, error: `未知主题：${name}` };
+      }
       const sm = sessionHooks.getSettingsManager?.();
       if (!sm || typeof sm.setTheme !== "function") {
         return { success: false, error: "会话尚未就绪，无法切换主题" };
       }
       try {
         sm.setTheme(name);
-        sessionHooks.emitThemeChanged?.(name);
+        const flushed = typeof sm.flush === "function" ? sm.flush() : null;
+        if (flushed && typeof flushed.then === "function") {
+          flushed
+            .then(() => sessionHooks.emitThemeChanged?.(name))
+            .catch(() => sessionHooks.emitThemeChanged?.(name));
+        } else {
+          sessionHooks.emitThemeChanged?.(name);
+        }
         return { success: true };
       } catch (error) {
         return { success: false, error: String(error?.message ?? error) };

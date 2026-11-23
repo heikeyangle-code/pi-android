@@ -66,6 +66,7 @@ internal fun EditBlock(
                 item,
                 expanded,
                 { expanded = !expanded },
+                expandable = failed,
             ) {
                 ToolHeader(
                     item = item,

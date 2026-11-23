@@ -1,5 +1,6 @@
 package app.pi.ui.blocks
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -13,6 +14,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
 import app.pi.protocol.PiImage
@@ -199,7 +201,7 @@ private fun GrepGroupHeading(path: String, matches: Int) {
 @Composable
 private fun GrepRow(match: GrepMatch) {
     val palette = PiTheme.palette
-    Row {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = match.line?.toString().orEmpty(),
             modifier = Modifier.width(PiSpacing.lineNumberColumn),

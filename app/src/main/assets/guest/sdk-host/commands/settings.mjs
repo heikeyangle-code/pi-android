@@ -12,6 +12,11 @@
 import { ERR, HostError, bad, str } from "../protocol.mjs";
 import { toWire } from "./generic.mjs";
 
+function sessionModelOverride(session, sm) {
+  const cur = session?.model;
+  return cur ? sm.getModelThinkingLevel?.(cur.provider, cur.id) : undefined;
+}
+
 export function register(reg, { controller, hub }) {
   const manager = () => {
     if (!controller.opened) throw new HostError(ERR.NOT_OPEN, "先 session.open");
@@ -59,12 +64,24 @@ export function register(reg, { controller, hub }) {
           session.agent.transport = params[0];
         } else if ((method === "setModelThinkingLevel" || method === "removeModelThinkingLevel") && typeof params[0] === "string") {
           const cur = session.model;
-          const fullKey = cur ? `${cur.provider}/${cur.id}` : null;
-          if (cur && (params[0] === fullKey || params[0] === cur.id)) {
-            const nextLevel = method === "setModelThinkingLevel" && typeof params[1] === "string"
-              ? params[1]
-              : (sm.getDefaultThinkingLevel?.() ?? "medium");
+          const providerArg = params[0];
+          const modelIdArg = typeof params[1] === "string" ? params[1] : null;
+          const matchesCurrent = cur && (
+            (modelIdArg !== null && cur.provider === providerArg && cur.id === modelIdArg) ||
+            providerArg === `${cur.provider}/${cur.id}` ||
+            (modelIdArg === null && providerArg === cur.id)
+          );
+          if (matchesCurrent) {
+            const levelArg = method === "setModelThinkingLevel"
+              ? (typeof params[2] === "string" ? params[2] : (typeof params[1] === "string" && !modelIdArg ? params[1] : null))
+              : null;
+            const nextLevel = levelArg ?? (sm.getDefaultThinkingLevel?.() ?? "medium");
             session.setThinkingLevel?.(nextLevel);
+          }
+        } else if (method === "setEnabledModels" && typeof session.setScopedModels === "function") {
+          const patterns = Array.isArray(params[0]) ? params[0] : [];
+          if (patterns.length === 0) {
+            session.setScopedModels([]);
           }
         }
       } catch {
@@ -79,6 +96,7 @@ export function register(reg, { controller, hub }) {
   reg.add("settings.reload", async () => {
     const sm = manager();
     const prevWarming = sm.getCacheWarmingMode?.();
+    const prevOverride = sessionModelOverride(controller.session, sm);
     await sm.reload();
     await controller.applyHttpSettings?.();
     await controller.reconcileProjectTrust?.();
@@ -100,7 +118,11 @@ export function register(reg, { controller, hub }) {
         const cur = session.model;
         if (cur) {
           const override = sm.getModelThinkingLevel?.(cur.provider, cur.id);
-          if (typeof override === "string") session.setThinkingLevel?.(override);
+          if (typeof override === "string") {
+            session.setThinkingLevel?.(override);
+          } else if (prevOverride !== undefined) {
+            session.setThinkingLevel?.(sm.getDefaultThinkingLevel?.() ?? "medium");
+          }
         }
       } catch {
         // ignore if session not ready

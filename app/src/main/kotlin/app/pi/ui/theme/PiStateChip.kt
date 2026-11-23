@@ -200,16 +200,17 @@ fun StateChip(
     val color = stateToneColor(tone, palette)
     Row(
         modifier = modifier
-            .border(PiSpacing.hairline, palette.borderMuted, CircleShape)
-            .padding(start = 6.dp, end = 7.dp, top = 1.dp, bottom = 1.dp)
+            .background(color.copy(alpha = 0.11f), CircleShape)
+            .border(0.5.dp, color.copy(alpha = 0.24f), CircleShape)
+            .padding(horizontal = 8.dp, vertical = 2.dp)
             .semantics { this.contentDescription = contentDescription ?: label },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (dot) {
             Box(
                 Modifier
-                    .size(5.dp)
-                    .background(color, RoundedCornerShape(1.dp)),
+                    .size(6.dp)
+                    .background(color, CircleShape),
             )
             Spacer(Modifier.width(5.dp))
         }
@@ -220,7 +221,7 @@ fun StateChip(
                 color = color,
                 maxLines = 1,
             )
-            Spacer(Modifier.width(5.dp))
+            Spacer(Modifier.width(4.dp))
         }
         Text(
             text = label,

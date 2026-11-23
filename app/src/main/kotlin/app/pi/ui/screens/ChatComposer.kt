@@ -382,6 +382,7 @@ internal fun Composer(
         }
 
         // 4) 底部操作工具栏：左侧高频直达键（/、@、!、📎），右侧流式控制或主发送按钮
+        val showDeliveryPills = streaming && (canSteer || canFollowUp)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -389,47 +390,50 @@ internal fun Composer(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            ComposerQuickKey(
-                label = "/",
-                contentDescription = tr("命令面板", "Command palette"),
-                active = draft.trimStart().startsWith("/"),
-                activeColor = palette.accent,
-                onClick = onOpenPalette,
-            )
-            ComposerQuickKey(
-                label = "@",
-                contentDescription = tr("提及工作区文件", "Mention workspace file"),
-                active = draft.contains("@"),
-                activeColor = palette.accent,
-                onClick = onOpenMention,
-            )
-            ComposerQuickKey(
-                label = "!",
-                contentDescription = tr("终端命令（长按不进上下文）", "Bash command (long-press for local only)"),
-                active = isBash,
-                activeColor = palette.bashMode,
-                onClick = onOpenBash,
-                onLongClick = onOpenBashExcluded,
-            )
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .clickable(onClickLabel = tr("添加图片或文件", "Attach image or file"), onClick = onPickAttachment),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.AttachFile,
-                    contentDescription = tr("附件", "Attach"),
-                    modifier = Modifier.size(19.dp),
-                    tint = palette.muted,
+            // 流式输入草稿时优先给「引导 / 后续 / 停止」留足宽度，避免 360dp 窄屏裁切按钮文案。
+            if (!showDeliveryPills) {
+                ComposerQuickKey(
+                    label = "/",
+                    contentDescription = tr("命令面板", "Command palette"),
+                    active = draft.trimStart().startsWith("/"),
+                    activeColor = palette.accent,
+                    onClick = onOpenPalette,
                 )
+                ComposerQuickKey(
+                    label = "@",
+                    contentDescription = tr("提及工作区文件", "Mention workspace file"),
+                    active = app.pi.ui.chat.PiFileMentions.prefixOf(draft) != null,
+                    activeColor = palette.accent,
+                    onClick = onOpenMention,
+                )
+                ComposerQuickKey(
+                    label = "!",
+                    contentDescription = tr("终端命令（长按不进上下文）", "Bash command (long-press for local only)"),
+                    active = isBash,
+                    activeColor = palette.bashMode,
+                    onClick = onOpenBash,
+                    onLongClick = onOpenBashExcluded,
+                )
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .clickable(onClickLabel = tr("添加图片或文件", "Attach image or file"), onClick = onPickAttachment),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.AttachFile,
+                        contentDescription = tr("附件", "Attach"),
+                        modifier = Modifier.size(19.dp),
+                        tint = palette.muted,
+                    )
+                }
             }
 
             Spacer(Modifier.weight(1f))
 
             if (streaming) {
-                if (canSteer || canFollowUp) {
+                if (showDeliveryPills) {
                     DeliveryActionPill(
                         icon = Icons.AutoMirrored.Filled.ArrowForward,
                         label = tr("引导", "Steer"),
@@ -452,7 +456,7 @@ internal fun Composer(
                     )
                 }
                 // 流式停止按钮：高对比紧凑停止钮，带触觉确认反馈
-                val showStopLabel = !(canSteer || canFollowUp)
+                val showStopLabel = !showDeliveryPills
                 val stopInteraction = remember { MutableInteractionSource() }
                 val stopPressed by stopInteraction.collectIsPressedAsState()
                 val stopScale by animateFloatAsState(
@@ -500,7 +504,13 @@ internal fun Composer(
                     }
                 }
             } else {
-                val hasPayload = draft.isNotBlank() || canClear
+                val bashCommandText = remember(draft, isBash) {
+                    if (!isBash) "" else draft.trimStart().let { t ->
+                        if (t.startsWith("!!")) t.removePrefix("!!") else t.removePrefix("!")
+                    }.trim()
+                }
+                val isBashReady = isBash && bashCommandText.isNotEmpty()
+                val hasPayload = if (isBash) isBashReady else (draft.isNotBlank() || canClear)
                 val sendInteraction = remember { MutableInteractionSource() }
                 val sendPressed by sendInteraction.collectIsPressedAsState()
                 val sendScale by animateFloatAsState(
@@ -512,7 +522,6 @@ internal fun Composer(
                     animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
                     label = "sendScale",
                 )
-                val isBashReady = isBash && draft.trim().length > 1
                 val sendBg by animateColorAsState(
                     targetValue = when {
                         isBashReady -> palette.bashMode

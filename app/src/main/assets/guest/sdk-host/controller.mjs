@@ -146,6 +146,7 @@ export class Controller {
         const kbMod = await import(pathToFileURL(join(this.cfg.piDir, "dist", "core", "keybindings.js")).href);
         if (kbMod?.KeybindingsManager?.create) {
           const kb = kbMod.KeybindingsManager.create(this.cfg.agentDir);
+          this.keybindings = kb;
           this.ui.setKeybindings(kb);
           try {
             const tuiMod = await import("@earendil-works/pi-tui");
@@ -370,6 +371,11 @@ export class Controller {
 
     const sessionManager = this.#pickSessionManager(sdk, cwd, sessionDir, args.session ?? {});
     this.runtime = await sdk.createAgentSessionRuntime(factory, { cwd, agentDir, sessionManager });
+    this.runtime.setBeforeSessionInvalidate?.(() => {
+      this.ui.reset();
+      this.clearToolRenderCache?.();
+      this.hub.emit("ui.reset", {});
+    });
     this.runtime.setRebindSession(async () => {
       await this.#bind({ background: false });
     });
@@ -548,7 +554,15 @@ export class Controller {
 
     this.unsubscribe = session.subscribe((event) => {
       hub.emit("agent", toJsonEvent(event));
-      if (STATE_EVENTS.has(event.type)) this.pushState(event.type);
+      if (
+        STATE_EVENTS.has(event.type) ||
+        (event.type === "entry_appended" &&
+          (event.entry?.type === "model_change" ||
+            event.entry?.type === "thinking_level_change" ||
+            event.entry?.type === "session_info"))
+      ) {
+        this.pushState(event.type);
+      }
       if (event.type === "message_end" && event.message?.role === "assistant") {
         const dropNotice = formatDroppedReasoningNotice(session, event.message);
         if (dropNotice) hub.emit("ui.notify", { message: dropNotice, tone: "warning" });

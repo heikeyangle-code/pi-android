@@ -71,7 +71,7 @@ fun ThinkingBlockBlock(
         else -> tr("已思考", "Thought")
     }
 
-    val pulse: State<Float>? = if (item.streaming) {
+    val pulse: State<Float>? = if (item.streaming && android.animation.ValueAnimator.areAnimatorsEnabled()) {
         rememberInfiniteTransition(label = "think-pulse").animateFloat(
             initialValue = 0.25f,
             targetValue = 0.9f,

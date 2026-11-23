@@ -30,9 +30,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +40,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -141,6 +140,8 @@ private fun MessageActionSheet(
         Column(
             Modifier
                 .fillMaxWidth()
+                .heightIn(max = 580.dp)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = PiSpacing.pageHorizontal)
                 .padding(bottom = 22.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -180,7 +181,7 @@ private fun MessageActionSheet(
                         MessageQuickTile(
                             icon = Icons.Filled.SelectAll,
                             label = tr("选择文字", "Select text"),
-                            tint = palette.border,
+                            tint = palette.mdLink,
                             modifier = Modifier.weight(1f),
                         ) { mode = Mode.Select }
                         if (actions != null) {
@@ -197,13 +198,13 @@ private fun MessageActionSheet(
                     }
 
                     if (actions != null && !actions.streaming) {
-                        val cardShape = RoundedCornerShape(14.dp)
+                        val cardShape = RoundedCornerShape(16.dp)
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(cardShape)
-                                .background(MaterialTheme.colorScheme.surfaceContainer)
-                                .border(1.dp, palette.borderMuted.copy(alpha = 0.4f), cardShape),
+                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                                .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.45f), cardShape),
                         ) {
                             if (onEditAndFork != null) {
                                 MessageSheetRow(
@@ -252,8 +253,8 @@ private fun MessageActionSheet(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(max = PiSpacing.unit * SELECT_MAX_UNITS)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.surfaceContainer)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
                                 .verticalScroll(rememberScrollState())
                                 .padding(12.dp),
                             style = PiTheme.text.prose,
@@ -261,12 +262,14 @@ private fun MessageActionSheet(
                         )
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = { mode = Mode.Menu }) { Text(tr("返回", "Back")) }
+                        SheetActionPill(text = tr("返回", "Back"), primary = false, onClick = { mode = Mode.Menu })
                     }
                 }
 
                 Mode.Label -> {
                     var label by remember { mutableStateOf("") }
+                    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+                    app.pi.ui.components.PiAutoFocus(focus)
                     Text(tr("给这条消息加标签", "Label this message"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
                     Text(
                         tr(
@@ -276,23 +279,63 @@ private fun MessageActionSheet(
                         style = PiTheme.text.meta,
                         color = palette.muted,
                     )
-                    OutlinedTextField(
-                        value = label,
-                        onValueChange = { label = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text(tr("输入标签名称", "Enter label name")) },
-                        shape = PiShapes.input,
-                    )
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { mode = Mode.Menu }) { Text(tr("返回", "Back")) }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                            .border(1.dp, palette.borderAccent.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = label,
+                            onValueChange = { label = it },
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(focus),
+                            singleLine = true,
+                            textStyle = PiTheme.text.prose.copy(color = MaterialTheme.colorScheme.onSurface),
+                            cursorBrush = androidx.compose.ui.graphics.SolidColor(palette.accent),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+                            ),
+                            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                                onDone = {
+                                    actions?.label?.invoke(item, label.trim().takeIf { it.isNotEmpty() })
+                                    onDismiss()
+                                },
+                            ),
+                            decorationBox = { inner ->
+                                Box {
+                                    if (label.isEmpty()) {
+                                        Text(
+                                            tr("输入标签名称…", "Enter label name…"),
+                                            style = PiTheme.text.prose,
+                                            color = palette.muted,
+                                        )
+                                    }
+                                    inner()
+                                }
+                            },
+                        )
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        SheetActionPill(text = tr("返回", "Back"), primary = false, onClick = { mode = Mode.Menu })
                         Spacer(Modifier.weight(1f))
-                        TextButton(
+                        SheetActionPill(
+                            text = tr("保存", "Save"),
+                            primary = true,
                             onClick = {
                                 actions?.label?.invoke(item, label.trim().takeIf { it.isNotEmpty() })
                                 onDismiss()
                             },
-                        ) { Text(tr("保存", "Save")) }
+                        )
                     }
                 }
             }

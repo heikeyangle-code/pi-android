@@ -67,7 +67,7 @@ fun ModelPickerSheet(
     onManageProviders: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
-    var filter by remember { mutableStateOf(initialFilter) }
+    var filter by remember(initialFilter) { mutableStateOf(initialFilter) }
     var persistAsDefault by remember { mutableStateOf(false) }
     val query = filter.trim().lowercase()
     val shown = remember(query, models) {
@@ -243,7 +243,8 @@ fun ModelPickerSheet(
                                 }
                             }
                         }
-                        items(inGroup, key = { "${it.provider}/${it.id}" }) { model ->
+                        items(inGroup.size, key = { idx -> "$provider:$idx:${inGroup[idx].id}" }) { idx ->
+                            val model = inGroup[idx]
                             ModelRow(
                                 model = model,
                                 selected = model.id == current?.id && model.provider == current.provider,
@@ -333,9 +334,10 @@ private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: (
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Row(
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     model.contextWindow?.let { MiniBadge(text = formatTokens(it), tone = palette.muted) }
                     if (model.reasoning) MiniBadge(text = tr("推理", "Reasoning"), tone = palette.accent)

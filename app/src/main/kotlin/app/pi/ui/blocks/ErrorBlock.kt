@@ -1,7 +1,5 @@
 package app.pi.ui.blocks
 
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,16 +11,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,84 +49,90 @@ fun ErrorBlock(
     val expandable = !detail.isNullOrBlank() || item.message.length > ERROR_PREVIEW_CHARS ||
         item.message.count { it == '\n' } >= ERROR_PREVIEW_LINES
 
-    BlockColumn(modifier) {
-        BlockCard(
-            color = palette.toolErrorBg,
-            borderColor = palette.error.copy(alpha = 0.26f),
-            padding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-        ) {
-            ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }, enabled = expandable) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(20.dp)
-                                .clip(CircleShape)
-                                .background(palette.error.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center,
+    val copyText = remember(item.message, detail) {
+        if (detail.isNullOrBlank()) item.message else "${item.message}\n\n$detail"
+    }
+
+    ToolActionMenu(command = null, output = copyText, fullOutputPath = null) {
+        BlockColumn(modifier) {
+            BlockCard(
+                color = palette.toolErrorBg,
+                borderColor = palette.error.copy(alpha = 0.26f),
+                padding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }, enabled = expandable) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(palette.error.copy(alpha = 0.18f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(13.dp),
+                                    tint = palette.error,
+                                )
+                            }
                             Text(
-                                text = "✗",
-                                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
+                                text = tr("执行出错", "Execution Error"),
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                                 color = palette.error,
                                 maxLines = 1,
                             )
+                            Spacer(Modifier.weight(1f))
+                            if (expandable) {
+                                ExpandLabel(expanded, color = palette.error)
+                            }
                         }
+
+                        if (item.message.isNotBlank()) {
+                            ProseText(
+                                text = item.message,
+                                color = palette.bodyOnTool,
+                                maxLines = if (expanded) Int.MAX_VALUE else ERROR_PREVIEW_LINES,
+                            )
+                        }
+
+                        if (expanded && !detail.isNullOrBlank()) {
+                            MonoText(
+                                text = detail,
+                                color = palette.bodyOnTool,
+                                modifier = Modifier.padding(top = PiSpacing.tiny),
+                            )
+                        }
+                    }
+                }
+
+                val actions = LocalMessageActions.current
+                if (actions != null && actions.retryKey == item.key) {
+                    Row(
+                        modifier = Modifier
+                            .padding(top = 2.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(palette.accent.copy(alpha = 0.16f))
+                            .clickable(onClickLabel = tr("重发上一条消息", "Resend last message"), onClick = actions.retry)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = palette.accent,
+                        )
                         Text(
-                            text = tr("执行出错", "Execution Error"),
+                            text = tr("重试上一条消息", "Retry last message"),
                             style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                            color = palette.error,
-                            maxLines = 1,
-                        )
-                        Spacer(Modifier.weight(1f))
-                        if (expandable) {
-                            ExpandLabel(expanded, color = palette.error)
-                        }
-                    }
-
-                    if (item.message.isNotBlank()) {
-                        ProseText(
-                            text = item.message,
-                            color = palette.bodyOnTool,
-                            maxLines = if (expanded) Int.MAX_VALUE else ERROR_PREVIEW_LINES,
-                        )
-                    }
-
-                    val actions = LocalMessageActions.current
-                    if (actions != null && actions.retryKey == item.key) {
-                        Row(
-                            modifier = Modifier
-                                .padding(top = 2.dp)
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(palette.accent.copy(alpha = 0.16f))
-                                .clickable(onClickLabel = tr("重发上一条消息", "Resend last message"), onClick = actions.retry)
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Refresh,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                                tint = palette.accent,
-                            )
-                            Text(
-                                text = tr("重试上一条消息", "Retry last message"),
-                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                                color = palette.accent,
-                            )
-                        }
-                    }
-
-                    if (expanded && !detail.isNullOrBlank()) {
-                        MonoText(
-                            text = detail,
-                            color = palette.bodyOnTool,
-                            modifier = Modifier.padding(top = PiSpacing.tiny),
+                            color = palette.accent,
                         )
                     }
                 }

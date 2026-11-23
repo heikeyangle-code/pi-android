@@ -1,15 +1,17 @@
 package app.pi.ui.chat
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -18,11 +20,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
 import app.pi.ui.theme.PiShapes
@@ -30,20 +34,8 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
- * 输入框里敲 `/` 时弹出的命令面板：pi 终端自动补全弹窗（`CombinedAutocompleteProvider` over
- * `[...slashCommands, ...templateCommands, ...extensionCommands, ...skillCommandList]`，
- * `interactive-mode.js` `setupAutocompleteProvider`）在触屏上的样子。顺序和分组就是官方的：
- * 内置 → 模板 → 扩展 → 技能；每组一个小标题，行里不再重复写「来源」，只有带来源标签
- * （用户 / 项目 / npm / git，官方 `getAutocompleteSourceTag`）的行才多一枚标签。
- *
- * 过滤：命令名前缀优先，其次名字包含，最后说明里出现 —— 官方只按名字过滤，手机上输入慢，
- * 多一层说明匹配能少敲几个字（排在名字命中之后，不改变官方的优先次序）。
- *
- * 这里的行都能执行。pi 有、手机做不了的内建命令（`UNSUPPORTED_BUILTIN_REASONS`）不占列表行，
- * 敲全名时才出现并说明原因；pi 新增而我们还没映射的命令照常列出（点一下说明「还没有对应做法」），
- * 不会悄悄缺一个。
- *
- * 高度封顶：命令面板打开时输入框必须还够得着。
+ * 输入框里敲 `/` 时弹出的命令面板：严格对齐官方 Pi SDK 的四组顺序
+ * （内置 → 模板 → 扩展 → 技能），不包含桌面键盘快捷键。
  */
 @Composable
 fun SlashPalette(
@@ -53,67 +45,97 @@ fun SlashPalette(
     modifier: Modifier = Modifier,
 ) {
     val matches = remember(commands, query) { filterPalette(commands, query) }
+    val haptic = LocalHapticFeedback.current
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = PiShapes.card,
-        shadowElevation = 6.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
+        shadowElevation = 2.dp,
+        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
     ) {
         if (matches.isEmpty()) {
             Text(
                 text = if (query.isBlank()) tr("没有可用命令", "No commands available") else tr("没有匹配「$query」的命令", "No commands matching \"$query\""),
-                modifier = Modifier.padding(PiSpacing.pageHorizontal),
+                modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 14.dp),
                 style = PiTheme.text.prose,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             return@Surface
         }
         LazyColumn(
-            modifier = Modifier.heightIn(max = SLASH_PALETTE_MAX_HEIGHT).padding(vertical = PiSpacing.tiny),
+            modifier = Modifier
+                .heightIn(max = SLASH_PALETTE_MAX_HEIGHT)
+                .padding(vertical = 4.dp),
         ) {
             var previous: PiCommandSource? = null
-            matches.forEach { command ->
+            matches.forEachIndexed { idx, command ->
                 if (command.source != previous) {
                     val group = command.source
                     val count = matches.count { it.source == group }
-                    item(key = "group:" + group.name) { SlashPaletteGroupHeader(group, count) }
+                    val isFirstGroup = previous == null
+                    item(key = "group:${group.name}") {
+                        SlashPaletteGroupHeader(group, count, showTopDivider = !isFirstGroup)
+                    }
                     previous = group
                 }
-                item(key = command.source.name + ":" + command.name) {
-                    SlashPaletteRow(command, onClick = { onPick(command) })
+                item(key = "${command.source.name}:${command.name}:$idx") {
+                    SlashPaletteRow(
+                        command = command,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onPick(command)
+                        },
+                    )
                 }
             }
         }
     }
 }
 
-/** 分组小标题：「内置 · 18」。 */
+/** 分组小标题：「内置 · 20」。 */
 @Composable
-private fun SlashPaletteGroupHeader(source: PiCommandSource, count: Int) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = PiSpacing.pageHorizontal, end = PiSpacing.pageHorizontal, top = PiSpacing.blockGap, bottom = PiSpacing.tiny),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
-    ) {
-        Text(
-            source.label,
-            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Text(
-            "$count",
-            style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+private fun SlashPaletteGroupHeader(source: PiCommandSource, count: Int, showTopDivider: Boolean) {
+    Column(Modifier.fillMaxWidth()) {
+        if (showTopDivider) {
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
+                thickness = PiSpacing.hairlineThin,
+                color = PiTheme.palette.borderMuted.copy(alpha = 0.45f),
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = PiSpacing.pageHorizontal,
+                    end = PiSpacing.pageHorizontal,
+                    top = if (showTopDivider) 4.dp else 8.dp,
+                    bottom = 4.dp,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                source.label,
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                "$count",
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                style = PiTheme.text.monoSmall.copy(fontFeatureSettings = "tnum"),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
 /**
- * 一条命令：第一行 `/名字`（斜杠退一档用强调色，名字用正文色加粗：先读到「是哪条命令」）+ 参数提示
- * （等宽、胶囊底），右端是来源标签（仅用户 / 项目 / npm / git 这类有出处的行）；第二行是说明，两行封顶。
+ * 一条命令：第一行 `/名字` + 官方 `argumentHint` 胶囊，右端为来源标签（用户 / 项目 / npm / git）；
+ * 第二行是精炼说明。
  */
 @Composable
 private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
@@ -124,8 +146,6 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
             .padding(horizontal = PiSpacing.pageHorizontal, vertical = 9.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        // 单 weight 左侧组合 + 右端来源胶囊：彻底消除旧版双 weight(1f) 导致的命令名被硬砍半宽、
-        // 参数提示与命令基线错位、长参数把来源标签挤歪的问题。
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -137,36 +157,21 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 val invocation = command.invocation
-                val isShortcut = command.source == PiCommandSource.Shortcut
                 val slash = invocation.startsWith("/")
-                if (isShortcut) {
-                    Text(
-                        text = invocation,
-                        modifier = Modifier
-                            .clip(PiShapes.badge)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
-                            .padding(horizontal = 7.dp, vertical = 2.dp),
-                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                } else {
-                    Text(
-                        text = buildAnnotatedString {
-                            if (slash) {
-                                withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f))) { append("/") }
-                            }
-                            withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
-                                append(if (slash) invocation.drop(1) else invocation)
-                            }
-                        },
-                        style = PiTheme.text.mono,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                Text(
+                    text = buildAnnotatedString {
+                        if (slash) {
+                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.80f))) { append("/") }
+                        }
+                        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                            append(if (slash) invocation.drop(1) else invocation)
+                        }
+                    },
+                    style = PiTheme.text.mono,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 command.argumentHint?.let { hint ->
                     Text(
                         text = hint,
@@ -209,17 +214,11 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
     }
 }
 
-/** 面板最高占多少：给输入框和最近的对话留出位置。 */
-private val SLASH_PALETTE_MAX_HEIGHT = 320.dp
+/** 面板高度封顶：在软键盘展开时也不裁切顶部分组标题，同时给输入框留足空间。 */
+private val SLASH_PALETTE_MAX_HEIGHT = 260.dp
 
 /**
  * What the composer should do with the text the user submitted.
- *
- * Kept as a pure function with no Compose or ViewModel dependency: the three
- * branches encode pi's own precedence order in `setupEditorSubmitHandler`
- * (`interactive-mode.ts:2967`) — built-in command, then `!` bash mode, then an
- * ordinary prompt — and a pure function is the only way to pin that order
- * without a device.
  */
 sealed interface ComposerRoute {
     /** Send as a normal prompt (`session.send`). */
@@ -234,44 +233,31 @@ sealed interface ComposerRoute {
     /** A `/`-prefixed string that is not a command at all. */
     data class Unknown(val name: String) : ComposerRoute
 
-    /** Blank input; the caller should ignore it. */
+    /** Blank input (or bare `!`/`!!` with no command); the caller should ignore it. */
     data object Empty : ComposerRoute
 }
 
 /**
- * Route composer text, in pi's order.
- *
- * The `/` branch deliberately does **not** fall through to a prompt for an
- * unrecognised name. pi's TUI does (`session.prompt(text)` at the end of the
- * chain), which is why typing `/reload` there costs a real model call when the
- * command is a built-in it cannot dispatch (audit §5.5); reproducing that would
- * reproduce a bug. A known command is dispatched with its arguments, and anything
- * else is refused with an explanation while the draft stays in the composer.
- *
- * There is no longer a third outcome. `ComposerRoute.Unreachable` carried the
- * built-ins that only pi's TUI could run; every one of those rows was deleted
- * from the palette (`PiSlashCommands.CLIENT_BUILTINS`) rather than
- * listed as a dead end, so every command in [commands] has a real action and a
- * typed `/name` reaches it exactly like a tap does.
+ * Route composer text, in pi's order: bash `!`/`!!`, slash command `/name`, or normal message.
  */
 fun routeComposerText(text: String, commands: List<PiSlashCommand>): ComposerRoute {
     val trimmed = text.trim()
     if (trimmed.isEmpty()) return ComposerRoute.Empty
 
-    // pi: `isBashMode = text.trimStart().startsWith("!")`, and `!!` alone is not
-    // a command (the command after the prefix must be non-empty).
+    // pi: `isBashMode = text.trimStart().startsWith("!")`; bare `!` or `!!` must not fall through as a model prompt.
     if (trimmed.startsWith("!")) {
         val excluded = trimmed.startsWith("!!")
         val command = trimmed.removePrefix(if (excluded) "!!" else "!").trim()
-        if (command.isNotEmpty()) return ComposerRoute.Bash(command, excluded)
+        return if (command.isNotEmpty()) ComposerRoute.Bash(command, excluded) else ComposerRoute.Empty
     }
 
     if (!trimmed.startsWith("/")) return ComposerRoute.Message(trimmed)
 
     val body = trimmed.removePrefix("/")
-    val name = body.substringBefore(' ').trim()
-    val args = body.substringAfter(' ', "").trim()
-    if (name.isEmpty()) return ComposerRoute.Message(trimmed)
+    val sep = body.indexOfFirst { it.isWhitespace() }
+    val name = (if (sep < 0) body else body.substring(0, sep)).trim()
+    val args = (if (sep < 0) "" else body.substring(sep + 1)).trim()
+    if (name.isEmpty()) return ComposerRoute.Empty
 
     val command = commands.firstOrNull { it.name == name }
         ?: return ComposerRoute.Unknown(name)

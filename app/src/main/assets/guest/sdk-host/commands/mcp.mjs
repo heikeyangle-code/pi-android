@@ -299,6 +299,7 @@ export function register(reg, { controller, hub }) {
   // 兜底，手机上（浏览器和引擎可能不在同一个网络命名空间）正需要它。
   const logins = new Map();
   reg.add("mcp.login", async (args, call) => {
+    await controller.ensureHttpSettings?.();
     const name = str(args, "name");
     const loginId = optStr(args, "loginId") ?? `m${Math.random().toString(36).slice(2, 8)}`;
     const timeoutMs = (Number(args.timeoutSeconds) > 0 ? Number(args.timeoutSeconds) : 300) * 1000;

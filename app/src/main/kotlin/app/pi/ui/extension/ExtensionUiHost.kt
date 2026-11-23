@@ -13,6 +13,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -214,19 +219,19 @@ private fun ExtensionSnack(
         Notice.Tone.Warning -> palette.warning
         Notice.Tone.Error -> palette.error
     }
-    val glyph = when (tone) {
-        Notice.Tone.Info -> "i"
-        Notice.Tone.Warning -> "!"
-        Notice.Tone.Error -> "✗"
+    val icon = when (tone) {
+        Notice.Tone.Info -> Icons.Filled.Info
+        Notice.Tone.Warning -> Icons.Filled.Warning
+        Notice.Tone.Error -> Icons.Filled.Close
     }
     val shape = RoundedCornerShape(ToastRadius)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(elevation = 6.dp, shape = shape, clip = false)
+            .shadow(elevation = 2.dp, shape = shape, clip = false)
             .clip(shape)
             .background(container)
-            .border(1.dp, accent.copy(alpha = 0.32f), shape)
+            .border(0.5.dp, accent.copy(alpha = 0.28f), shape)
             .clickable(onClickLabel = tr("关闭提示", "Dismiss notice"), onClick = onDismiss)
             .padding(horizontal = ToastPaddingHorizontal, vertical = ToastPaddingVertical),
         horizontalArrangement = Arrangement.spacedBy(ToastGap),
@@ -236,13 +241,14 @@ private fun ExtensionSnack(
             modifier = Modifier
                 .size(22.dp)
                 .clip(CircleShape)
-                .background(accent.copy(alpha = 0.18f)),
+                .background(accent.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = glyph,
-                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-                color = accent,
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(14.dp),
             )
         }
         ExtensionSpans(

@@ -171,6 +171,7 @@ export function register(reg, { controller, hub }) {
   // `JSON.stringify(result)`：Map 会被写成 `{}`、Error 写成 `{}`，哪家拉失败了 App 一个字都看不到。
   // 这里把 Map 摊成 `{ providerId: message }`，App 才能说出「哪几家没刷新成功、为什么」。
   reg.add("auth.refreshModels", async () => {
+    await controller.ensureHttpSettings?.();
     const rt = controller.requireSession().modelRuntime;
     const result = await rt.refresh();
     controller.syncFooterProviders?.();

@@ -9,6 +9,8 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -364,6 +366,7 @@ private fun deleteLabel(d: PiResourceFile.Doc): String =
  * 「新建」一个资源：选类型与层级，给名字（上下文文件不用名字，选哪一个文件）。
  * 名字规则是 SDK 的（[PiResourceFile.nameError]）；项目层在项目未被信任时不给选。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun NewResourceDialog(
     model: ResourcesModel,
@@ -385,7 +388,10 @@ internal fun NewResourceDialog(
         content = {
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
                 if (initial == null) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
+                        verticalArrangement = Arrangement.spacedBy(PiSpacing.small),
+                    ) {
                         PiResourceFile.Creatable.entries.forEach { c ->
                             PiSettingsChip(text = c.label, active = type == c, onClick = { type = c; failure = null })
                         }

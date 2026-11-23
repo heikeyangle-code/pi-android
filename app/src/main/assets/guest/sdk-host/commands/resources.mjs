@@ -27,8 +27,6 @@ function androidBuiltinNames(controller) {
   if (!bundled || typeof bundled !== "object") return [];
   const names = [];
   if (typeof bundled.androidBridge === "function") names.push("pi-android-bridge");
-  if (typeof bundled.permissionGate === "function") names.push("pi-android-permission-gate");
-  if (typeof bundled.highlight === "function") names.push("pi-highlight");
   return names;
 }
 

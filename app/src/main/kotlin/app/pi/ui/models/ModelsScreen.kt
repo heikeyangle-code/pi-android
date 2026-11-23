@@ -60,6 +60,8 @@ import app.pi.ui.settings.display
 import app.pi.ui.settings.settingsPageTopInset
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -85,17 +87,20 @@ fun ModelsScreen(
     onExternalSettingsWrite: () -> Unit = {},
     availableModels: List<PiResponses.ModelInfo> = emptyList(),
     onLoadAvailableModels: () -> Unit = {},
+    initialProviderQuery: String? = null,
+    initialOpenScoped: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     var reload by remember { mutableStateOf(0) }
     var data by remember { mutableStateOf<Data?>(null) }
     var loaded by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    var query by remember(initialProviderQuery) { mutableStateOf(initialProviderQuery.orEmpty()) }
     var notice by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var refresh by remember { mutableStateOf<RefreshSummary?>(null) }
     var showOthers by remember { mutableStateOf(false) }
     var openProvider by remember { mutableStateOf<String?>(null) }
+    var initialHandled by remember(initialProviderQuery, initialOpenScoped) { mutableStateOf(false) }
     var picker by remember { mutableStateOf(false) }
     var form by remember { mutableStateOf<FormRequest?>(null) }
     var editingSetting by remember { mutableStateOf<PiSetting?>(null) }
@@ -109,19 +114,41 @@ fun ModelsScreen(
             loaded = true
             return@LaunchedEffect
         }
-        val providers = runCatching { h.auth.providers() }
-        providers.exceptionOrNull()?.let { notice = tr("读取供应商失败：${it.message}", "Failed to load providers: ${it.message}") }
-        data = Data(
-            providers = providers.getOrDefault(emptyList()),
-            models = runCatching { h.models() }.getOrDefault(emptyList()),
-            custom = runCatching { h.advanced.modelsConfig() }.getOrNull(),
-            current = h.currentModel(),
-            thinkingLevel = h.currentThinking(),
-            thinkingLevels = runCatching { h.thinkingLevels() }.getOrDefault(emptyList()),
-            scoped = runCatching { h.advanced.scopedModels() }.getOrDefault(emptyList()),
-            cache = runCatching { h.advanced.cacheStatus() }.getOrNull(),
-        )
+        val next = coroutineScope {
+            val providersDef = async { runCatching { h.auth.providers() } }
+            val modelsDef = async { runCatching { h.models() }.getOrDefault(emptyList()) }
+            val customDef = async { runCatching { h.advanced.modelsConfig() }.getOrNull() }
+            val levelsDef = async { runCatching { h.thinkingLevels() }.getOrDefault(emptyList()) }
+            val scopedDef = async { runCatching { h.advanced.scopedModels() }.getOrDefault(emptyList()) }
+            val cacheDef = async { runCatching { h.advanced.cacheStatus() }.getOrNull() }
+            val providers = providersDef.await()
+            providers.exceptionOrNull()?.let { notice = tr("读取供应商失败：${it.message}", "Failed to load providers: ${it.message}") }
+            Data(
+                providers = providers.getOrDefault(emptyList()),
+                models = modelsDef.await(),
+                custom = customDef.await(),
+                current = h.currentModel(),
+                thinkingLevel = h.currentThinking(),
+                thinkingLevels = levelsDef.await(),
+                scoped = scopedDef.await(),
+                cache = cacheDef.await(),
+            )
+        }
+        data = next
         loaded = true
+        if (!initialHandled) {
+            initialHandled = true
+            if (initialOpenScoped) {
+                onLoadAvailableModels()
+                pickingScoped = true
+            } else if (!initialProviderQuery.isNullOrBlank()) {
+                val target = initialProviderQuery.trim()
+                val exact = next.providers.firstOrNull {
+                    it.id.equals(target, ignoreCase = true) || it.name.equals(target, ignoreCase = true)
+                }
+                if (exact != null) openProvider = exact.id
+            }
+        }
     }
 
     val modelSettings = remember { PiSettingsCatalog.settingsIn(G_MODELS_SCREEN) }
@@ -136,6 +163,17 @@ fun ModelsScreen(
         if (d == null) {
             if (loaded) {
                 PiInfoNote(tr("引擎没有在运行，这一页读不到模型与供应商。启动后再来。", "Engine is not running, so models and providers cannot be loaded. Start the engine and try again."))
+            } else {
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(28.dp),
+                        strokeWidth = 2.5.dp,
+                        color = PiTheme.palette.accent,
+                    )
+                }
             }
             return@Column
         }

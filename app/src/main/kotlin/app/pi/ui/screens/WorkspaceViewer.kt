@@ -371,8 +371,8 @@ internal fun WorkspaceViewer(
                     onMore = onMore,
                 )
                 HorizontalDivider(
-                    thickness = PiSettingsMetrics.hairline,
-                    color = MaterialTheme.colorScheme.outline,
+                    thickness = 0.5.dp,
+                    color = PiTheme.palette.borderMuted.copy(alpha = 0.55f),
                 )
                 Box(Modifier.fillMaxSize()) {
                     // 空 .html 渲染出来是一整屏白，看不出是「空」还是「坏了」。

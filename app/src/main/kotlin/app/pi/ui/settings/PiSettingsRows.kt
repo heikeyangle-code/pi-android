@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
@@ -326,11 +327,13 @@ private fun PiSettingsRowShell(
             content = content,
         )
         if (highlighted) {
+            val accent = PiTheme.palette.accent
             Box(
                 Modifier
-                    .fillMaxHeight()
-                    .width(PiSettingsMetrics.hairline)
-                    .background(PiTheme.palette.accent),
+                    .matchParentSize()
+                    .drawBehind {
+                        drawRect(color = accent, size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height))
+                    },
             )
         }
     }

@@ -244,9 +244,10 @@ fun PiMenu(
 ) {
     if (!expanded) return
     val density = LocalDensity.current
-    val height = PI_MENU_ROW_HEIGHT * items.size +
+    val dividerCount = items.count { it.dividerBefore }
+    val height = (PI_MENU_ROW_HEIGHT * items.size +
         PI_MENU_VERTICAL_PADDING * 2 +
-        (if (items.any { it.dividerBefore }) PI_MENU_DIVIDER_HEIGHT else 0.dp)
+        PI_MENU_DIVIDER_HEIGHT * dividerCount).coerceAtMost(maxHeight)
     // `Popup`'s offset is from the anchor's top-left, in pixels.
     val offsetY = when (placement) {
         PiMenuPlacement.Above -> -(height + PI_MENU_ANCHOR_GAP)
@@ -270,8 +271,8 @@ fun PiMenu(
                 .clip(RoundedCornerShape(PI_MENU_RADIUS))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                 .border(
-                    width = 1.dp,
-                    color = PiTheme.palette.borderMuted,
+                    width = PiSpacing.hairlineThin,
+                    color = PiTheme.palette.borderMuted.copy(alpha = 0.65f),
                     shape = RoundedCornerShape(PI_MENU_RADIUS),
                 )
                 .verticalScroll(rememberScrollState())
@@ -622,22 +623,6 @@ private val EMPTY_STATE_ICON = 30.dp
 /** `06 §2` 空态「正文 14/1.6」: 14 sp × 1.6, stated as leading rather than as a ratio. */
 private val EMPTY_STATE_BODY_LEADING = 22.sp
 
-/** Small uppercase-ish group label. Used by the settings stack and pickers. */
-@Composable
-fun PiSectionHeader(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text,
-        modifier = modifier.padding(
-            start = PiSpacing.pageHorizontal,
-            end = PiSpacing.pageHorizontal,
-            top = PiSpacing.unit,
-            bottom = 6.dp,
-        ),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.primary,
-    )
-}
-
 /**
  * One settings row. pi's semantics are carried by [supporting]; the trailing
  * slot shows the *current value* so a group screen is readable without opening
@@ -675,51 +660,6 @@ fun PiSwitchRow(
         }
         Spacer(Modifier.width(12.dp))
         Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
-    }
-}
-
-/**
- * A settings row whose value is chosen elsewhere. [value] is the summary.
- *
- * [onClick] is applied to the whole row rather than only the trailing text: a
- * row that advertises a value but ignores taps is worse than one that offers no
- * affordance at all.
- */
-@Composable
-fun PiValueRow(
-    title: String,
-    supporting: String?,
-    value: String,
-    modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            if (supporting != null) {
-                Text(
-                    supporting,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        Spacer(Modifier.width(12.dp))
-        Text(
-            value,
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 

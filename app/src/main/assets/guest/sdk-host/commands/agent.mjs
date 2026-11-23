@@ -98,7 +98,7 @@ export function register(reg, { controller }) {
     try {
       return { text: await s.summarizeForBugReport({ hint: optStr(args, "hint"), signal: bugReportAbort.signal }) };
     } catch (error) {
-      if (bugReportAbort?.signal.aborted) throw new HostError(ERR.CANCELLED ?? ERR.REJECTED, "已取消");
+      if (bugReportAbort?.signal.aborted) throw new HostError(ERR.REJECTED, "已取消");
       throw new HostError(ERR.REJECTED, String(error?.message ?? error));
     } finally {
       bugReportAbort = null;

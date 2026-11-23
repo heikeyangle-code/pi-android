@@ -153,24 +153,16 @@ internal fun PiSessionViewModel.answerDialogImpl(id: String, answer: ExtensionAn
  * The one place a wire response is built, and therefore the one place that
  * decides what an answer *is*.
  *
- * A `select` answer is sent **plain** (`chromeText`): the option label is
- * painted with whatever colour the extension wrapped it in, but the answer
- * must be the label, not the escape bytes that painted it. `input` and
- * `editor` values are *not* stripped — those are text the user typed or kept
- * from a `prefill`, and editing them here would change the user's own answer
- * rather than decline to paint a label.
+ * All value answers (`select`, `input`, `editor`) are returned verbatim so
+ * extensions matching `choice === styledOption` (exactly like Pi's official TUI)
+ * succeed without losing ANSI escape sequences.
  */
 private fun PiSessionViewModel.buildAnswer(dialog: ExtensionDialog, answer: ExtensionAnswer): UiAnswer? = when (answer) {
     is ExtensionAnswer.Value ->
         if (dialog.method == ExtensionDialogMethod.Confirm) {
             null
         } else {
-            val value = if (dialog.method == ExtensionDialogMethod.Select) {
-                chromeText(answer.value)
-            } else {
-                answer.value
-            }
-            UiAnswer.Value(value)
+            UiAnswer.Value(answer.value)
         }
 
     is ExtensionAnswer.Confirmed ->

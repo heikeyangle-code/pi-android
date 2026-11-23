@@ -1,7 +1,6 @@
 package app.pi.ui.blocks
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
@@ -15,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.dp
 import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
 import app.pi.protocol.Ansi
@@ -381,39 +381,35 @@ private fun ShellPreviewBody(
         return
     }
 
-    // The width a body line actually gets is a layout fact, so it has to be read before the
-    // window can be computed: `BoxWithConstraints` is the one place Compose exposes it
-    // (`ImageGridBlock`'s cell reads its own box the same way). The measurement below is a
-    // *pre*-measure with the same width, style and layout direction the `Text` underneath
-    // will be laid out with, which is what makes the window's first character a line
-    // boundary for that `Text` too.
+    // Compute available text width deterministically from screenWidthDp (no BoxWithConstraints / SubcomposeLayout
+    // inside chat LazyColumn rows — avoids measurement-pass height jitter during scrolling).
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val screenWidthDp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    val widthPx = with(density) {
+        (screenWidthDp.dp - PiSpacing.pageHorizontal * 2 - 24.dp).coerceAtLeast(120.dp).roundToPx()
+    }
     val measurer = rememberTextMeasurer()
-    BoxWithConstraints(modifier = Modifier.padding(top = PiSpacing.tiny)) {
-        val widthPx = constraints.maxWidth
-        val window = remember(text, widthPx, style, measurer) {
-            val layout = measurer.measure(
-                text = text,
-                style = style,
-                constraints = Constraints(maxWidth = widthPx.coerceAtLeast(0)),
+    val window = remember(text, widthPx, style, measurer) {
+        val layout = measurer.measure(
+            text = text,
+            style = style,
+            constraints = Constraints(maxWidth = widthPx),
+        )
+        val starts = IntArray(layout.lineCount) { layout.getLineStart(it) }
+        val start = visualTailWindowStart(starts, layout.lineCount, SHELL_PREVIEW_LINES)
+        if (start <= 0) text else text.substring(start)
+    }
+    Column(
+        modifier = Modifier.padding(top = PiSpacing.tiny),
+        verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
+    ) {
+        Text(text = window, style = style, color = color)
+        val hidden = remember(window, totalLines) { hiddenLineCount(totalLines, window) }
+        if (hidden > 0) {
+            ExpandAllLabel(
+                text = tr("展开全部（上方还有 $hidden 行）", "Show all ($hidden earlier lines)"),
+                onClick = onExpandAll,
             )
-            val starts = IntArray(layout.lineCount) { layout.getLineStart(it) }
-            val start = visualTailWindowStart(starts, layout.lineCount, SHELL_PREVIEW_LINES)
-            if (start <= 0) text else text.substring(start)
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter)) {
-            Text(text = window, style = style, color = color)
-            // The **second** level of disclosure, and this app's own: while expanded the card
-            // still paints one window, so this label is the way to the rest of the budget. pi
-            // has a single level (its expanded card is the whole output), so pi draws no such
-            // label — it is kept here because the app caps a body at [TOOL_BODY_MAX_LINES] and
-            // must say so. The count is the logical lines fully above the window (see the KDoc).
-            val hidden = remember(window, totalLines) { hiddenLineCount(totalLines, window) }
-            if (hidden > 0) {
-                ExpandAllLabel(
-                    text = tr("展开全部（上方还有 $hidden 行）", "Show all ($hidden earlier lines)"),
-                    onClick = onExpandAll,
-                )
-            }
         }
     }
 }

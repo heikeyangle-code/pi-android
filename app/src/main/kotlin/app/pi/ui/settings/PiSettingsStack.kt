@@ -301,29 +301,69 @@ fun PiSettingsStack(
         writeEpoch++
     }
 
+    var modelsInitialProvider by rememberSaveable { mutableStateOf<String?>(null) }
+    var modelsInitialScoped by rememberSaveable { mutableStateOf(false) }
+
+    fun clearRoutes() {
+        groupId = null
+        highlightKey = null
+        other = false
+        deviceCapabilities = false
+        resources = false
+        resourcesProject = false
+        modelFlow = false
+        modelsInitialProvider = null
+        modelsInitialScoped = false
+        licenses = false
+        runtimeScreen = false
+        mcp = false
+    }
+
     val openSetting: (String) -> Unit = { key ->
         val setting = PiSettingsCatalog.byKey[key]
         when {
             key == "hub:resources" || key == "hub:resources:project" || key == "defaultProjectTrust" -> {
+                clearRoutes()
                 resourcesProject = key.endsWith(":project") || key == "defaultProjectTrust"
                 resources = true
             }
-            key == "hub:models" -> modelFlow = true
-            key == "hub:mcp" -> mcp = true
-            key == "hub:runtime" -> runtimeScreen = true
-            key == "hub:device" -> deviceCapabilities = true
-            key == "hub:licenses" -> licenses = true
+            key == "hub:models" || key.startsWith("hub:models:") || key == "hub:scoped-models" -> {
+                clearRoutes()
+                modelsInitialScoped = key == "hub:scoped-models"
+                modelsInitialProvider = key.removePrefix("hub:models:").takeIf { key.startsWith("hub:models:") && it.isNotBlank() }
+                modelFlow = true
+            }
+            key == "hub:mcp" -> {
+                clearRoutes()
+                mcp = true
+            }
+            key == "hub:runtime" -> {
+                clearRoutes()
+                runtimeScreen = true
+            }
+            key == "hub:device" -> {
+                clearRoutes()
+                deviceCapabilities = true
+            }
+            key == "hub:licenses" -> {
+                clearRoutes()
+                licenses = true
+            }
             key == "hub:terminal" -> onOpenTerminal?.invoke()
             key == "hub:prompts" -> {
+                clearRoutes()
                 groupId = "prompts"
-                highlightKey = null
             }
             key == "hub:tools" -> {
+                clearRoutes()
                 groupId = "tools"
-                highlightKey = null
             }
-            setting != null && setting.group == G_MODELS_SCREEN -> modelFlow = true
+            setting != null && setting.group == G_MODELS_SCREEN -> {
+                clearRoutes()
+                modelFlow = true
+            }
             setting != null -> {
+                clearRoutes()
                 groupId = setting.group
                 highlightKey = key
             }
@@ -336,7 +376,11 @@ fun PiSettingsStack(
         onFocusConsumed()
     }
 
-    val openModelFlow: () -> Unit = { modelFlow = true }
+    val openModelFlow: () -> Unit = {
+        modelsInitialProvider = null
+        modelsInitialScoped = false
+        modelFlow = true
+    }
     val hostActions: Map<String, () -> Unit> = emptyMap()
 
     BackHandler(enabled = true) {
@@ -348,6 +392,8 @@ fun PiSettingsStack(
             runtimeScreen = false
         } else if (modelFlow) {
             modelFlow = false
+            modelsInitialProvider = null
+            modelsInitialScoped = false
         } else if (deviceCapabilities) {
             deviceCapabilities = false
         } else if (other) {
@@ -365,10 +411,10 @@ fun PiSettingsStack(
     val currentGroup = groupId
     val routeKey: Pair<String, Int> = when {
         mcp -> "mcp" to (if (resources) 2 else 1)
-        licenses -> "licenses" to 2
+        licenses -> "licenses" to (if (other) 2 else 1)
         runtimeScreen -> "runtime" to 1
         modelFlow -> "models" to 1
-        deviceCapabilities -> "device" to 2
+        deviceCapabilities -> "device" to (if (other) 2 else 1)
         other -> "other" to 1
         currentGroup == "tools" -> "tools" to 1
         currentGroup == "prompts" -> "prompts" to 1
@@ -428,7 +474,11 @@ fun PiSettingsStack(
 
                 route == "models" -> app.pi.ui.models.ModelsScreen(
                     contentPadding = contentPadding,
-                    onBack = { modelFlow = false },
+                    onBack = {
+                        modelFlow = false
+                        modelsInitialProvider = null
+                        modelsInitialScoped = false
+                    },
                     host = modelsHost,
                     store = activeStore,
                     freshness = rowsEpoch,
@@ -436,6 +486,8 @@ fun PiSettingsStack(
                     onExternalSettingsWrite = onExternalSettingsWrite,
                     availableModels = availableModels,
                     onLoadAvailableModels = onLoadAvailableModels,
+                    initialProviderQuery = modelsInitialProvider,
+                    initialOpenScoped = modelsInitialScoped,
                 )
 
                 route == "device" -> DeviceCapabilityScreen(
@@ -454,11 +506,9 @@ fun PiSettingsStack(
                         }
                     },
                     onOpenDeviceCapabilities = {
-                        other = false
                         deviceCapabilities = true
                     },
                     onOpenLicenses = {
-                        other = false
                         licenses = true
                     },
                 )

@@ -179,13 +179,24 @@ internal fun ScopedModelsSheet(
     val modelByKey = remember(models) {
         models.associateBy { "${it.provider.orEmpty()}/${it.id}" }
     }
-    var selectedKeys by remember(initialScoped, persistedPatterns, models) {
+    var userEdited by remember { mutableStateOf(false) }
+    var selectedKeys by remember {
         val seed = if (initialScoped.isNotEmpty()) {
             initialScoped.map { "${it.provider}/${it.id}" }
         } else {
             persistedPatterns.filter { it in modelByKey }
         }
         mutableStateOf(seed.distinct())
+    }
+    androidx.compose.runtime.LaunchedEffect(initialScoped, persistedPatterns, models) {
+        if (!userEdited) {
+            val seed = if (initialScoped.isNotEmpty()) {
+                initialScoped.map { "${it.provider}/${it.id}" }
+            } else {
+                persistedPatterns.filter { it in modelByKey }
+            }
+            selectedKeys = seed.distinct()
+        }
     }
     val selectedSet = remember(selectedKeys) { selectedKeys.toSet() }
 
@@ -196,12 +207,14 @@ internal fun ScopedModelsSheet(
     }
 
     fun toggleKey(key: String) {
+        userEdited = true
         selectedKeys = if (key in selectedSet) selectedKeys.filterNot { it == key } else selectedKeys + key
     }
 
     fun moveSelected(index: Int, delta: Int) {
         val target = index + delta
         if (target !in selectedKeys.indices) return
+        userEdited = true
         val mutable = selectedKeys.toMutableList()
         val item = mutable.removeAt(index)
         mutable.add(target, item)

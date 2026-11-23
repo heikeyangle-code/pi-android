@@ -6,7 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,7 +26,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.i18n.tr
@@ -218,51 +216,38 @@ private fun ImageCell(
     // need 32 decoded bytes; only a JPEG pays for the walk behind its EXIF segment
     // ([naturalImageAspect]).
     val headerAspect = remember(image.base64) { naturalImageAspect(image.base64) }
-    // The cell's own pixel size decides the sample, so a grid cell never allocates a
-    // full-screen bitmap. `BoxWithConstraints` is the only place the real size is known
-    // before layout; the decode then runs off the main thread.
-    BoxWithConstraints(modifier) {
-        val targetWidthPx = constraints.maxWidth
-        // The single-image box: the full width is the caller's, the height is stated here
-        // from data already in hand. A grid cell is the other way round — the caller fixed
-        // the square (`weight(1f).aspectRatio(1f)`), so the cell fills what it was given.
-        val boxAspect = if (naturalAspect) headerAspect ?: SINGLE_IMAGE_FALLBACK_ASPECT else 0f
-        val boxHeightPx = if (naturalAspect) {
-            singleImageBoxHeightPx(targetWidthPx, boxAspect, capPx)
-        } else {
-            constraints.maxHeight.takeIf { it != Constraints.Infinity } ?: capPx
-        }
-        // Sampled to what will be drawn, not to the card it sits in (see [fitBoxPx]).
-        val sample = fitBoxPx(targetWidthPx, boxHeightPx, headerAspect ?: boxAspect)
-        // Decoded off the main thread, keyed on the payload *and* the box: a streaming
-        // transcript recomposes often, and the decode must not repeat for the same
-        // bytes at the same size. The keys come from the box stated above, never from the
-        // decoded bitmap below, so an image-sized box cannot re-key its own decode; the
-        // decode also waits on the shared gate, so a fling cannot start a dozen of them.
-        //
-        // The decode also goes through [PiImageCache], because `produceState` is state of a
-        // *composition*: without the cache, a row the list disposes and later re-creates —
-        // the ordinary result of scrolling past a picture and back — decoded the same bytes
-        // again. A hit neither waits on the gate nor decodes; a failure is not cached, so it
-        // is re-tried exactly as before, and the cell's `Pending`/`Ready` geometry is
-        // unchanged (the cache only fills the value in sooner).
-        val state by produceState<CellImage>(
-            CellImage.Pending,
-            image.base64,
-            targetWidthPx,
-            boxHeightPx,
-        ) {
-            value = CellImage.Ready(
-                withContext(Dispatchers.IO) {
-                    PiImageCache.readThrough(image.base64, sample.width, sample.height) {
-                        piImageDecodeGate.withPermit {
-                            decodePiImage(image.base64, sample.width, sample.height)
-                        }
+    // Compute deterministic pixel dimensions from screenWidthDp (no BoxWithConstraints / SubcomposeLayout
+    // inside chat LazyColumn rows — prevents measurement-pass scroll bounce).
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val contentWidthDp = (screenWidthDp.dp - PiSpacing.pageHorizontal * 2).coerceAtLeast(160.dp)
+    val cellWidthDp = if (naturalAspect) contentWidthDp else ((contentWidthDp - PiSpacing.gutter) / 2f).coerceAtLeast(80.dp)
+    val targetWidthPx = with(density) { cellWidthDp.roundToPx() }
+    val boxAspect = if (naturalAspect) headerAspect ?: SINGLE_IMAGE_FALLBACK_ASPECT else 1f
+    val boxHeightPx = if (naturalAspect) {
+        singleImageBoxHeightPx(targetWidthPx, boxAspect, capPx)
+    } else {
+        targetWidthPx.coerceAtMost(capPx)
+    }
+    // Sampled to what will be drawn, not to the card it sits in (see [fitBoxPx]).
+    val sample = fitBoxPx(targetWidthPx, boxHeightPx, headerAspect ?: boxAspect)
+    val state by produceState<CellImage>(
+        CellImage.Pending,
+        image.base64,
+        targetWidthPx,
+        boxHeightPx,
+    ) {
+        value = CellImage.Ready(
+            withContext(Dispatchers.IO) {
+                PiImageCache.readThrough(image.base64, sample.width, sample.height) {
+                    piImageDecodeGate.withPermit {
+                        decodePiImage(image.base64, sample.width, sample.height)
                     }
-                },
-            )
-        }
-        val decoded = (state as? CellImage.Ready)?.bitmap
+                }
+            },
+        )
+    }
+    val decoded = (state as? CellImage.Ready)?.bitmap
+    Box(modifier) {
         Surface(
             modifier = Modifier
                 .then(

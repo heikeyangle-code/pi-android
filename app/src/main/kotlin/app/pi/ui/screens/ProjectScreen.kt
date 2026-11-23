@@ -1447,9 +1447,15 @@ fun ProjectScreen(
             },
             onEnter = {
                 menuFor = null
-                crumbs = crumbs + target.file.name
+                if (searchWholeProject && filterText.isNotBlank()) {
+                    crumbs = homeCrumbs + target.path.split('/').filter { it.isNotEmpty() }
+                    filterText = ""
+                    filterOpen = false
+                } else {
+                    crumbs = crumbs + target.file.name
+                }
             },
-            onOpenAsProject = if (target.isDirectory && runCatching { target.file.canWrite() }.getOrDefault(false)) {
+            onOpenAsProject = if (target.isDirectory) {
                 {
                     menuFor = null
                     openDirectoryAsProject(target.file)

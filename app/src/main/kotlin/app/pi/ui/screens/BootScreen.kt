@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
@@ -39,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
@@ -102,7 +104,11 @@ fun BootScreen(
                     ),
                 )
                 Spacer(Modifier.height(24.dp))
-                BootButton(label = tr("开始准备", "Get started"), onClick = onRetry)
+                BootButton(
+                    label = tr("开始准备", "Get started"),
+                    onClick = onRetry,
+                    icon = Icons.AutoMirrored.Filled.ArrowForward,
+                )
             }
 
             is Boot.Working -> {
@@ -320,6 +326,7 @@ private fun BootButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     destructive: Boolean = false,
+    icon: ImageVector? = Icons.Filled.Refresh,
 ) {
     val palette = PiTheme.palette
     val shape = RoundedCornerShape(12.dp)
@@ -342,9 +349,9 @@ private fun BootButton(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (!destructive) {
+            if (!destructive && icon != null) {
                 Icon(
-                    imageVector = Icons.Filled.Refresh,
+                    imageVector = icon,
                     contentDescription = null,
                     modifier = Modifier.size(17.dp),
                     tint = fg,

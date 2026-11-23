@@ -128,7 +128,7 @@ export function register(reg, { controller }) {
       for (const f of rl.getAgentsFiles().agentsFiles ?? []) out.add(real(f.path));
       for (const s of rl.getSkills().skills ?? []) out.add(real(s.filePath));
       for (const t of rl.getPrompts().prompts ?? []) out.add(real(t.filePath));
-      for (const t of rl.getThemes().themes ?? []) if (t.path) out.add(real(t.path));
+      for (const t of rl.getThemes().themes ?? []) if (t.sourcePath ?? t.path) out.add(real(t.sourcePath ?? t.path));
       for (const e of rl.getExtensions().extensions ?? []) out.add(real(e.resolvedPath ?? e.path));
     } catch {
       /* 会话没建好就只剩白名单 */

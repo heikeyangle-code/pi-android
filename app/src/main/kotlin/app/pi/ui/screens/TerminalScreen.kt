@@ -316,7 +316,7 @@ private fun TerminalTabPill(
             .background(bg, shape)
             .border(if (selected) 1.dp else 0.5.dp, borderColor, shape)
             .clickable(onClick = onSelect)
-            .padding(start = 9.dp, end = if (selected) 5.dp else 9.dp),
+            .padding(start = 9.dp, end = if (selected) 2.dp else 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -337,10 +337,10 @@ private fun TerminalTabPill(
             modifier = Modifier.weight(1f, fill = false),
         )
         if (selected) {
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(2.dp))
             Box(
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(28.dp)
                     .clip(CircleShape)
                     .clickable(
                         role = Role.Button,
@@ -353,7 +353,7 @@ private fun TerminalTabPill(
                     imageVector = Icons.Filled.Close,
                     contentDescription = null,
                     tint = palette.foreground.copy(alpha = 0.58f),
-                    modifier = Modifier.size(13.dp),
+                    modifier = Modifier.size(14.dp),
                 )
             }
         }

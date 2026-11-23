@@ -53,7 +53,6 @@ import app.pi.protocol.ToolDiff
 import app.pi.protocol.TranscriptItem
 import app.pi.protocol.UserMessage
 import app.pi.ui.PiSessionViewModel
-import app.pi.ui.chat.ChatChip
 import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme

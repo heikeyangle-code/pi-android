@@ -35,10 +35,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
@@ -326,12 +326,16 @@ fun SessionTreeView(
     }
 
     val picked = selectedId
+    val fallbackPickedItem = remember(roots, leafId, picked) {
+        if (picked == null) {
+            null
+        } else {
+            TreeModel.view(roots, leafId, TreeFilter.All, "", emptySet(), homeDir).rows
+                .firstOrNull { it.item.id == picked }?.item
+        }
+    }
     if (picked != null) {
-        val item = view.rows.firstOrNull { it.item.id == picked }?.item
-            ?: remember(roots, leafId, picked) {
-                TreeModel.view(roots, leafId, TreeFilter.All, "", emptySet(), homeDir).rows
-                    .firstOrNull { it.item.id == picked }?.item
-            }
+        val item = view.rows.firstOrNull { it.item.id == picked }?.item ?: fallbackPickedItem
         if (item == null) {
             selectedId = null
         } else {
@@ -635,7 +639,7 @@ private fun TreeRowView(row: TreeRow, showStamps: Boolean, onClick: () -> Unit, 
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            imageVector = if (item.folded) Icons.Filled.ChevronRight else Icons.Filled.ExpandMore,
+                            imageVector = if (item.folded) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.ExpandMore,
                             contentDescription = null,
                             modifier = Modifier.size(14.dp),
                             tint = if (item.folded) p.accent else p.muted,

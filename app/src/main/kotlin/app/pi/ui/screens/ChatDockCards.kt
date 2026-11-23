@@ -203,12 +203,21 @@ internal fun ChatTransientPalettes(
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         val paletteQuery = paletteQueryOf(draft)
-        if (paletteQuery != null && state.commandsLoaded) {
+        if (paletteQuery != null) {
+            val paletteCommands = remember(state.commands, state.commandsLoaded) {
+                if (state.commandsLoaded || state.commands.isNotEmpty()) state.commands
+                else app.pi.ui.chat.builtinRows(emptyList())
+            }
             SlashPalette(
-                commands = state.commands,
+                commands = paletteCommands,
                 query = paletteQuery,
                 onPick = { command ->
-                    if (command.argumentHint != null || command.completes) {
+                    val shouldPrefill = when (command.source) {
+                        app.pi.ui.chat.PiCommandSource.Builtin ->
+                            app.pi.ui.chat.CLIENT_BUILTINS[command.name]?.prefillOnTap == true
+                        else -> command.argumentHint != null || command.completes
+                    }
+                    if (shouldPrefill) {
                         onDraft("${command.invocation} ")
                     } else {
                         onDraft("")
@@ -227,7 +236,11 @@ internal fun ChatTransientPalettes(
                 command = argContext.command,
                 prefix = argContext.prefix,
                 completions = answer?.items.orEmpty(),
-                onPick = { item -> onDraft("/${argContext.command.name} ${item.value} ") },
+                onPick = { item ->
+                    // 内建单参数命令（/model /thinking /login）点选补全后填齐可直接发送，不强塞多余尾空格。
+                    val suffix = if (argContext.command.source == app.pi.ui.chat.PiCommandSource.Builtin) "" else " "
+                    onDraft("/${argContext.command.name} ${item.value}$suffix")
+                },
                 modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
             )
         }

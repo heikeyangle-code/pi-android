@@ -243,7 +243,11 @@ export function register(reg, { controller }) {
     return withState(controller);
   });
   reg.add("session.compact", async (args) => withState(controller, await controller.requireSession().compact(optStr(args, "customInstructions"))));
-  reg.add("session.export", async (args) => ({ path: await controller.requireSession().exportToHtml(optStr(args, "outputPath")) }));
+  reg.add("session.export", async (args) => {
+    const themeName = optStr(args, "themeName");
+    const opts = themeName ? { themeName } : undefined;
+    return { path: await controller.requireSession().exportToHtml(optStr(args, "outputPath"), opts) };
+  });
   reg.add("session.reload", async () => {
     const r = await controller.reloadSession();
     if (!r.reloaded) throw new HostError(ERR.BUSY, r.reason);

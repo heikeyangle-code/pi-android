@@ -347,7 +347,7 @@ internal fun ToolHeader(
     val word = toolStateWord(state)
     val accent = toolAccentColor(state, palette)
     // State 留到 graphicsLayer 里读，避免运行中每帧重组整条工具卡标题。
-    val runningPulse: androidx.compose.runtime.State<Float>? = if (state == ToolState.Running) {
+    val runningPulse: androidx.compose.runtime.State<Float>? = if (state == ToolState.Running && android.animation.ValueAnimator.areAnimatorsEnabled()) {
         rememberInfiniteTransition(label = "tool-run").animateFloat(
             initialValue = 0.35f,
             targetValue = 1f,
@@ -627,6 +627,7 @@ internal fun ToolCard(
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    expandable: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val palette = PiTheme.palette
@@ -637,7 +638,7 @@ internal fun ToolCard(
             color = toolContainerColor(state, palette),
             // LazyColumn 内不挂 animateContentSize：运行中流式输出与收起锚点（anchor.onCollapse）
             // 都不再被 160ms 高度动画拉扯，展开/收起大工具输出零掉帧、零回跳。
-            modifier = Modifier.toggleContent(expanded, onToggle),
+            modifier = if (expandable) Modifier.toggleContent(expanded, onToggle) else Modifier,
             // 已结束的工具卡去掉彩色描边，纯靠语义色底 + 左侧状态圆点自然分层（干净克制、对齐官方 Pi）；
             // 仅在运行中保留一层极轻细边突出活跃态，结束后自动消隐。
             borderColor = if (state == ToolState.Running) stateAccent.copy(alpha = 0.28f) else null,

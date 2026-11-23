@@ -1,9 +1,9 @@
 package app.pi.ui.blocks
 
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,8 +24,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -125,10 +125,10 @@ fun DiffBlock(
             // card and draws no node at all. It carries **no duration tick** either (`06 §2`:
             // diff 卡不显示 — nothing here was timed, and the row is already the densest in
             // the stream).
-            val chevronAngle by animateFloatAsState(if (expanded) 90f else 0f, label = "diff-chevron")
+            val chevronAngle = animateFloatAsState(if (expanded) 90f else 0f, label = "diff-chevron")
             ToolRailFrame {
                 BlockCard(
-                    color = palette.toolPendingBg,
+                    color = palette.toolSuccessBg,
                     modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
                     borderColor = null,
                     padding = ToolCardRowPadding,
@@ -183,29 +183,18 @@ fun DiffBlock(
                             contentDescription = null,
                             modifier = Modifier
                                 .size(15.dp)
-                                .rotate(chevronAngle),
+                                .graphicsLayer { rotationZ = chevronAngle.value },
                             tint = palette.bodyOnTool,
                         )
                     }
 
                     if (expanded) {
                         if (plan.isEmpty()) {
-                            // A diff `parseDiff` could not structure (neither unified nor pi's
-                            // readable shape). Its text has no cap of its own — it comes from
-                            // the tool's `details`, not from a truncated tool result — so it
-                            // is painted through the same app-side budget the other bodies
-                            // use, and the omission is said in the app's existing sentence
-                            // (`ShellBlock`'s 「上方还有 N 行未显示」). Without this, one
-                            // unparsable diff was the only transcript body with no ceiling:
-                            // a single `Text` holding all of it, re-measured on every
-                            // publication while the turn streamed.
                             val raw = item.diffText
                             val painted = remember(raw) { tailLines(raw, TOOL_BODY_MAX_LINES) }
                             val hidden = remember(raw, painted) { hiddenLineCount(lineCount(raw), painted) }
                             MonoText(
                                 text = painted.ifEmpty { tr("（无差异内容）", "(No diff content)") },
-                                // F13: `toolOutput` is 3.37:1 on the success card; the
-                                // derived variant clears §9's 4.5:1 body floor.
                                 color = palette.bodyOnTool,
                             )
                             if (hidden > 0) {
@@ -217,40 +206,35 @@ fun DiffBlock(
                                 )
                             }
                         } else {
-                            for (row in plan) {
-                                when (row) {
-                                    is DiffRow.Header -> Text(
-                                        text = row.text,
-                                        style = PiTheme.text.monoSmall,
-                                        color = palette.muted,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
+                            // 零间距 Column 包裹差异行，保证增删高亮底色连续成带，不被 BlockCard 的 6dp 行距打断。
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(0.dp),
+                            ) {
+                                for (row in plan) {
+                                    when (row) {
+                                        is DiffRow.Header -> Text(
+                                            text = row.text,
+                                            modifier = Modifier.padding(top = PiSpacing.tiny, bottom = 2.dp),
+                                            style = PiTheme.text.monoSmall,
+                                            color = palette.muted,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
 
-                                    is DiffRow.Fold -> Text(
-                                        text = tr("… ${row.count} 行未变", "… ${row.count} unchanged lines"),
-                                        // `06 §2` diff 卡: the fold line lines up with the code
-                                        // column, i.e. past the symbol column (16) and the
-                                        // number column (30) — v2 draws it behind a 46 px
-                                        // spacer for the same reason (`direction-b-v2.html:766`).
-                                        modifier = Modifier.padding(
-                                            start = PiSpacing.symbolColumn + PiSpacing.lineNumberColumn,
-                                            top = PiSpacing.tiny,
-                                            bottom = PiSpacing.tiny,
-                                        ),
-                                        // The fold is the one line of this body that is not code, but it
-                                        // is still machine output: v2 draws it **inside** the body's own
-                                        // monospace container and only overrides the size to 12
-                                        // (`direction-b-v2.html:762-768`, `06 §2`「折叠行 12」), and its
-                                        // number is a row count — one of the six readings `05 §4.2` keeps
-                                        // on the machine face (「耗时/退出码/行数/token/费用/秒数 六类改成
-                                        // `numeric`」). `meta` was the only mono-block line in the UI face,
-                                        // which broke the column rhythm the comment above protects.
-                                        style = PiTheme.text.monoSmall,
-                                        color = palette.muted,
-                                    )
+                                        is DiffRow.Fold -> Text(
+                                            text = tr("… ${row.count} 行未变", "… ${row.count} unchanged lines"),
+                                            modifier = Modifier.padding(
+                                                start = PiSpacing.symbolColumn + PiSpacing.lineNumberColumn,
+                                                top = PiSpacing.tiny,
+                                                bottom = PiSpacing.tiny,
+                                            ),
+                                            style = PiTheme.text.monoSmall,
+                                            color = palette.muted,
+                                        )
 
-                                    is DiffRow.Line -> DiffLineRow(row)
+                                        is DiffRow.Line -> DiffLineRow(row)
+                                    }
                                 }
                             }
                             if (omitted) {

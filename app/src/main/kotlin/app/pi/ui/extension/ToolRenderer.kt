@@ -88,16 +88,17 @@ fun interface MessageRenderer {
 
 val LocalMessageRenderer = staticCompositionLocalOf<MessageRenderer?> { null }
 
-/** 同一个 `customType` 被答过"没有渲染器"就不再问；结果按（行、内容、展开态）缓存。 */
-internal class MessageRendererCache(private val fetch: suspend (HookMessage, Boolean) -> List<String>?) {
+/** 同一个 `customType` 被答过"没有渲染器"就不再问；结果按（行、内容、展开态、列宽）缓存。 */
+internal class MessageRendererCache(private val fetch: suspend (HookMessage, Boolean, Int) -> List<String>?) {
+    private data class Key(val itemKey: String, val contentHash: Int, val expanded: Boolean, val width: Int)
     private val absent = HashSet<String>()
-    private val last = HashMap<Triple<String, Int, Boolean>, List<String>>()
+    private val last = HashMap<Key, List<String>>()
 
-    suspend fun render(item: HookMessage, expanded: Boolean): List<String>? {
+    suspend fun render(item: HookMessage, expanded: Boolean, width: Int): List<String>? {
         if (item.customType in absent) return null
-        val key = Triple(item.key, item.markdown.hashCode() * 31 + (item.details?.hashCode() ?: 0), expanded)
+        val key = Key(item.key, item.markdown.hashCode() * 31 + (item.details?.hashCode() ?: 0), expanded, width)
         last[key]?.let { return it }
-        val lines = fetch(item, expanded)
+        val lines = fetch(item, expanded, width)
         if (lines == null) {
             absent += item.customType
             return null
@@ -112,7 +113,7 @@ internal class MessageRendererCache(private val fetch: suspend (HookMessage, Boo
 
 /**
  * 扩展自己的 `custom` 会话条目：[render] 返回 null = 宿主不可达；[HostCommands.EntryRender.hasRenderer] 为 false
- * = 没有渲染器，pi 什么也不画。结果按（条目、展开态）缓存，「是否有渲染器」按 customType 缓存。
+ * = 没有渲染器，pi 什么也不画。结果按（条目、展开态、列宽）缓存，「是否有渲染器」按 customType 缓存。
  */
 fun interface EntryRenderer {
     suspend fun render(item: ExtensionEntry, expanded: Boolean): List<String>?
@@ -130,16 +131,17 @@ fun interface MarkdownTransform {
 
 val LocalMarkdownTransform = staticCompositionLocalOf<MarkdownTransform?> { null }
 
-/** 没有任何扩展注册 transformer 时（count == 0）一次都不再问；有则按（消息、原文）缓存。 */
-internal class MarkdownTransformCache(private val fetch: suspend (String, String, String) -> HostCommands.MarkdownRender) {
+/** 没有任何扩展注册 transformer 时（count == 0）一次都不再问；有则按（消息、类型、列宽、原文）缓存。 */
+internal class MarkdownTransformCache(private val fetch: suspend (String, String, String, Int) -> HostCommands.MarkdownRender) {
+    private data class Key(val messageId: String, val messageType: String, val width: Int, val hash: Int)
     private var none = false
-    private val last = HashMap<Pair<String, Int>, String>()
+    private val last = HashMap<Key, String>()
 
-    suspend fun transform(markdown: String, messageType: String, messageId: String): String {
+    suspend fun transform(markdown: String, messageType: String, messageId: String, width: Int): String {
         if (none || markdown.isEmpty()) return markdown
-        val key = messageId to markdown.hashCode()
+        val key = Key(messageId, messageType, width, markdown.hashCode())
         last[key]?.let { return it }
-        val result = fetch(markdown, messageType, messageId)
+        val result = fetch(markdown, messageType, messageId, width)
         if (result.count == 0) { none = true; return markdown }
         if (last.size > 300) last.clear()
         last[key] = result.markdown
@@ -149,20 +151,21 @@ internal class MarkdownTransformCache(private val fetch: suspend (String, String
     fun reset() { none = false; last.clear() }
 }
 
-internal class EntryRendererCache(private val fetch: suspend (ExtensionEntry, Boolean) -> HostCommands.EntryRender) {
+internal class EntryRendererCache(private val fetch: suspend (ExtensionEntry, Boolean, Int) -> HostCommands.EntryRender) {
+    private data class Key(val itemKey: String, val dataHash: Int, val expanded: Boolean, val width: Int)
     private val absent = HashSet<String>()
     private val present = HashSet<String>()
-    private val last = HashMap<Triple<String, Int, Boolean>, List<String>>()
+    private val last = HashMap<Key, List<String>>()
 
     /** 已确认有渲染器的 customType（可见性过滤用）。 */
     fun hasRenderer(customType: String) = customType in present
     fun known(customType: String) = customType in absent || customType in present
 
-    suspend fun render(item: ExtensionEntry, expanded: Boolean): List<String>? {
+    suspend fun render(item: ExtensionEntry, expanded: Boolean, width: Int): List<String>? {
         if (item.customType in absent) return null
-        val key = Triple(item.key, item.data.hashCode(), expanded)
+        val key = Key(item.key, item.data.hashCode(), expanded, width)
         last[key]?.let { return it }
-        val result = fetch(item, expanded)
+        val result = fetch(item, expanded, width)
         if (!result.hasRenderer) { absent += item.customType; return null }
         present += item.customType
         val lines = result.lines ?: return null

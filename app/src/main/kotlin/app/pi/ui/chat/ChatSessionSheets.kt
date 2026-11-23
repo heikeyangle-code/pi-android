@@ -211,7 +211,7 @@ fun SessionToolsSheet(
                         icon = Icons.Filled.IosShare,
                         tint = palette.accent,
                         title = tr("导出会话", "Export"),
-                        subtitle = tr("生成完整 HTML", "Save HTML & JSONL"),
+                        subtitle = tr("保存 HTML 与 JSONL", "Save HTML & JSONL"),
                         onClick = onExport,
                         modifier = Modifier.weight(1f),
                     )
@@ -489,6 +489,15 @@ fun RenameSessionDialog(
                 singleLine = true,
                 textStyle = PiTheme.text.prose.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(palette.accent),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+                ),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                    onDone = {
+                        val trimmed = name.trim()
+                        if (trimmed.isNotEmpty()) onConfirm(trimmed)
+                    },
+                ),
                 decorationBox = { inner ->
                     Box {
                         if (name.isEmpty()) {
@@ -608,7 +617,8 @@ internal fun ActiveSystemPromptSheet(
     }
 
     val raw = promptText.orEmpty()
-    val sections = remember(raw) { parseSystemPromptSections(raw) }
+    val isZh = app.pi.i18n.PiLocale.isZh
+    val sections = remember(raw, isZh) { parseSystemPromptSections(raw) }
     val visibleText = remember(raw, sections, selectedSection) {
         if (selectedSection == "all") {
             raw
@@ -739,17 +749,19 @@ internal fun ActiveSystemPromptSheet(
                             color = palette.muted,
                         )
                     }
-                    else -> Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
-                            .padding(14.dp),
-                    ) {
-                        Text(
-                            text = visibleText,
-                            style = PiTheme.text.monoSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
+                    else -> androidx.compose.foundation.text.selection.SelectionContainer {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .padding(14.dp),
+                        ) {
+                            Text(
+                                text = visibleText,
+                                style = PiTheme.text.monoSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
                     }
                 }
             }

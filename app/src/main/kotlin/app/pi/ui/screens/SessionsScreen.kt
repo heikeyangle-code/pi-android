@@ -46,11 +46,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -61,7 +62,6 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -480,7 +480,7 @@ fun SessionsScreen(
                                 icon = when (effectiveSort) {
                                     SessionSort.Threaded -> if (searching) Icons.Filled.Schedule else Icons.Filled.AccountTree
                                     SessionSort.Recent -> Icons.Filled.Schedule
-                                    SessionSort.Relevance -> Icons.Filled.Sort
+                                    SessionSort.Relevance -> Icons.AutoMirrored.Filled.Sort
                                 },
                                 active = false,
                                 onClick = {
@@ -1297,7 +1297,7 @@ private fun WorkspaceGroupHeader(
                 color = PiTheme.palette.muted,
             )
             Icon(
-                imageVector = Icons.Filled.ChevronRight,
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,
                 modifier = Modifier.size(18.dp).rotate(angle),
                 tint = PiTheme.palette.muted,

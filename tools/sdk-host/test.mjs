@@ -1133,7 +1133,7 @@ try {
     expect("session.reload 清空 toolComponents 缓存（避免旧渲染器与内存泄漏）", n1 >= 1 && n2 > n1 && nAfter === n1, `n1=${n1} n2=${n2} after=${nAfter}`);
   }
 
-  // ---- 7b. state 快照内嵌 availableThinkingLevels / supportsThinking ----
+  // ---- 7b. state 快照内嵌 availableThinkingLevels / supportsThinking 及完整模型/状态字段 ----
   {
     const snap = await h.call("session.snapshot");
     expect(
@@ -1143,6 +1143,37 @@ try {
         snap.data.availableThinkingLevels.length > 0 &&
         typeof snap.data?.supportsThinking === "boolean",
       JSON.stringify({ levels: snap.data?.availableThinkingLevels, supports: snap.data?.supportsThinking }),
+    );
+    expect(
+      "session.snapshot 透出 isRetrying / isBashRunning / autoRetryEnabled 与完整 model 字段",
+      snap.ok &&
+        typeof snap.data?.isRetrying === "boolean" &&
+        typeof snap.data?.isBashRunning === "boolean" &&
+        typeof snap.data?.autoRetryEnabled === "boolean" &&
+        (snap.data?.model == null ||
+          (Array.isArray(snap.data.model.input) && typeof snap.data.model.contextWindow === "number")),
+      JSON.stringify({
+        isRetrying: snap.data?.isRetrying,
+        isBashRunning: snap.data?.isBashRunning,
+        autoRetryEnabled: snap.data?.autoRetryEnabled,
+        model: snap.data?.model,
+      }),
+    );
+  }
+
+  // ---- 7c. 内置斜杠命令参数补全（/thinking /model） ----
+  {
+    const tc = await h.call("catalog.commandCompletions", { name: "thinking", prefix: "" });
+    expect(
+      "catalog.commandCompletions 为内置 /thinking 提供推理档位补全",
+      tc.ok && Array.isArray(tc.data?.items) && tc.data.items.some((i) => i.value === "off"),
+      JSON.stringify(tc.data),
+    );
+    const mc = await h.call("catalog.commandCompletions", { name: "model", prefix: "" });
+    expect(
+      "catalog.commandCompletions 为内置 /model 返回结构化补全列表",
+      mc.ok && Array.isArray(mc.data?.items),
+      JSON.stringify(mc.data),
     );
   }
 

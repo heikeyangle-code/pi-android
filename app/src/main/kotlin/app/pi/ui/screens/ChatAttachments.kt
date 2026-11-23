@@ -30,6 +30,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AlternateEmail
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -861,7 +867,7 @@ internal fun AttachmentPickerSheet(
                 AttachmentSourceTile(
                     title = tr("相册图片", "Photos"),
                     subtitle = tr("支持多选与智能压缩", "Multi-select with smart resize"),
-                    glyph = tr("图", "IMG"),
+                    icon = androidx.compose.material.icons.Icons.Filled.PhotoLibrary,
                     tint = palette.accent,
                     modifier = Modifier.weight(1f),
                     onClick = {
@@ -872,7 +878,7 @@ internal fun AttachmentPickerSheet(
                 AttachmentSourceTile(
                     title = tr("本地文件", "Local Files"),
                     subtitle = tr("多选并拷入工作区", "Copy into workspace"),
-                    glyph = tr("文", "DOC"),
+                    icon = androidx.compose.material.icons.Icons.Filled.Description,
                     tint = palette.success,
                     modifier = Modifier.weight(1f),
                     onClick = {
@@ -888,7 +894,7 @@ internal fun AttachmentPickerSheet(
                 AttachmentSourceTile(
                     title = tr("工作区文件", "Workspace Files"),
                     subtitle = tr("输入 @ 模糊引用", "Reference with @ mention"),
-                    glyph = "@",
+                    icon = androidx.compose.material.icons.Icons.Filled.AlternateEmail,
                     tint = palette.mdLink,
                     modifier = Modifier.weight(1f),
                     onClick = {
@@ -899,7 +905,7 @@ internal fun AttachmentPickerSheet(
                 AttachmentSourceTile(
                     title = tr("剪贴板图片", "Clipboard Image"),
                     subtitle = if (hasClipboardImage) tr("检测到剪贴板图片", "Image detected in clipboard") else tr("读取剪贴板中的图片", "Paste image from clipboard"),
-                    glyph = tr("贴", "PST"),
+                    icon = androidx.compose.material.icons.Icons.Filled.ContentPaste,
                     tint = if (hasClipboardImage) palette.warning else palette.muted,
                     modifier = Modifier.weight(1f),
                     onClick = {
@@ -916,34 +922,35 @@ internal fun AttachmentPickerSheet(
 private fun AttachmentSourceTile(
     title: String,
     subtitle: String,
-    glyph: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     tint: Color,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(16.dp)
     Surface(
         onClick = onClick,
         modifier = modifier,
         shape = shape,
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        border = BorderStroke(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.45f)),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.45f)),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             Box(
                 modifier = Modifier
-                    .size(30.dp)
-                    .clip(RoundedCornerShape(9.dp))
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(tint.copy(alpha = 0.14f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = glyph,
-                    style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-                    color = tint,
+                androidx.compose.material3.Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(18.dp),
                 )
             }
             Text(

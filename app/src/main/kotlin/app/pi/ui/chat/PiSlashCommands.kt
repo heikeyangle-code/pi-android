@@ -59,9 +59,6 @@ enum class ChatAction {
     /** 菜单用：查看当前生效的系统提示词（由对话顶栏 ⋯ 命令中心直达）。 */
     ViewSystemPrompt,
 
-    /** 扩展通过 `pi.registerShortcut(shortcut, { description, handler })` 注册的快捷键动作。 */
-    TriggerShortcut,
-
     /** pi 有这个命令，这个客户端做不了：点一下说明原因（[UNSUPPORTED_BUILTIN_REASONS]），不假装。 */
     Unsupported,
 }
@@ -78,10 +75,7 @@ enum class PiCommandSource {
     Prompt,
 
     /** `source: "skill"` — a `SKILL.md`, invoked as `/skill:<name>`. */
-    Skill,
-
-    /** `pi.registerShortcut(...)` — extension keyboard shortcuts surfaced as 1-tap touch actions. */
-    Shortcut;
+    Skill;
 
     val label: String
         get() = when (this) {
@@ -89,7 +83,6 @@ enum class PiCommandSource {
             Extension -> tr("扩展", "Extensions")
             Prompt -> tr("模板", "Prompts")
             Skill -> tr("技能", "Skills")
-            Shortcut -> tr("快捷", "Shortcuts")
         }
 }
 
@@ -123,32 +116,34 @@ data class PiSlashCommand(
     val sourceTag: String?,
     val action: ChatAction,
     val argumentHint: String? = null,
-    /** 该命令（扩展命令的 `getArgumentCompletions`）能按已输入的前缀给参数候选。 */
+    /** 该命令（内置 `/model` `/thinking` `/login` 或扩展命令的 `getArgumentCompletions`）能按已输入的前缀给参数候选。 */
     val completes: Boolean = false,
     /**
      * 是否在面板列表里占一行。pi 有、手机做不了的内建命令（[UNSUPPORTED_BUILTIN_REASONS]）是 false：
      * 一行只会说「不行」的命令放在列表里是噪音，敲全名时才出现并说明原因（`filterPalette`）。
      */
     val listed: Boolean = true,
-    /** 仅当 [source] == [PiCommandSource.Shortcut] 时非空，保存注册的快捷键名（如 `ctrl+shift+p`）。 */
-    val shortcutKey: String? = null,
 ) {
-    /** What the user types to invoke it (or keycap label for shortcuts). */
-    val invocation: String get() = if (source == PiCommandSource.Shortcut) name else "/$name"
+    /** What the user types to invoke it. */
+    val invocation: String get() = "/$name"
 }
 
 /**
  * 一个 pi 内建命令在手机上怎么做。
  *
  * @property zh 面板里显示的中文说明（pi 自己的说明是英文）。
- * @property note 点击后先弹的一句话——用于「跳到设置页」这一类，告诉用户落在哪一页。
- * @property argumentHint 有参数的命令：点击只把 `/name ` 填进输入框等用户补参数，不直接执行。
+ * @property en 英文说明，严格对齐 Pi 1.6.0 `core/slash-commands.ts`。
+ * @property argumentHint 兜底参数提示（宿主在线时优先采用官方 `BUILTIN_SLASH_COMMANDS` 的 `argumentHint`）。
+ * @property completes 是否支持参数自动补全（对齐官方 `interactive-mode.ts:813-864`）。
+ * @property prefillOnTap 点击命令面板行时是否先写入 `/name ` 等待补参数，而非直接打开移动端原生选择器。
  */
 class ClientBuiltin(
     val action: ChatAction,
     val zh: String,
     val en: String,
     val argumentHint: String? = null,
+    val completes: Boolean = false,
+    val prefillOnTap: Boolean = false,
     val noteZh: String? = null,
     val noteEn: String? = null,
 ) {
@@ -157,26 +152,34 @@ class ClientBuiltin(
 }
 
 /**
- * pi 的内建命令 → 本客户端的实现。**键就是 pi 的命令名**，表里的顺序也是 pi 的
- * `BUILTIN_SLASH_COMMANDS` 顺序（宿主没送来内建表时，面板按这个顺序兜底）。
- * 英文描述严格对齐 Pi 1.6.0 `core/slash-commands.js`。
+ * pi 的内建命令 → 本客户端的实现。**键就是官方 Pi 1.6.0 `BUILTIN_SLASH_COMMANDS` 的命令名**，
+ * 顺序、英文描述与 `argumentHint` 严格对齐 `packages/coding-agent/src/core/slash-commands.ts`。
  */
 val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
     "settings" to ClientBuiltin(ChatAction.OpenSettings, "打开设置", "Open settings menu"),
-    "terminal" to ClientBuiltin(ChatAction.OpenTerminal, "打开内置多标签终端", "Open built-in multi-tab terminal"),
-    "model" to ClientBuiltin(ChatAction.PickModel, "选择模型", "Select model (opens selector UI)"),
+    "model" to ClientBuiltin(
+        ChatAction.PickModel,
+        "选择模型",
+        "Select model (opens selector UI)",
+        argumentHint = "<provider/model>",
+        completes = true,
+    ),
     "tree" to ClientBuiltin(ChatAction.OpenTree, "浏览会话树（切换分支）", "Navigate session tree (switch branches)"),
-    "thinking" to ClientBuiltin(ChatAction.PickThinking, "设置思考等级", "Set thinking level"),
+    "thinking" to ClientBuiltin(
+        ChatAction.PickThinking,
+        "设置思考等级",
+        "Set thinking level",
+        argumentHint = "<level>",
+        completes = true,
+    ),
     "scoped-models" to ClientBuiltin(
         ChatAction.OpenSettings,
         "选择参与循环切换的模型",
         "Enable/disable models for model cycling",
-        noteZh = "「循环模型」在 设置 → 模型与供应商 → 推理、作用域与缓存。",
-        noteEn = "Scoped models can be configured in Settings → Models & Providers → Reasoning, Scope & Cache.",
     ),
     "export" to ClientBuiltin(
         ChatAction.ExportSession,
-        "导出会话：不带参数＝HTML 与可导入的会话文件各一份；给名字＝按后缀只写一份",
+        "导出会话（默认 HTML + JSONL，也可指定 .html / .jsonl 文件名）",
         "Export session (HTML + JSONL by default, or specify .html/.jsonl filename)",
     ),
     "import" to ClientBuiltin(
@@ -188,6 +191,8 @@ val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
         ChatAction.BugReport,
         "生成问题报告并复制（可附一句说明）",
         "Report a bug to the Pi developers",
+        argumentHint = "<description>",
+        prefillOnTap = true,
     ),
     "copy" to ClientBuiltin(
         ChatAction.CopyLastAssistant,
@@ -210,22 +215,18 @@ val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
         ChatAction.OpenSettings,
         "保存项目信任决定",
         "Save project trust decision for future sessions",
-        noteZh = "项目信任与默认策略在 设置 → 扩展与资源 → 项目信任。",
-        noteEn = "Project trust and default policy are in Settings → Extensions & Resources → Project Trust.",
     ),
     "login" to ClientBuiltin(
         ChatAction.OpenSettings,
         "配置模型服务商登录",
         "Configure provider authentication",
-        noteZh = "登录在 设置 → 模型与供应商（点开供应商）。",
-        noteEn = "Sign in under Settings → Models & Providers.",
+        argumentHint = "<provider>",
+        completes = true,
     ),
     "logout" to ClientBuiltin(
         ChatAction.OpenSettings,
         "移除模型服务商登录",
         "Remove provider authentication",
-        noteZh = "退出登录在 设置 → 模型与供应商（点开供应商）。",
-        noteEn = "Sign out under Settings → Models & Providers.",
     ),
     "new" to ClientBuiltin(ChatAction.NewSession, "开始新会话", "Start a new session"),
     "compact" to ClientBuiltin(ChatAction.Compact, "手动压缩会话上下文", "Manually compact the session context"),
@@ -266,10 +267,13 @@ fun genericUnsupportedReason(): String = tr(
 
 /**
  * 面板里的内建命令行：**pi 的表在前、我们的映射在后**。
+ * 保留官方 `BUILTIN_SLASH_COMMANDS` 的 `argumentHint` 与内置补全能力。
  */
 fun builtinRows(wire: List<PiResponses.BuiltinCommand>): List<PiSlashCommand> {
     val source = wire.ifEmpty {
-        (CLIENT_BUILTINS.keys + UNSUPPORTED_BUILTIN_REASONS.keys).map { PiResponses.BuiltinCommand(it, null, null) }
+        (CLIENT_BUILTINS.keys + UNSUPPORTED_BUILTIN_REASONS.keys).map { name ->
+            PiResponses.BuiltinCommand(name, CLIENT_BUILTINS[name]?.en, CLIENT_BUILTINS[name]?.argumentHint)
+        }
     }
     return source.map { builtin ->
         val client = CLIENT_BUILTINS[builtin.name]
@@ -280,7 +284,8 @@ fun builtinRows(wire: List<PiResponses.BuiltinCommand>): List<PiSlashCommand> {
                 source = PiCommandSource.Builtin,
                 sourceTag = null,
                 action = client.action,
-                argumentHint = client.argumentHint,
+                argumentHint = builtin.argumentHint ?: client.argumentHint,
+                completes = client.completes,
             )
         } else {
             PiSlashCommand(
@@ -289,6 +294,7 @@ fun builtinRows(wire: List<PiResponses.BuiltinCommand>): List<PiSlashCommand> {
                 source = PiCommandSource.Builtin,
                 sourceTag = null,
                 action = ChatAction.Unsupported,
+                argumentHint = builtin.argumentHint,
                 listed = builtin.name !in UNSUPPORTED_BUILTIN_REASONS,
             )
         }
@@ -301,48 +307,6 @@ fun unsupportedReason(name: String): String {
     return if (pair != null) tr(pair.first, pair.second) else genericUnsupportedReason()
 }
 
-/**
- * 面板的数据：宿主 `catalog.commands`（扩展 / 模板 / 技能，`commands/catalog.mjs`）加 pi 自己的内建表（`catalog.builtins`）。
- *
- * Deduplication follows pi's own rule rather than a guess. When an extension
- * registers a command whose name is a built-in, pi keeps the **built-in** in
- * its autocomplete and reports a diagnostic
- * (`interactive-mode.ts` `getBuiltInCommandConflictDiagnostics`: "Skipping in
- * autocomplete"); the extension command stays invocable if typed with its
- * suffixed invocation name. So a name that is a built-in wins, and the
- * extension row is dropped only when it would collide *exactly* — a suffixed
- * `name:1` is kept (audit §5.9).
- *
- * The extension rows carry `sourceInfo`, so the tag comes from pi's own scope +
- * origin fields (`core/source-info.ts:3-12`) rather than from a path guess.
- *
- * ## Group order
- *
- * The three groups arrive from the host in one order and are displayed in another,
- *  because pi itself has two different orders:
- *
- *  - `catalog.commands` pushes **extension → template → skill** (it mirrors the old RPC
- *    `get_commands`: `getRegisteredCommands()`, then `promptTemplates`, then skills);
- *  - the TUI builds its own autocomplete list as
- *    `[...slashCommands, ...templateCommands, ...extensionCommands,
- *    ...skillCommandList]` (`interactive-mode.ts:727`) — i.e. built-ins,
- *    **templates, extensions**, skills.
- *
- * This palette reproduces the **TUI** order, because it is the surface a pi user
- * sees while typing `/` and the panel exists to be that surface on a phone;
- * the host's list is only the transport. [sortedBy] is stable, so rows inside one
- * group keep the order the wire sent them in.
- *
- * @param skillCommandsEnabled pi's `enableSkillCommands` (default true). This is
- *        where that setting actually takes effect in this app: pi reads it only in
- *        its own TUI (`interactive-mode.ts:716`, `:4570`) and its RPC `get_commands`
- *        hands over skill commands unconditionally (`rpc-mode.ts:702-708`), so a
- *        panel built from that answer alone would ignore the switch entirely. pi's
- *        TUI registers skills as commands only when the flag is on; dropping the
- *        `Skill`-sourced entries here is the same rule applied to the panel this app
- *        owns. The skills stay readable by the model either way — the setting is
- *        about the command panel, not about access.
- */
 /**
  * 过滤并排序：名字前缀 → 名字包含 → 说明包含（组内保持原顺序，即官方的 内置→模板→扩展→技能）。
  * `listed = false` 的行（已知做不了的内建命令）只在敲全名时出现。
@@ -365,7 +329,6 @@ private fun groupRank(source: PiCommandSource): Int = when (source) {
     PiCommandSource.Prompt -> 1
     PiCommandSource.Extension -> 2
     PiCommandSource.Skill -> 3
-    PiCommandSource.Shortcut -> 4
 }
 
 /** 输入框里「命令名已写完、正在写参数」的状态：哪条命令、参数写到哪了。 */
@@ -373,23 +336,22 @@ data class ArgumentContext(val command: PiSlashCommand, val prefix: String)
 
 /**
  * 草稿是 `/名字 参数…` 且 `名字` 是已知命令时，返回命令和已输入的参数前缀；否则 null。
- * 命令面板只管第一个词（见 `paletteQueryOf`），空格之后轮到这里。
+ * 命令面板只管第一个词（见 `paletteQueryOf`），空白字符之后轮到这里。
  */
 fun argumentContextOf(draft: String, commands: List<PiSlashCommand>): ArgumentContext? {
     val text = draft.trimStart()
     if (!text.startsWith("/")) return null
-    val space = text.indexOf(' ')
-    if (space < 0) return null
-    val name = text.substring(1, space)
+    val sep = text.indexOfFirst { it.isWhitespace() }
+    if (sep < 0) return null
+    val name = text.substring(1, sep)
     val command = commands.firstOrNull { it.name == name } ?: return null
-    return ArgumentContext(command, text.substring(space + 1))
+    return ArgumentContext(command, text.substring(sep + 1))
 }
 
 fun piCommandPalette(
     commands: List<PiResponses.SlashCommand>,
     builtins: List<PiSlashCommand> = builtinRows(emptyList()),
     skillCommandsEnabled: Boolean = true,
-    shortcuts: List<PiResponses.ExtensionShortcut> = emptyList(),
 ): List<PiSlashCommand> {
     val taken = builtins.mapTo(HashSet()) { it.name }
     val fromPi = commands.mapNotNull { command ->
@@ -412,35 +374,18 @@ fun piCommandPalette(
             completes = command.hasCompletions,
         )
     }
-    val fromShortcuts = shortcuts.mapNotNull { sc ->
-        val key = sc.shortcut.trim()
-        if (key.isEmpty()) return@mapNotNull null
-        PiSlashCommand(
-            name = key,
-            description = sc.description?.takeIf { it.isNotBlank() } ?: tr("触发扩展快捷键", "Trigger extension shortcut"),
-            source = PiCommandSource.Shortcut,
-            sourceTag = null,
-            action = ChatAction.TriggerShortcut,
-            shortcutKey = key,
-        )
-    }
-    return builtins + fromPi.sortedBy { tuiGroupRank(it.source) } + fromShortcuts
+    return builtins + fromPi.sortedBy { tuiGroupRank(it.source) }
 }
 
 /**
  * Where [source] sits in pi's TUI autocomplete list
  * (`interactive-mode.ts:727`), which is the order this palette displays.
- *
- * Separate from [PiCommandSource]'s declaration order on purpose: that order is
- * the wire's (`rpc-mode.ts:684-708`), and conflating the two is what made the
- * panel's grouping disagree with the TUI it is copying.
  */
 private fun tuiGroupRank(source: PiCommandSource): Int = when (source) {
     PiCommandSource.Builtin -> 0
     PiCommandSource.Prompt -> 1
     PiCommandSource.Extension -> 2
     PiCommandSource.Skill -> 3
-    PiCommandSource.Shortcut -> 4
 }
 
 /**

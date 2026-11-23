@@ -392,26 +392,24 @@ fun ToolCallBlock(
                             )
                         }
                         shownCalls.forEach { call ->
-                            // One span per run: the name in `toolTitle`, the arguments, duration
-                            // and cost in `muted`, a failure in `error` — pi's own per-token
-                            // colours (`codemode/renderer.js:41-56`), resolved through the same
-                            // table the header row uses.
-                            val runs = remember(call, fullOutput) {
-                                codemodeCallRuns(call, expanded = fullOutput)
-                            }
-                            Row(verticalAlignment = Alignment.Top) {
-                                Text(
-                                    text = codemodeCallIcon(call.status),
-                                    style = PiTheme.text.monoSmall,
-                                    color = toolAccentColor(codemodeCallState(call.status), palette),
-                                    maxLines = 1,
-                                )
-                                Spacer(Modifier.width(PiSpacing.inline))
-                                Text(
-                                    text = remember(runs, palette) { runs.toAnnotatedString(palette) },
-                                    style = PiTheme.text.mono,
-                                    modifier = Modifier.weight(1f),
-                                )
+                            androidx.compose.runtime.key(call) {
+                                val runs = remember(call, fullOutput) {
+                                    codemodeCallRuns(call, expanded = fullOutput)
+                                }
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Text(
+                                        text = codemodeCallIcon(call.status),
+                                        style = PiTheme.text.monoSmall,
+                                        color = toolAccentColor(codemodeCallState(call.status), palette),
+                                        maxLines = 1,
+                                    )
+                                    Spacer(Modifier.width(PiSpacing.inline))
+                                    Text(
+                                        text = remember(runs, palette) { runs.toAnnotatedString(palette) },
+                                        style = PiTheme.text.mono,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
                             }
                         }
                         // pi's `Model calls: $X` total, on its own condition: more than one

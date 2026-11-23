@@ -653,7 +653,7 @@ internal fun McpServersScreen(
         )
     }
 
-    loginUi?.let { ui ->
+    loginUi?.takeIf { it.redirectRequestId == null }?.let { ui ->
         val waiting = ui.phase == LoginUi.Phase.Waiting
         PiSettingsDialog(
             onDismissRequest = { if (!waiting) loginUi = null },
@@ -683,6 +683,8 @@ internal fun McpServersScreen(
             },
             dismissalLabel = if (waiting) tr("不等了", "Cancel") else null,
             onDismissButton = {
+                loginJob?.cancel()
+                loginJob = null
                 loginId?.let { id ->
                     val ext = access()?.ext
                     if (ext != null) {
@@ -691,6 +693,7 @@ internal fun McpServersScreen(
                         }
                     }
                 }
+                loginId = null
                 loginUi = null
             },
         )
@@ -730,7 +733,11 @@ internal fun McpServersScreen(
                     modifier = Modifier.fillMaxWidth(),
                     label = tr("回跳网址", "Callback URL"),
                 )
-                Button(onClick = { answer(pasted.trim()) }, enabled = pasted.isNotBlank()) { Text(tr("提交", "Submit")) }
+                app.pi.ui.models.PrimaryAction(
+                    text = tr("提交", "Submit"),
+                    enabled = pasted.isNotBlank(),
+                    onClick = { answer(pasted.trim()) },
+                )
             }
         }
     }

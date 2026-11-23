@@ -105,13 +105,69 @@ export function register(reg, { controller }) {
     }
   });
 
-  // 扩展命令的参数补全（pi TUI 敲 `/name ` 之后出的那份）。`name` 是调用名（带 `:1` 后缀的那种），
-  // `prefix` 是已经敲了的参数前缀。补全函数是扩展自己的代码，可能慢或抛错：限时 2 秒，出错给空表
-  // 并带原因，不让命令面板挂住。
+  // 内建命令（/model /thinking /login，对齐官方 interactive-mode.ts:813-864）与扩展命令的参数补全。
+  // 扩展的补全函数是用户代码，可能慢或抛错：限时 2 秒，出错给空表并带原因，不让命令面板挂住。
+  const fuzzyScore = (text, needle) => {
+    if (!needle) return 0;
+    const hay = String(text ?? "").toLowerCase();
+    if (hay.startsWith(needle)) return 3;
+    if (hay.includes(needle)) return 2;
+    let hi = 0;
+    for (let ni = 0; ni < needle.length; ni++) {
+      hi = hay.indexOf(needle[ni], hi);
+      if (hi < 0) return -1;
+      hi++;
+    }
+    return 1;
+  };
+
+  const builtinCompletions = (session, name, prefix) => {
+    const needle = prefix.trim().toLowerCase();
+    if (name === "model") {
+      const models = session.scopedModels.length > 0
+        ? session.scopedModels.map((entry) => entry.model)
+        : session.modelRuntime.getAvailableSnapshot();
+      return models
+        .map((m) => {
+          const full = `${m.provider}/${m.id}`;
+          const score = Math.max(fuzzyScore(full, needle), fuzzyScore(m.id, needle), fuzzyScore(m.name, needle));
+          return { score, value: full, label: m.id, description: m.provider };
+        })
+        .filter((i) => i.score >= 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 50)
+        .map(({ value, label, description }) => ({ value, label, description }));
+    }
+    if (name === "thinking") {
+      const levels = typeof session.getAvailableThinkingLevels === "function" ? session.getAvailableThinkingLevels() : [];
+      return levels
+        .map((level) => ({ score: fuzzyScore(level, needle), value: level, label: level, description: null }))
+        .filter((i) => i.score >= 0)
+        .sort((a, b) => b.score - a.score)
+        .map(({ value, label, description }) => ({ value, label, description }));
+    }
+    if (name === "login") {
+      const providers = typeof session.modelRuntime?.listProviders === "function" ? session.modelRuntime.listProviders() : [];
+      return providers
+        .map((p) => {
+          const score = Math.max(fuzzyScore(p.id, needle), fuzzyScore(p.name, needle));
+          return { score, value: p.id, label: p.id, description: p.name ?? null };
+        })
+        .filter((i) => i.score >= 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 50)
+        .map(({ value, label, description }) => ({ value, label, description }));
+    }
+    return null;
+  };
+
   reg.add("catalog.commandCompletions", async (args) => {
     const name = str(args, "name");
     const prefix = optStr(args, "prefix") ?? "";
-    const command = controller.requireSession().extensionRunner.getRegisteredCommands().find((c) => c.invocationName === name);
+    const session = controller.requireSession();
+    const builtin = builtinCompletions(session, name, prefix);
+    if (builtin !== null) return { items: builtin };
+    const command = session.extensionRunner.getRegisteredCommands().find((c) => c.invocationName === name);
     if (typeof command?.getArgumentCompletions !== "function") return { items: [] };
     let timer;
     try {
@@ -197,7 +253,7 @@ export function register(reg, { controller }) {
   });
   reg.add("catalog.setTools", (args) => {
     const s = controller.requireSession();
-    if (!Array.isArray(args.names)) throw new Error("names 必须是数组");
+    if (!Array.isArray(args.names)) throw bad("names 必须是数组");
     s.setActiveToolsByName(args.names.map(String));
     return withState(controller, { active: s.getActiveToolNames() });
   });

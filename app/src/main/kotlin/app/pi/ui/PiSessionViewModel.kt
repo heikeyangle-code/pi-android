@@ -308,6 +308,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          */
         val commands: List<PiSlashCommand> = emptyList(),
         val commandsLoaded: Boolean = false,
+        /** `pi.registerShortcut(...)` registered by extensions — surfaced in the Extension Hub, not the `/` command palette. */
+        val extensionShortcuts: List<PiResponses.ExtensionShortcut> = emptyList(),
         /** `get_session_stats`, loaded when the stats sheet opens. */
         val stats: PiResponses.SessionStats? = null,
         /** `get_tree` — branches, for the session tree overlay. */
@@ -1738,6 +1740,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 if (next != prev) {
                     _state.update { s -> s.copy(stats = next) }
                 }
+                hostState.toSessionState()?.let { remote ->
+                    applySessionState(remote, hostState.availableThinkingLevels)
+                }
             }
         }
         // 官方渲染组件自己要求重绘（`ui.requestRender()`：动画、定时刷新）→ 清缓存、换一版，卡片重取。
@@ -1752,6 +1757,48 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     if (cancelId != null && dialogs.remove(cancelId) != null) {
                         publishDialogs()
                     }
+                }
+                if (ev.name == "ext.bound") {
+                    val obj = ev.data as? JsonObject
+                    val ok = (obj?.get("ok") as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: true
+                    if (!ok) {
+                        val errText = (obj?.get("error") as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+                            ?: tr("扩展绑定失败", "Failed to bind extensions")
+                        _state.update { s -> s.copy(lastError = errText) }
+                        pushNotice(tr("扩展加载失败：$errText", "Extension bind failed: $errText"), Notice.Tone.Error)
+                    } else {
+                        // 后台扩展绑定完成：清空可能提前缓存的「无渲染器」标记，补刷命令表和自定义条目探测。
+                        toolRenderCache.reset()
+                        messageRenderCache.reset()
+                        entryRenderCache.reset()
+                        markdownTransformCache.reset()
+                        probeEntryTypes(_state.value.transcript)
+                        _renderRev.value += 1
+                        refreshCommands()
+                    }
+                }
+                if (ev.name == "session.bound") {
+                    val obj = ev.data as? JsonObject
+                    val first = (obj?.get("first") as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
+                    val boundId = (obj?.get("sessionId") as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    val curId = _state.value.meta.sessionId
+                    if (!first && boundId != null && boundId != curId) {
+                        // 扩展通过 ctx.newSession / ctx.switchSession / ctx.fork 切换了会话：同步刷新转写与元数据。
+                        viewModelScope.launch {
+                            if (session !== engine) return@launch
+                            refreshStateNow(engine.api)
+                            replayHistory(engine)
+                            refreshStats()
+                        }
+                    }
+                }
+                if (ev.name == "agent.error" || ev.name == "host.fatal") {
+                    val obj = ev.data as? JsonObject
+                    val msg = (obj?.get("message") as? JsonPrimitive)?.content
+                        ?: (obj?.get("error") as? JsonPrimitive)?.content
+                        ?: tr("引擎发生错误", "Engine error")
+                    _state.update { s -> s.copy(lastError = msg) }
+                    pushNotice(msg, Notice.Tone.Error)
                 }
                 if (ev.name == "project.trust.required") {
                     // 官方弹窗：项目里有要信任才加载的东西、又没人表态。事件只发一次，
@@ -3267,9 +3314,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 catalog.commands,
                 builtins = builtinRows(catalog.builtins),
                 skillCommandsEnabled = skillCommands,
-                shortcuts = catalog.shortcuts,
             )
-            _state.update { s -> s.copy(commands = palette, commandsLoaded = true) }
+            _state.update { s ->
+                s.copy(
+                    commands = palette,
+                    commandsLoaded = true,
+                    extensionShortcuts = catalog.shortcuts,
+                )
+            }
         }
     }
 
@@ -3558,24 +3610,26 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    internal val messageRenderCache = MessageRendererCache { item, expanded ->
+    internal val messageRenderCache = MessageRendererCache { item, expanded, width ->
         val commands = session?.commands ?: throw IllegalStateException("no session")
-        commands.renderMessage(item.customType, item.markdown, item.details, expanded, panelColumns.takeIf { it > 0 } ?: 80)
+        commands.renderMessage(item.customType, item.markdown, item.details, expanded, width)
     }
 
     /** 扩展自定义消息的渲染入口：没有渲染器 / 宿主不可达回 null，消息回落 markdown。 */
     val messageRenderer = MessageRenderer { item, expanded ->
-        runCatching { messageRenderCache.render(item, expanded) }.getOrNull()
+        val width = panelColumns.takeIf { it > 0 } ?: 80
+        runCatching { messageRenderCache.render(item, expanded, width) }.getOrNull()
     }
 
-    internal val entryRenderCache = EntryRendererCache { item, expanded ->
+    internal val entryRenderCache = EntryRendererCache { item, expanded, width ->
         val commands = session?.commands ?: throw IllegalStateException("no session")
-        commands.renderEntry(item.customType, item.key, item.data, expanded, panelColumns.takeIf { it > 0 } ?: 80)
+        commands.renderEntry(item.customType, item.key, item.data, expanded, width)
     }
 
     /** 扩展自定义会话条目的渲染入口（`registerEntryRenderer`）：没有渲染器 / 宿主不可达回 null。 */
     val entryRenderer = EntryRenderer { item, expanded ->
-        runCatching { entryRenderCache.render(item, expanded) }.getOrNull()
+        val width = panelColumns.takeIf { it > 0 } ?: 80
+        runCatching { entryRenderCache.render(item, expanded, width) }.getOrNull()
     }
 
     internal val _entryRenderable = MutableStateFlow<Set<String>>(emptySet())
@@ -3583,14 +3637,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** 有扩展渲染器的条目 customType：转录里只有这些 `custom` 条目会画出来（pi：没渲染器就不添加任何子组件）。 */
     val entryRenderable: StateFlow<Set<String>> = _entryRenderable.asStateFlow()
 
-    internal val markdownTransformCache = MarkdownTransformCache { text, type, id ->
+    internal val markdownTransformCache = MarkdownTransformCache { text, type, id, width ->
         val commands = session?.commands ?: throw IllegalStateException("no session")
-        commands.renderMarkdown(text, type, isStreaming = false, width = panelColumns.takeIf { it > 0 } ?: 80, messageId = id)
+        commands.renderMarkdown(text, type, isStreaming = false, width = width, messageId = id)
     }
 
     /** 已完成消息的 markdown 经扩展 transformer 改写；没有 transformer / 宿主不可达就原样返回。 */
     val markdownTransform = MarkdownTransform { text, type, id ->
-        runCatching { markdownTransformCache.transform(text, type, id) }.getOrDefault(text)
+        val width = panelColumns.takeIf { it > 0 } ?: 80
+        runCatching { markdownTransformCache.transform(text, type, id, width) }.getOrDefault(text)
     }
 
     /** 转录里新出现的 `custom` 条目类型各问宿主一次「有没有渲染器」，结果驱动 [entryRenderable]。 */
@@ -3613,8 +3668,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 .distinctBy { it.customType }
         }
         if (fresh.isEmpty()) return
+        val width = panelColumns.takeIf { it > 0 } ?: 80
         viewModelScope.launch {
-            for (item in fresh) runCatching { entryRenderCache.render(item, false) }
+            for (item in fresh) runCatching { entryRenderCache.render(item, false, width) }
             val newlyRenderable = fresh.map { it.customType }.filter(entryRenderCache::hasRenderer)
             if (newlyRenderable.isNotEmpty()) {
                 _entryRenderable.update { it + newlyRenderable }
@@ -3742,7 +3798,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             },
             setThinking = { level ->
                 api.setThinkingLevel(level)
-                _state.update { s -> s.copy(meta = s.meta.copy(thinkingLevel = level)) }
+                val applied = engine.commands.stateStore.state.value?.thinkingLevel?.takeIf { it.isNotBlank() } ?: level
+                _state.update { s -> s.copy(meta = s.meta.copy(thinkingLevel = applied)) }
             },
             setDefaultThinkingLevel = { level ->
                 engine.commands.settingsSet("setDefaultThinkingLevel", listOf(JsonPrimitive(level)))

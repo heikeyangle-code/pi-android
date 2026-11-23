@@ -282,7 +282,6 @@ internal fun PiSettingsListExpander(
 @Composable
 internal fun PiSettingsCard(
     modifier: Modifier = Modifier,
-    /** 描边覆盖：默认是 `outlineVariant` 的 1px 细线（见上方 KDoc）。 */
     border: BorderStroke? = null,
     content: @Composable () -> Unit,
 ) {
@@ -290,29 +289,14 @@ internal fun PiSettingsCard(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = PiSettingsMetrics.pageHorizontal),
-        shape = PiSettingsCardShape,
-        border = border ?: BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = PiShapes.card,
+        border = border ?: BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.45f)),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Column { content() }
     }
 }
 
-/**
- * Chip：高 26、圆角 999、`padding:0 9px`、`gap:5`，字 12（选中正文色、否则 muted），
- * 可选前置符号用等宽、muted。
- *
- * **无描边、填充底**（用户裁决，会话主页方案 §4）：选中 `primaryContainer`
- * （= pi 的 `selectedBg`）、未选中 `surfaceContainerHigh`。原来两档都画 1px 描边
- * （选中 `borderAccent`、否则 `borderMuted`）—— 一屏里每一颗 chip 都带一圈轮廓，
- * 正是「可见描边」过多那种乱。文字与底色的对色关系不变：选中仍是正文色。
- *
- * 搜索快捷词与**会话列表的两个筛选**共用它：`phone19` 的「↕ 按时间 / ○ 全部」就是
- * `active` 那两档，所以它必须能画选中态，不能只是半个胶囊。
- *
- * @param active 这一档是不是当前选中的那一档（不是「开/关」）。
- * @param glyph 前置符号（`↕` / `✓` / `○`），可选。
- */
 @Composable
 internal fun PiSettingsChip(
     text: String,
@@ -323,20 +307,28 @@ internal fun PiSettingsChip(
     /** 忙碌的行（例如正在安装）上置灰并吞掉点击，避免“看着能点却没反应”。 */
     enabled: Boolean = true,
 ) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val bg by animateColorAsState(
+        targetValue = if (active) {
+            MaterialTheme.colorScheme.onSurface
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+        },
+        animationSpec = tween(140),
+        label = "chipBg",
+    )
+    val fg = if (active) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant
     Row(
         modifier = modifier
             .alpha(if (enabled) 1f else 0.45f)
-            .height(PiSettingsMetrics.chipHeight)
+            .height(30.dp)
             .clip(PiShapes.badge)
-            .background(
-                if (active) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceContainerHigh
-                },
-            )
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = PiSettingsMetrics.chipPaddingHorizontal),
+            .background(bg)
+            .clickable(enabled = enabled) {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
+            .padding(horizontal = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
     ) {
@@ -344,24 +336,17 @@ internal fun PiSettingsChip(
             Text(
                 glyph,
                 style = PiTheme.text.monoSmall,
-                color = PiTheme.palette.muted,
+                color = fg,
             )
         }
         Text(
             text,
-            // 文字无衬线，符号（`↕` / `○` / `✓`）仍是等宽 —— 等宽只留给路径与符号。
-            style = PiTheme.text.meta,
-            color = if (active) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
+            style = PiTheme.text.meta.copy(fontWeight = if (active) androidx.compose.ui.text.font.FontWeight.SemiBold else androidx.compose.ui.text.font.FontWeight.Normal),
+            color = fg,
         )
     }
 }
 
-/**
- * `06 §2`「徽标：圆角 999、`padding:1px 7px 1px 6px`、色块 5×5 圆角 1、
- * 可选符号 12 等宽、文字 12 正文色」，外面还有 1px `borderMuted` 描边。
- *
- * 颜色只由调用方从 pi/M3 令牌传入（本批不改任何取色）。
- */
 @Composable
 internal fun PiSettingsBadge(
     label: String,
@@ -372,20 +357,15 @@ internal fun PiSettingsBadge(
     Row(
         modifier = modifier
             .clip(PiShapes.badge)
-            .border(PiSettingsMetrics.hairline, MaterialTheme.colorScheme.outline, PiShapes.badge)
-            .padding(
-                start = PiSettingsMetrics.badgePaddingStart,
-                end = PiSettingsMetrics.badgePaddingEnd,
-                top = PiSettingsMetrics.badgePaddingVertical,
-                bottom = PiSettingsMetrics.badgePaddingVertical,
-            ),
+            .background(tone.copy(alpha = 0.13f))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         Box(
             Modifier
-                .size(PiSettingsMetrics.badgeDot)
-                .clip(RoundedCornerShape(PiSettingsMetrics.badgeDotRadius))
+                .size(6.dp)
+                .clip(CircleShape)
                 .background(tone),
         )
         if (glyph != null) {
@@ -398,23 +378,11 @@ internal fun PiSettingsBadge(
         Text(
             label,
             style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = tone,
         )
     }
 }
 
-/**
- * 生效徽标（`02-real-content.md` §4.3）：`需重载` / `新会话` / `需重启引擎` /
- * `自动重启引擎` / `需重启`。
- *
- * 文字与色相沿用 `ui/components/PiCommon.kt` 的既有映射（tertiary / onSurfaceVariant /
- * error，都是 M3 槽位 = pi 派生），本批只把**形状**换成 §2 的圆角 999 + 1px 描边 +
- * 色块，不新增也不改任何颜色。`Immediate` 不出徽标。
- *
- * `AutoRestartEngine` 用 `tertiary` 而不是 `RestartEngine` 那枚 `error`：红色在这一排里是
- * 「要你做点什么」的语气（需重启引擎 / 需重启），而这一行不需要用户动手——写下去的时候重启
- * 已经发生了。徽标的字也一样：说「自动」，不说「需」。
- */
 @Composable
 internal fun PiSettingsEffectiveBadge(
     kind: EffectiveKind,
@@ -431,13 +399,6 @@ internal fun PiSettingsEffectiveBadge(
     PiSettingsBadge(label = label, tone = tone, modifier = modifier)
 }
 
-/**
- * `06 §2`「开关：`38×22` 圆角 999 `padding:2`，旋钮 16；开 = accent，关 = surf-highest」。
- *
- * 自己画而不是用 M3 的 `Switch`：M3 的开关把轨道尺寸写死在 `SwitchImpl` 里，
- * 传 `Modifier.size(38.dp, 22.dp)` 不会生效，实测仍是 52×32，对不上 §2 的表。
- * `Role.Switch` 与 `toggleable` 保住无障碍语义，颜色仍全部来自令牌。
- */
 @Composable
 internal fun PiSettingsSwitch(
     checked: Boolean,
@@ -445,6 +406,7 @@ internal fun PiSettingsSwitch(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val accent = PiTheme.palette.accent
     val track by animateColorAsState(
         targetValue = if (checked) accent else MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -452,14 +414,17 @@ internal fun PiSettingsSwitch(
         label = "switchTrack",
     )
     val border by animateColorAsState(
-        targetValue = if (checked) accent else MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
+        targetValue = if (checked) accent else PiTheme.palette.borderMuted.copy(alpha = 0.7f),
         animationSpec = tween(160),
         label = "switchBorder",
     )
     val travel = PiSettingsMetrics.switchWidth - PiSettingsMetrics.switchPadding * 2 - PiSettingsMetrics.switchKnob
     val knobOffset by animateDpAsState(
         targetValue = if (checked) travel else 0.dp,
-        animationSpec = tween(160),
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+        ),
         label = "switchKnob",
     )
     Box(
@@ -471,12 +436,15 @@ internal fun PiSettingsSwitch(
             )
             .clip(PiShapes.badge)
             .background(track)
-            .border(PiSettingsMetrics.hairline, border, PiShapes.badge)
+            .border(PiSpacing.hairlineThin, border, PiShapes.badge)
             .toggleable(
                 value = checked,
                 enabled = enabled,
                 role = Role.Switch,
-                onValueChange = onCheckedChange,
+                onValueChange = { next ->
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                    onCheckedChange(next)
+                },
             )
             .padding(PiSettingsMetrics.switchPadding),
         contentAlignment = Alignment.CenterStart,

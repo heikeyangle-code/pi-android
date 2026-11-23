@@ -49,9 +49,12 @@ export function register(reg, { controller, bus }) {
   reg.add("packages.inspect", (args) => ({ info: describeSource(packageManager(controller), str(args, "source").trim()) }));
 
   // 以前：`pi` 子进程 + 解析输出；现在：一次函数调用。
-  reg.add("packages.updates", async () => ({
-    updates: (await packageManager(controller).checkForAvailableUpdates()).map((u) => ({ ...u, name: u.displayName ?? u.source })),
-  }));
+  reg.add("packages.updates", async () => {
+    await controller.ensureHttpSettings?.();
+    return {
+      updates: (await packageManager(controller).checkForAvailableUpdates()).map((u) => ({ ...u, name: u.displayName ?? u.source })),
+    };
+  });
 
   // ---- 装 / 卸 / 更新 ----------------------------------------------------------
   // 官方 `PackageManager` 的 `installAndPersist / removeAndPersist / update`，进度来自
@@ -67,6 +70,7 @@ export function register(reg, { controller, bus }) {
     const pm = packageManager(controller);
     pm.setProgressCallback((event) => controller.hub.emit("packages.progress", { opId, ...event }));
     try {
+      await controller.ensureHttpSettings?.();
       const result = await run(pm, { local: optStr(args, "scope") === "project" });
       return { opId, ...(result ?? {}), packages: withInfo(pm, pm.listConfiguredPackages()) };
     } catch (error) {

@@ -29,16 +29,23 @@ class HostState(val raw: JsonObject) {
     val thinkingLevel: String? get() = raw.str("thinkingLevel")
     val isStreaming: Boolean get() = raw.bool("isStreaming") ?: false
     val isCompacting: Boolean get() = raw.bool("isCompacting") ?: false
+    val isRetrying: Boolean get() = raw.bool("isRetrying") ?: false
+    val retryAttempt: Int get() = raw.long("retryAttempt")?.toInt() ?: 0
+    val isBashRunning: Boolean get() = raw.bool("isBashRunning") ?: false
     val steeringMode: String? get() = raw.str("steeringMode")
     val followUpMode: String? get() = raw.str("followUpMode")
     val autoCompactionEnabled: Boolean get() = raw.bool("autoCompactionEnabled") ?: false
+    val autoRetryEnabled: Boolean get() = raw.bool("autoRetryEnabled") ?: false
     val pendingMessageCount: Int get() = raw.long("pendingMessageCount")?.toInt() ?: 0
+    val scopedModelCount: Int get() = raw.long("scopedModelCount")?.toInt() ?: 0
     val extensionsBound: Boolean get() = (raw["extensions"] as? JsonObject)?.bool("bound") ?: false
 
     val modelProvider: String? get() = (raw["model"] as? JsonObject)?.str("provider")
     val modelId: String? get() = (raw["model"] as? JsonObject)?.str("id")
     val modelName: String? get() = (raw["model"] as? JsonObject)?.str("name")
     val modelReasoning: Boolean? get() = (raw["model"] as? JsonObject)?.bool("reasoning")
+    val routedModelProvider: String? get() = (raw["routedModel"] as? JsonObject)?.str("provider")
+    val routedModelId: String? get() = (raw["routedModel"] as? JsonObject)?.str("id")
 
     val activeTools: List<String>
         get() = ((raw["tools"] as? JsonObject)?.get("active") as? JsonArray)

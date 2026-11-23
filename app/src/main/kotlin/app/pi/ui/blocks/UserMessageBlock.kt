@@ -96,26 +96,10 @@ fun UserMessageBlock(
 ) {
     val palette = PiTheme.palette
     BlockColumn(modifier) {
-        // 长按 → 底部操作面，见 [MessageActionTarget]。pi 的 `/fork` 只能从**用户**消息分叉
-        // （`getUserMessagesForForking`），所以「编辑并从此分叉」只在这里给；传出去的仍是行键，
-        // 由 ViewModel 对着 pi 的可分叉点解析（实时行的键是合成的，pi 不认）。
-        MessageActionTarget(
-            item = item,
-            role = MessageRole.User,
-            text = item.text,
-            onEditAndFork = onForkFromMessage?.let { fork -> { fork(item.key) } },
-        ) {
-        // 气泡右对齐（所有档位）、宽度跟内容走、最宽 86%，右下角收成小半径。
-        // **不用 `BoxWithConstraints`**：它是 SubcomposeLayout，内容在布局阶段才组合，整段 Markdown
-        // 异步解析时行高会被短暂算小，LazyColumn 的滚动偏移被夹回去（用户报的「从气泡底部跳到顶部」）。
-        // 这里用普通的 `layout` 修饰符：最大宽度取 86%，量完再靠右摆。
-        Surface(
-            // The board's `marginBottom:10`, verbatim. It is deliberately a literal and
-            // not `PiSpacing.blockGap` (8): the board's own number is 10, and this file
-            // may not add a token. Applied outside the `Surface`, so it stacks with the
-            // list's `Arrangement.spacedBy` instead of replacing it, and the gap is
-            // never painted in `userMessageBg`.
+        // 气泡右对齐、宽度跟内容走、最宽 86%；MessageActionTarget 只包住气泡本身，不吞掉左侧空白画布。
+        androidx.compose.foundation.layout.Box(
             modifier = Modifier
+                .fillMaxWidth()
                 .layout { measurable, constraints ->
                     val width = constraints.maxWidth
                     val placeable = measurable.measure(
@@ -124,11 +108,18 @@ fun UserMessageBlock(
                     layout(width, placeable.height) { placeable.placeRelative(width - placeable.width, 0) }
                 }
                 .padding(bottom = 10.dp),
-            // `borderRadius:12`.
-            shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 6.dp, bottomStart = 18.dp),
-            color = palette.userMessageBg,
-            border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.42f)),
         ) {
+            MessageActionTarget(
+                item = item,
+                role = MessageRole.User,
+                text = item.text,
+                onEditAndFork = onForkFromMessage?.let { fork -> { fork(item.key) } },
+            ) {
+            Surface(
+                shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 6.dp, bottomStart = 18.dp),
+                color = palette.userMessageBg,
+                border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.42f)),
+            ) {
             Column(
                 // The board's `padding:12`, both axes.
                 // 水平 14、垂直 10：16 sp / 27 sp 的正文自带上下半行的空气（约 5 dp），
@@ -173,6 +164,7 @@ fun UserMessageBlock(
                         color = palette.muted,
                     )
                 }
+            }
             }
         }
         }

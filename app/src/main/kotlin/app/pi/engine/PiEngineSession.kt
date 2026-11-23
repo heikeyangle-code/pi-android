@@ -723,7 +723,9 @@ class PiEngineSession(
                     else -> {
                         _hostEvents.tryEmit(signal)
                         extUiReducer.apply(signal.name, signal.data)?.let { _extUi.value = it }
-                        eventToLegacy(signal.name, signal.data)?.let { emitEvent(it) }
+                        eventToLegacy(signal.name, signal.data)?.let { ev ->
+                            if (ev is PiEvent.ExtensionError) handleAgent(ev) else emitEvent(ev)
+                        }
                     }
                 }
             }
@@ -1553,8 +1555,18 @@ class PiEngineSession(
             )
         }
 
-        internal fun eventToLegacy(name: String, data: JsonElement?): PiEvent.ExtensionUiRequest? {
+        internal fun eventToLegacy(name: String, data: JsonElement?): PiEvent? {
             val d = data as? JsonObject ?: return null
+            if (name == "ext.error") {
+                return PiEvents.parse(
+                    legacyObj {
+                        put("type", JsonPrimitive("extension_error"))
+                        d["extensionPath"]?.let { put("extensionPath", it) }
+                        d["event"]?.let { put("event", it) }
+                        d["error"]?.let { put("error", it) }
+                    },
+                )
+            }
             val body: JsonObject = when (name) {
                 "ui.notify" -> legacyObj {
                     put("method", JsonPrimitive("notify"))

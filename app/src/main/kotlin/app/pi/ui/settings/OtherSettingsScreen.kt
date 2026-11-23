@@ -9,7 +9,9 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
@@ -29,9 +31,16 @@ internal fun OtherSettingsScreen(
     val palette = PiTheme.palette
     val context = androidx.compose.ui.platform.LocalContext.current
     val capStore = androidx.compose.runtime.remember(context) { app.pi.bridge.DeviceCapabilityStore.get(context) }
-    val capStates = capStore.states()
+    var capStates by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<List<app.pi.bridge.DeviceCapabilityState>>(emptyList())
+    }
+    androidx.compose.runtime.LaunchedEffect(capStore) {
+        capStates = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            capStore.states()
+        }
+    }
     val capUsable = capStates.count { it.usable }
-    val capSupporting = if (capUsable == 0) {
+    val capSupporting = if (capStates.isEmpty() || capUsable == 0) {
         tr("未启用（0 Token 占用）· 屏幕自动化、通知与设备 Shell", "Disabled (0 Token) · Screen automation, notifications & device shell")
     } else {
         tr("$capUsable/${capStates.size} 组就绪 · 屏幕自动化、通知与设备 Shell", "$capUsable/${capStates.size} active · Screen automation, notifications & device shell")

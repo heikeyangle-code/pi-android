@@ -1142,7 +1142,7 @@ fun PiThemeEditorSheet(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(checked = followSystem, onCheckedChange = { on ->
+                        PiSettingsSwitch(checked = followSystem, onCheckedChange = { on ->
                             followSystem = on
                             if (on) applyPair() else onSet(fixed)
                         })
@@ -1183,11 +1183,7 @@ fun PiThemeEditorSheet(
                             .weight(1f),
                     ) {
                         items(entries) { entry ->
-                            val selected = if (followSystem) {
-                                entry.name == light || entry.name == dark
-                            } else {
-                                entry.name == fixed
-                            }
+                            val selected = !followSystem && entry.name == fixed
                             ThemeEntryRow(
                                 entry = entry,
                                 selected = selected,

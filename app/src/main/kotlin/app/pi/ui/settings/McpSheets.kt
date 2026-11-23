@@ -342,19 +342,36 @@ internal fun McpEditSheet(
                         style = PiTheme.text.meta,
                         color = PiTheme.palette.muted,
                     )
+                    val draftExposureMap = remember(draft.toolExposure) {
+                        draft.toolExposure.lines()
+                            .mapNotNull { line ->
+                                val trimmed = line.trim()
+                                if ('=' !in trimmed) return@mapNotNull null
+                                val k = trimmed.substringBefore('=').trim()
+                                val v = trimmed.substringAfter('=').trim()
+                                if (k.isEmpty() || v.isEmpty()) null else k to v
+                            }
+                            .toMap()
+                    }
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
                         verticalArrangement = Arrangement.spacedBy(PiSpacing.inline),
                     ) {
                         state.tools.forEach { tool ->
-                            val current = state.toolExposure[tool]
+                            val current = draftExposureMap[tool] ?: state.toolExposure[tool]
+                            val inDraft = tool in draftExposureMap
                             PiSettingsChip(
                                 text = if (current == null) tool else "$tool · ${mcpExposureShortLabel(current)}",
-                                active = current != null,
+                                active = inDraft || current != null,
                                 onClick = {
-                                    if (!draft.toolExposure.lines().any { it.substringBefore('=').trim() == tool }) {
-                                        val prefix = draft.toolExposure.trimEnd().let { if (it.isEmpty()) "" else it + "\n" }
-                                        draft = draft.copy(toolExposure = prefix + tool + "=direct")
+                                    if (!inDraft) {
+                                        val prefix = draft.toolExposure.trimEnd().let { if (it.isEmpty()) "" else "$it\n" }
+                                        draft = draft.copy(toolExposure = "$prefix$tool=direct")
+                                    } else {
+                                        val remaining = draft.toolExposure.lines()
+                                            .filterNot { it.substringBefore('=').trim() == tool }
+                                            .joinToString("\n")
+                                        draft = draft.copy(toolExposure = remaining)
                                     }
                                 },
                             )

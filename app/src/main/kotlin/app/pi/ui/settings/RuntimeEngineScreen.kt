@@ -31,11 +31,11 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -166,6 +166,7 @@ fun RuntimeEngineScreen(
         snapshot = loaded.first
         selectedEngine = loaded.second
         statuses = loaded.third
+        keepAlive = (store.read("app.runtime.keepAlive") as? JsonPrimitive)?.booleanOrNull ?: true
     }
 
     val liveState = engineState()
@@ -913,12 +914,14 @@ fun RuntimeEngineScreen(
                                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                 border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
                             ) {
-                                Text(
-                                    reportText.orEmpty(),
-                                    modifier = Modifier.padding(12.dp),
-                                    style = PiTheme.text.monoSmall,
-                                    color = palette.text,
-                                )
+                                SelectionContainer {
+                                    Text(
+                                        reportText.orEmpty(),
+                                        modifier = Modifier.padding(12.dp),
+                                        style = PiTheme.text.monoSmall,
+                                        color = palette.text,
+                                    )
+                                }
                             }
                         }
                     }

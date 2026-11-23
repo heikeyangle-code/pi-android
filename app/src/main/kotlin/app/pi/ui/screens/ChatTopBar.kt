@@ -28,8 +28,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -189,7 +191,7 @@ internal fun ChatTopBar(
                         Box(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .padding(top = 9.dp, end = 9.dp)
+                                .padding(top = 6.dp, end = 6.dp)
                                 .size(6.dp)
                                 .clip(CircleShape)
                                 .background(palette.success),
@@ -386,6 +388,13 @@ private fun ChatCommandCenterSheet(
                 )
                 SheetHairline()
                 SheetActionRow(
+                    icon = Icons.Filled.Compress,
+                    label = tr("压缩会话上下文", "Compact context"),
+                    subtitle = tr("将较早对话总结压缩以释放上下文窗口", "Summarize earlier turns to free context window"),
+                    onClick = { onAction(ChatAction.Compact) },
+                )
+                SheetHairline()
+                SheetActionRow(
                     icon = Icons.Filled.AccountTree,
                     label = tr("从历史消息分叉", "Fork from message"),
                     subtitle = tr("回到某条消息创建新分支会话", "Create a new session branched from an earlier message"),
@@ -396,6 +405,12 @@ private fun ChatCommandCenterSheet(
                     icon = Icons.Filled.ContentCopy,
                     label = tr("复制当前会话", "Clone session"),
                     onClick = { onAction(ChatAction.CloneSession) },
+                )
+                SheetHairline()
+                SheetActionRow(
+                    icon = Icons.Filled.FileUpload,
+                    label = tr("导入 JSONL 会话", "Import JSONL session"),
+                    onClick = { onAction(ChatAction.ImportSession) },
                 )
                 SheetHairline()
                 SheetActionRow(

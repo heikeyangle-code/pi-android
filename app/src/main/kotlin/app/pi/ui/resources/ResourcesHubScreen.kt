@@ -219,6 +219,7 @@ private fun Hub(
     val scrolled by remember(listState) {
         androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
     }
+    Column(Modifier.fillMaxSize()) {
     PiTopBar(
         title = tr("扩展与资源", "Extensions & Resources"),
         onBack = onBack,
@@ -228,7 +229,7 @@ private fun Hub(
     val ov = overview(model.loaded, model.snapshot, model.effectiveLayer)
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.weight(1f).fillMaxWidth(),
         contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + PiSpacing.scrollBottom),
         verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupGap),
     ) {
@@ -390,6 +391,7 @@ private fun Hub(
                 }
             }
         }
+    }
     }
 }
 

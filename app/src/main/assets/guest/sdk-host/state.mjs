@@ -13,11 +13,28 @@
 /** 会改变快照的 agent 事件；其余事件只转发，不触发推送。 */
 export const STATE_EVENTS = new Set([
   "agent_start", "agent_end", "agent_settled", "turn_end", "message_end", "tool_execution_end",
-  "model_change", "thinking_level_change", "session_compact", "session_info_changed", "queue_update",
-  "compaction_end", "auto_retry_end",
+  "thinking_level_changed", "session_info_changed", "queue_update",
+  "compaction_start", "compaction_end", "auto_retry_start", "auto_retry_end",
 ]);
 
 const PUSH_DEBOUNCE_MS = 100;
+
+function serializeModel(m) {
+  if (!m) return null;
+  return {
+    provider: m.provider,
+    id: m.id,
+    name: m.name ?? null,
+    api: m.api ?? null,
+    baseUrl: m.baseUrl ?? null,
+    reasoning: m.reasoning ?? null,
+    input: Array.isArray(m.input) ? m.input : null,
+    inputLimits: m.inputLimits ?? null,
+    cost: m.cost ?? null,
+    contextWindow: typeof m.contextWindow === "number" ? m.contextWindow : null,
+    maxTokens: typeof m.maxTokens === "number" ? m.maxTokens : null,
+  };
+}
 
 export function snapshotOf(controller, { messages = false } = {}) {
   const s = controller.requireSession();
@@ -30,7 +47,7 @@ export function snapshotOf(controller, { messages = false } = {}) {
     sessionId: s.sessionId,
     sessionFile: s.sessionFile ?? null,
     sessionName: s.sessionName ?? null,
-    model: s.model ? { provider: s.model.provider, id: s.model.id, name: s.model.name ?? null, reasoning: s.model.reasoning ?? null } : null,
+    model: serializeModel(s.model),
     thinkingLevel: s.thinkingLevel,
     availableThinkingLevels: typeof s.getAvailableThinkingLevels === "function" ? s.getAvailableThinkingLevels() : [],
     supportsThinking: typeof s.supportsThinking === "function" ? s.supportsThinking() : false,
@@ -39,15 +56,25 @@ export function snapshotOf(controller, { messages = false } = {}) {
     scopedModelCount: s.scopedModels.length,
     isStreaming: s.isStreaming,
     isCompacting: s.isCompacting,
+    isRetrying: Boolean(s.isRetrying),
+    retryAttempt: typeof s.retryAttempt === "number" ? s.retryAttempt : 0,
+    isBashRunning: Boolean(s.isBashRunning),
     steeringMode: s.steeringMode,
     followUpMode: s.followUpMode,
     autoCompactionEnabled: s.autoCompactionEnabled,
+    autoRetryEnabled: Boolean(s.autoRetryEnabled),
     pendingMessageCount: s.pendingMessageCount,
     tools: { active: s.getActiveToolNames() },
     contextUsage: s.getContextUsage?.() ?? null,
     tokens: stats.tokens,
     cost: stats.cost,
-    messageCounts: { user: stats.userMessages, assistant: stats.assistantMessages, tools: stats.toolCalls, total: stats.totalMessages },
+    messageCounts: {
+      user: stats.userMessages,
+      assistant: stats.assistantMessages,
+      tools: stats.toolCalls,
+      toolResults: stats.toolResults ?? 0,
+      total: stats.totalMessages,
+    },
     extensions: { bound: controller.extensionsBound },
     ...(messages ? { messages: s.messages } : {}),
   };

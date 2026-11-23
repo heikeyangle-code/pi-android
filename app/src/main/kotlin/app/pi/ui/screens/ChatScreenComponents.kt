@@ -60,11 +60,6 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
 
-/**
- * 对话页顶栏的图标动作是 [ChatTopBarAction]（48dp 热区 / 24dp 字形），不是别处用的
- * `PiTopBarIcon`（30dp 框 / 17dp 字形）：56 高的对话页顶栏只放三枚 24dp 字形，
- * 48dp 热区才和 56 高匹配；两套尺寸混在一起就是用户看到的「一大一小」。
- */
 /** `Icon`'s default box, which is what the 「加载更早」 row's glyph measures at. */
 private val EARLIER_ROW_ICON = 24.dp
 
@@ -160,13 +155,13 @@ internal fun earlierRowHeight(text: String): Dp {
 
 /**
  * The palette is open exactly while the first token is still being typed: the
- * draft starts with `/` and no space has been typed yet. Returns the query, or
+ * draft starts with `/` and no whitespace has been typed yet. Returns the query, or
  * null when the palette should be hidden.
  */
 internal fun paletteQueryOf(draft: String): String? {
     val trimmed = draft.trimStart()
     if (!trimmed.startsWith("/")) return null
-    if (trimmed.contains(' ')) return null
+    if (trimmed.any { it.isWhitespace() }) return null
     return trimmed.removePrefix("/")
 }
 

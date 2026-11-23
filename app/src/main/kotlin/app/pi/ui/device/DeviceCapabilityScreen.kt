@@ -102,8 +102,18 @@ fun DeviceCapabilityScreen(
         revision += 1
     }
 
+    var screen by remember {
+        mutableStateOf(DeviceCapabilityState(DeviceCapability.Accessibility, false, true, false, null))
+    }
+    var basic by remember {
+        mutableStateOf(DeviceCapabilityState(DeviceCapability.Basic, false, true, false, null))
+    }
+    var shell by remember {
+        mutableStateOf(DeviceCapabilityState(DeviceCapability.Shell, false, true, false, null))
+    }
+
     val visible = rememberPiScreenVisible()
-    LaunchedEffect(visible) {
+    LaunchedEffect(visible, revision) {
         if (!visible) return@LaunchedEffect
         while (true) {
             // Binder IPC 与磁盘读在 IO 线程计算不可变快照，再回到主线程安全写入 Compose 状态。
@@ -115,6 +125,9 @@ fun DeviceCapabilityScreen(
                     notification = store.hasNotificationPermission(),
                     hasLocation = store.hasLocationPermission(),
                     hasCamera = store.hasCameraPermission(),
+                    screen = store.state(DeviceCapability.Accessibility),
+                    basic = store.state(DeviceCapability.Basic),
+                    shell = store.state(DeviceCapability.Shell),
                 )
             }
             accessibility = snap.accessibility
@@ -123,13 +136,13 @@ fun DeviceCapabilityScreen(
             notification = snap.notification
             hasLocation = snap.hasLocation
             hasCamera = snap.hasCamera
+            screen = snap.screen
+            basic = snap.basic
+            shell = snap.shell
             delay(1500L)
         }
     }
 
-    val screen = remember(revision, accessibility) { store.state(DeviceCapability.Accessibility) }
-    val basic = remember(revision) { store.state(DeviceCapability.Basic) }
-    val shell = remember(revision, shizuku) { store.state(DeviceCapability.Shell) }
     val allStates = listOf(screen, basic, shell)
     val usableCount = allStates.count { it.usable }
     val enabledCount = allStates.count { it.enabled && it.enabledForSession }
@@ -674,6 +687,9 @@ private data class DeviceCapPollSnapshot(
     val notification: Boolean,
     val hasLocation: Boolean,
     val hasCamera: Boolean,
+    val screen: DeviceCapabilityState,
+    val basic: DeviceCapabilityState,
+    val shell: DeviceCapabilityState,
 )
 
 private fun openShizukuManager(context: android.content.Context) {

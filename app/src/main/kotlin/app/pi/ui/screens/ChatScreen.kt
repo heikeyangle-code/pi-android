@@ -1454,8 +1454,14 @@ internal fun ChatBody(
             // 「⋯」菜单 / 顶栏里的同名入口走同一个函数，不另起一套。
             ChatAction.OpenSettings -> {
                 when (command?.name) {
-                    "login", "logout", "scoped-models" -> session.requestNav(NavRequest.SettingsFocus("hub:models"))
-                    "trust" -> session.requestNav(NavRequest.SettingsFocus("defaultProjectTrust"))
+                    "scoped-models" -> session.requestNav(NavRequest.SettingsFocus("hub:scoped-models"))
+                    "login" -> session.requestNav(
+                        NavRequest.SettingsFocus(
+                            if (args.isNotBlank()) "hub:models:${args.trim()}" else "hub:models",
+                        ),
+                    )
+                    "logout" -> session.requestNav(NavRequest.SettingsFocus("hub:models"))
+                    "trust" -> session.requestNav(NavRequest.SettingsFocus("hub:resources:project"))
                     else -> {
                         command?.let { CLIENT_BUILTINS[it.name]?.note }?.let { session.notifyUser(it) }
                         onOpenSettings()
@@ -1473,9 +1479,29 @@ internal fun ChatBody(
                 sheet = ChatSheet.Model
             }
             ChatAction.CycleModel -> session.cycleModel()
+            // `/thinking <level>`：对齐官方 interactive-mode.ts，带参数直接切等级，无参数开选择器。
             ChatAction.PickThinking -> {
-                session.refreshThinkingLevels()
-                sheet = ChatSheet.Thinking
+                val wanted = args.trim().lowercase()
+                if (wanted.isNotEmpty()) {
+                    val levels = state.meta.thinkingLevels
+                    val matched = levels.firstOrNull { it.equals(wanted, ignoreCase = true) }
+                    if (matched != null) {
+                        session.setThinkingLevel(matched)
+                    } else if (levels.isEmpty()) {
+                        session.setThinkingLevel(wanted)
+                    } else {
+                        session.notifyUser(
+                            tr(
+                                "无效思考等级「$args」，当前模型支持：${levels.joinToString(", ")}",
+                                "Invalid thinking level \"$args\". Available: ${levels.joinToString(", ")}",
+                            ),
+                            warning = true,
+                        )
+                    }
+                } else {
+                    session.refreshThinkingLevels()
+                    sheet = ChatSheet.Thinking
+                }
             }
             ChatAction.OpenTree -> session.requestNav(NavRequest.SessionTree)
             ChatAction.SessionStats -> {
@@ -1500,10 +1526,6 @@ internal fun ChatBody(
             }
             ChatAction.ToolsSheet -> sheet = ChatSheet.Tools
             ChatAction.ViewSystemPrompt -> sheet = ChatSheet.SystemPrompt
-            ChatAction.TriggerShortcut -> {
-                val key = command?.shortcutKey ?: command?.name
-                if (!key.isNullOrBlank()) session.triggerExtensionShortcut(key)
-            }
             ChatAction.Unsupported ->
                 session.notifyUser(unsupportedReason(command?.name.orEmpty()), warning = true)
         }
@@ -1966,7 +1988,10 @@ internal fun ChatBody(
                 draft = draft,
                 onDraft = { draft = it },
                 mentionPrefix = mentionPrefix,
-                onPickCommand = { command, args -> pick(command, args) },
+                onPickCommand = { command, args ->
+                    dismissKeys()
+                    pick(command, args)
+                },
                 argContext = argContext,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -1985,12 +2010,15 @@ internal fun ChatBody(
                     }
                     .windowInsetsPadding(navOnlyInsets),
             ) {
-                val hubShortcuts = remember(state.commands) {
-                    state.commands.mapNotNull { cmd ->
-                        val key = cmd.shortcutKey?.takeIf {
-                            cmd.source == PiCommandSource.Shortcut && it.isNotBlank()
-                        } ?: return@mapNotNull null
-                        ExtensionHubShortcut(key = key, label = cmd.name, description = cmd.description)
+                val hubShortcuts = remember(state.extensionShortcuts) {
+                    state.extensionShortcuts.mapNotNull { sc ->
+                        val key = sc.shortcut.trim()
+                        if (key.isEmpty()) return@mapNotNull null
+                        ExtensionHubShortcut(
+                            key = key,
+                            label = key,
+                            description = sc.description?.takeIf { it.isNotBlank() },
+                        )
                     }
                 }
                 val firstInteractivePanel = remember(state.ext.widgets, state.ext.header, state.ext.footer) {
@@ -2063,6 +2091,10 @@ internal fun ChatBody(
                         .padding(horizontal = PiSpacing.composerPageMargin)
                         .padding(top = 2.dp, bottom = PiSpacing.composerBottomGap),
                 ) {
+                    val activeCommands = remember(state.commands, state.commandsLoaded) {
+                        if (state.commandsLoaded || state.commands.isNotEmpty()) state.commands
+                        else app.pi.ui.chat.builtinRows(emptyList())
+                    }
                     Composer(
                         draft = draft,
                         onPickAttachment = { attachmentSheetOpen = true },
@@ -2074,13 +2106,32 @@ internal fun ChatBody(
                         onDraftChange = { draft = it },
                         thinkingLevel = state.meta.thinkingLevel,
                         streaming = state.streaming,
-                        canFollowUp = state.streaming && draft.isNotBlank(),
+                        canFollowUp = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
                         canSteer = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
                         onCycleThinking = { session.cycleThinkingLevel() },
                         onPickThinking = { sheet = ChatSheet.Thinking },
-                        onOpenPalette = { if (draft.isBlank()) draft = "/" },
-                        onOpenBash = { if (draft.isBlank()) draft = "!" },
-                        onOpenBashExcluded = { if (draft.isBlank()) draft = "!!" },
+                        onOpenPalette = {
+                            draft = when (draft.trim()) {
+                                "" -> "/"
+                                "/" -> ""
+                                else -> if (draft.trimStart().startsWith("/")) draft else "/$draft"
+                            }
+                        },
+                        onOpenBash = {
+                            draft = when (draft.trim()) {
+                                "" -> "!"
+                                "!" -> "!!"
+                                "!!" -> ""
+                                else -> if (draft.trimStart().startsWith("!")) draft else "!$draft"
+                            }
+                        },
+                        onOpenBashExcluded = {
+                            draft = when (draft.trim()) {
+                                "" -> "!!"
+                                "!!" -> ""
+                                else -> if (draft.trimStart().startsWith("!!")) draft else "!!${draft.trimStart().removePrefix("!")}"
+                            }
+                        },
                         onOpenMention = { if (PiFileMentions.prefixOf(draft) == null) draft += "@" },
                         onSteer = {
                             session.send(draft, attachments)
@@ -2090,7 +2141,7 @@ internal fun ChatBody(
                             dismissKeys()
                         },
                         onSend = {
-                            when (val route = routeComposerText(draft, state.commands)) {
+                            when (val route = routeComposerText(draft, activeCommands)) {
                                 ComposerRoute.Empty -> if (attachments.isNotEmpty()) {
                                     session.send("", attachments)
                                     attachments = emptyList()
@@ -2111,6 +2162,7 @@ internal fun ChatBody(
                                 }
                                 is ComposerRoute.Command -> {
                                     draft = ""
+                                    dismissKeys()
                                     pick(route.command, route.args)
                                 }
                                 is ComposerRoute.Unknown -> session.notifyUnknownCommand(route.name)
@@ -2196,12 +2248,15 @@ internal fun ChatBody(
     }
 
     if (widgetsInspectorOpen) {
-        val hubShortcuts = remember(state.commands) {
-            state.commands.mapNotNull { cmd ->
-                val key = cmd.shortcutKey?.takeIf {
-                    cmd.source == PiCommandSource.Shortcut && it.isNotBlank()
-                } ?: return@mapNotNull null
-                ExtensionHubShortcut(key = key, label = cmd.name, description = cmd.description)
+        val hubShortcuts = remember(state.extensionShortcuts) {
+            state.extensionShortcuts.mapNotNull { sc ->
+                val key = sc.shortcut.trim()
+                if (key.isEmpty()) return@mapNotNull null
+                ExtensionHubShortcut(
+                    key = key,
+                    label = key,
+                    description = sc.description?.takeIf { it.isNotBlank() },
+                )
             }
         }
         ExtensionWidgetsSheet(

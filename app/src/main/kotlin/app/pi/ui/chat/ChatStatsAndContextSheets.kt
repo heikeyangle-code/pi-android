@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,64 +64,129 @@ fun ContextSheet(
     val stats = state.stats
     val palette = PiTheme.palette
     PiSheet(onDismiss = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = PiSpacing.pageHorizontal)
-                .widthIn(max = 460.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Column(
+                modifier = Modifier
+                    .widthIn(max = 460.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = PiSpacing.pageHorizontal),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(
-                    tr("上下文与用量", "Context & Usage"),
-                    modifier = Modifier.weight(1f),
-                    style = PiType.title,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                if (onCompact != null) {
-                    Surface(
-                        onClick = {
-                            onDismiss()
-                            onCompact()
-                        },
-                        shape = RoundedCornerShape(999.dp),
-                        color = palette.accent,
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        tr("上下文与用量", "Context & Usage"),
+                        modifier = Modifier.weight(1f),
+                        style = PiType.title,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    if (onCompact != null) {
+                        Surface(
+                            onClick = {
+                                onDismiss()
+                                onCompact()
+                            },
+                            shape = RoundedCornerShape(999.dp),
+                            color = palette.accent,
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.Compress,
-                                contentDescription = null,
-                                tint = palette.contrastOn(palette.accent),
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Text(
-                                text = tr("压缩上下文", "Compact"),
-                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                                color = palette.contrastOn(palette.accent),
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Compress,
+                                    contentDescription = null,
+                                    tint = palette.contrastOn(palette.accent),
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Text(
+                                    text = tr("压缩上下文", "Compact"),
+                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                    color = palette.contrastOn(palette.accent),
+                                )
+                            }
                         }
                     }
                 }
-            }
 
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 560.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    if (stats == null) {
+                        Text(
+                            tr("正在读取会话统计…", "Loading session stats…"),
+                            style = PiTheme.text.prose,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        ContextBlock(
+                            stats = stats,
+                            autoCompaction = state.meta.autoCompaction,
+                            modelContextWindow = state.meta.model?.contextWindow,
+                        )
+                        UsageBlock(
+                            turn = state.turnUsage,
+                            session = stats.tokens?.let { totals ->
+                                TokenUsage(
+                                    input = totals.input,
+                                    output = totals.output,
+                                    cacheRead = totals.cacheRead,
+                                    cacheWrite = totals.cacheWrite,
+                                    totalTokens = totals.total,
+                                    cost = stats.cost,
+                                )
+                            },
+                            lastMessage = state.lastUsage,
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+            }
+        }
+    }
+}
+
+/** 会话信息与统计（对齐官方 `/session`：名称、ID、文件路径、消息与工具计数、上下文与 Token 费用）。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SessionStatsSheet(
+    state: PiSessionViewModel.UiState,
+    onDismiss: () -> Unit,
+) {
+    val stats = state.stats
+    PiSheet(onDismiss = onDismiss) {
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.TopCenter,
+        ) {
             Column(
                 modifier = Modifier
+                    .widthIn(max = 460.dp)
                     .fillMaxWidth()
-                    .heightIn(max = 560.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .heightIn(max = 580.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = PiSpacing.pageHorizontal),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                Text(
+                    tr("会话信息与统计", "Session Info & Stats"),
+                    style = PiType.title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
                 if (stats == null) {
                     Text(
-                        tr("正在读取会话统计…", "Loading session stats…"),
+                        tr("正在读取…", "Loading…"),
                         style = PiTheme.text.prose,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -144,74 +210,39 @@ fun ContextSheet(
                         },
                         lastMessage = state.lastUsage,
                     )
-                }
-                Spacer(Modifier.height(6.dp))
-            }
-        }
-    }
-}
-
-/** 会话元数据卡：清晰展示名称、ID、文件路径、消息与工具调用计数。 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun SessionStatsSheet(
-    state: PiSessionViewModel.UiState,
-    onDismiss: () -> Unit,
-) {
-    val stats = state.stats
-    PiSheet(onDismiss = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 560.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = PiSpacing.pageHorizontal),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                tr("会话元数据", "Session Info"),
-                style = PiType.title,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            if (stats == null) {
-                Text(
-                    tr("正在读取…", "Loading…"),
-                    style = PiTheme.text.prose,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                ) {
-                    Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
-                        StatLine(tr("会话名称", "Name"), state.meta.sessionName ?: tr("未命名", "Untitled"))
-                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                        StatLine(tr("会话 ID", "Session ID"), stats.sessionId ?: state.meta.sessionId ?: "—", mono = true)
-                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                        StatLine(tr("会话文件", "Session File"), stats.sessionFile ?: state.meta.sessionFile ?: tr("（尚未落盘）", "(not saved yet)"), mono = true)
-                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                        StatLine(
-                            tr("消息统计", "Messages"),
-                            tr(
-                                "${stats.userMessages} 用户 · ${stats.assistantMessages} 模型 · ${stats.totalMessages} 总计",
-                                "${stats.userMessages} user · ${stats.assistantMessages} assistant · ${stats.totalMessages} total",
-                            ),
-                        )
-                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                        StatLine(
-                            tr("工具调用", "Tool Calls"),
-                            tr(
-                                "${stats.toolCalls} 次调用 · ${stats.toolResults} 条结果",
-                                "${stats.toolCalls} calls · ${stats.toolResults} results",
-                            ),
-                        )
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.45f)),
+                    ) {
+                        Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                            StatLine(tr("会话名称", "Name"), state.meta.sessionName ?: tr("未命名", "Untitled"))
+                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                            StatLine(tr("会话 ID", "Session ID"), stats.sessionId ?: state.meta.sessionId ?: "—", mono = true)
+                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                            StatLine(tr("会话文件", "Session File"), stats.sessionFile ?: state.meta.sessionFile ?: tr("（尚未落盘）", "(not saved yet)"), mono = true)
+                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                            StatLine(
+                                tr("消息统计", "Messages"),
+                                tr(
+                                    "${stats.userMessages} 用户 · ${stats.assistantMessages} 模型 · ${stats.totalMessages} 总计",
+                                    "${stats.userMessages} user · ${stats.assistantMessages} assistant · ${stats.totalMessages} total",
+                                ),
+                            )
+                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                            StatLine(
+                                tr("工具调用", "Tool Calls"),
+                                tr(
+                                    "${stats.toolCalls} 次调用 · ${stats.toolResults} 条结果",
+                                    "${stats.toolCalls} calls · ${stats.toolResults} results",
+                                ),
+                            )
+                        }
                     }
                 }
+                Spacer(Modifier.height(8.dp))
             }
-            Spacer(Modifier.height(8.dp))
         }
     }
 }
@@ -423,6 +454,7 @@ private fun KvRow(key: String, value: String, keyWidth: Dp = 52.dp) {
             .fillMaxWidth()
             .padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(
             text = key,
@@ -430,12 +462,15 @@ private fun KvRow(key: String, value: String, keyWidth: Dp = 52.dp) {
             style = PiTheme.text.meta,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         Text(
             text = value,
+            modifier = Modifier.weight(1f),
             style = PiTheme.text.monoSmall,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

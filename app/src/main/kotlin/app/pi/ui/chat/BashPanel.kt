@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.HorizontalDivider
@@ -103,11 +104,32 @@ fun BashPanel(
                         maxLines = 1,
                     )
                 }
+                if (run.output.isNotEmpty()) {
+                    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                    val copyLabel = tr("复制输出", "Copy output")
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .clickable(onClickLabel = copyLabel) {
+                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(run.output))
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            androidx.compose.material.icons.Icons.Filled.ContentCopy,
+                            contentDescription = copyLabel,
+                            tint = palette.muted,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
                 if (run.running) {
                     val stopLabel = tr("停止命令", "Stop command")
                     Box(
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(30.dp)
                             .clip(CircleShape)
                             .background(palette.error.copy(alpha = 0.16f))
                             .clickable(onClickLabel = stopLabel, onClick = onAbort),
@@ -124,7 +146,7 @@ fun BashPanel(
                     val closeLabel = tr("关闭输出", "Close output")
                     Box(
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(30.dp)
                             .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                             .clickable(onClickLabel = closeLabel, onClick = onDismiss),
@@ -140,15 +162,19 @@ fun BashPanel(
                 }
             }
 
-            // 输出区
+            // 输出区（流式增长时自动滚底）
             if (run.output.isNotEmpty()) {
+                val outputScroll = rememberScrollState()
+                androidx.compose.runtime.LaunchedEffect(run.output.length) {
+                    outputScroll.scrollTo(outputScroll.maxValue)
+                }
                 HorizontalDivider(thickness = 0.5.dp, color = accent.copy(alpha = 0.22f))
                 Text(
                     text = run.output,
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 220.dp)
-                        .verticalScroll(rememberScrollState())
+                        .verticalScroll(outputScroll)
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                     style = PiTheme.text.monoSmall,
                     color = palette.muted,
