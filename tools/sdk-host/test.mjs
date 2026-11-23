@@ -527,6 +527,20 @@ try {
   expect("defaultProjectTrust=never：没表态直接不信任，不再询问", dfNever.data?.trusted === false && dfNever.data.undecided === false && dfNever.data.source === "default", JSON.stringify(dfNever.data));
   writeFileSync(settingsPath, JSON.stringify(settingsNow));
   await h.call("project.trust", { trusted: false, remember: "reset" }, 60000);
+  const setPolicyAlways = await h.call("settings.set", { method: "setDefaultProjectTrust", params: ["always"] }, 60000);
+  const afterPolicyAlways = await h.call("project.trustState");
+  expect(
+    "settings.set setDefaultProjectTrust=always 立刻生效并加载项目资源",
+    setPolicyAlways.ok && setPolicyAlways.data?.trusted === true && afterPolicyAlways.data?.trusted === true && afterPolicyAlways.data?.defaultProjectTrust === "always" && (await skillNames()).includes("proj-skill"),
+    JSON.stringify({ set: setPolicyAlways.data, state: afterPolicyAlways.data }),
+  );
+  const setPolicyAsk = await h.call("settings.set", { method: "setDefaultProjectTrust", params: ["ask"] }, 60000);
+  const afterPolicyAsk = await h.call("project.trustState");
+  expect(
+    "settings.set setDefaultProjectTrust=ask 立刻恢复待询问并卸掉项目资源",
+    setPolicyAsk.ok && setPolicyAsk.data?.trusted === false && afterPolicyAsk.data?.undecided === true && !(await skillNames()).includes("proj-skill"),
+    JSON.stringify({ set: setPolicyAsk.data, state: afterPolicyAsk.data }),
+  );
 
   // ---- 6d2. 资源文件：读 / 改 / 建 / 删（位置表照 SDK resource-loader） ----
   {

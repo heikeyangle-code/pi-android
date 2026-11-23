@@ -43,6 +43,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -592,8 +593,10 @@ internal fun WsRow(
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(
-                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                vertical = PiSettingsMetrics.rowPaddingVertical,
+                start = PiSettingsMetrics.rowPaddingHorizontal,
+                end = if (trail != null) 8.dp else PiSettingsMetrics.rowPaddingHorizontal,
+                top = PiSettingsMetrics.rowPaddingVertical,
+                bottom = PiSettingsMetrics.rowPaddingVertical,
             ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
@@ -686,51 +689,24 @@ internal fun WsHairline(
     )
 }
 
-/** 一行里那个「更多」按钮（稿子的 `MoreBtn`：26×26 圆角 7）。 */
+/** 文件/目录行尾「更多」操作按钮：使用标准 Material 横排三点图标，保证暗/浅色主题下清晰可见且触控区充足。 */
 @Composable
 internal fun WsMoreButton(onClick: () -> Unit) {
-    // 看起来仍是一颗小按钮，点击区放大到 40×40：26dp 在手机上很难一下点中。
     Box(
         Modifier
-            .size(40.dp)
-            .clip(RoundedCornerShape(WsShape.medium))
+            .size(36.dp)
+            .clip(RoundedCornerShape(WsShape.small))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        // 稿子的 `MoreBtn` 是 `Icon n="more" s={16}` —— **横排**三点（`Icon` 的 `more`
-        // 分支，`workspace-final.html:296`）。这里原来画的是竖排的字符 `⋮`：同一颗按钮，
-        // 一个是图形、一个是标点，字重与基线都不听指挥，26 的圆角方块里也偏小。
         Icon(
-            imageVector = WsMoreGlyph,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp),
+            imageVector = Icons.Filled.MoreHoriz,
+            contentDescription = tr("更多操作", "More actions"),
+            modifier = Modifier.size(18.dp),
             tint = PiTheme.palette.muted,
         )
     }
 }
-
-/**
- * 稿子的横排三点（`workspace-final.html:296`：三个 `r=1.05` 的实心圆，`cx` 3.9 / 9 / 14.1，
- * viewport 18）。三个圆用「两段半弧」写出来 —— `ImageVector` 的 path builder 没有
- * `circle()`，这与 `SessionTreeScreen.BRANCH_GLYPH` 用的是同一个写法。
- *
- * `Icon` 的 `tint` 会覆盖整张矢量，所以这里的填充色只是一个到不了屏幕的占位（与
- * `BRANCH_GLYPH` 的说明一致）。
- */
-private val WsMoreGlyph: ImageVector = ImageVector.Builder(
-    name = "WsMore",
-    defaultWidth = 18.dp,
-    defaultHeight = 18.dp,
-    viewportWidth = 18f,
-    viewportHeight = 18f,
-).addPath(
-    pathData = PathParser().parsePathString(
-        "M2.85 9a1.05 1.05 0 102.1 0a1.05 1.05 0 10-2.1 0" +
-            "M7.95 9a1.05 1.05 0 102.1 0a1.05 1.05 0 10-2.1 0" +
-            "M13.05 9a1.05 1.05 0 102.1 0a1.05 1.05 0 10-2.1 0",
-    ).toNodes(),
-    fill = SolidColor(Color.Black),
-).build()
 
 /**
  * 稿子专门为**二进制**加的第三个文件态图标（`workspace-final.html:311`：文件轮廓 + 右下角
@@ -753,7 +729,7 @@ internal val WsBinaryFileGlyph: ImageVector = ImageVector.Builder(
     strokeLineJoin = StrokeJoin.Round,
 ).addPath(
     pathData = PathParser().parsePathString(
-        "M6 10.2h4.8a0.6 0.6 0 010.6 0.6v1.8a0.6 0.6 0 01-0.6 0.6H6a0.6 0.6 0 01-0.6-0.6v-1.8a0.6 0.6 0 010.6-0.6z",
+        "M6 10.2h4.8a0.6 0.6 0 0 1 0.6 0.6v1.8a0.6 0.6 0 0 1 -0.6 0.6H6a0.6 0.6 0 0 1 -0.6 -0.6v-1.8a0.6 0.6 0 0 1 0.6 -0.6z",
     ).toNodes(),
     fill = SolidColor(Color.Black),
 ).build()

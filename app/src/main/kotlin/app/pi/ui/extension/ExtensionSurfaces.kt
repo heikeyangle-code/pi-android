@@ -535,7 +535,9 @@ private fun SurfaceSheetBody(
 
     val viewportPadHPx = with(density) { (ViewportPadH * 2).roundToPx() }
     val viewportPadVPx = with(density) { (ViewportPadV * 2).roundToPx() }
-    val baseMono = PiTheme.text.monoSmall
+    // 基准字号采用终端标准等宽字（mono）而非偏小的 monoSmall；宽组件自动按比例缩小适配，
+    // 适中组件（如 Tetris/Snake/菜单）则以与原生终端一致的清晰字号铺满屏幕。
+    val baseMono = PiTheme.text.mono
     val baseCharWidthPx = remember(measurer, baseMono) {
         (measurer.measure("0123456789", baseMono).size.width / 10f).coerceAtLeast(1f)
     }
@@ -547,7 +549,7 @@ private fun SurfaceSheetBody(
     }
 
     // 仅当内容确实超过手机自然列数（或官方 overlayOptions 指定了更宽列数）时才缩小字号；
-    // 棋盘（~56 列）这类适中画面保持 1:1 清晰大字号，不再硬逼 80 列缩成小块。
+    // 适中画面保持 1:1 清晰终端比例，不再硬逼 80 列缩成小块。
     val requestedOverlayCols = remember(overlayOptions) {
         val raw = overlayOptions?.widthSpec?.trim()
         val parsed = raw?.takeIf { !it.endsWith("%") }?.toIntOrNull()
@@ -567,9 +569,13 @@ private fun SurfaceSheetBody(
         if (fitScale >= 0.999f) baseMono
         else baseMono.copy(fontSize = baseMono.fontSize * fitScale, lineHeight = baseMono.lineHeight * fitScale)
     }
-    val cellMetrics = remember(measurer, monoStyle) {
-        val m = measurer.measure("0123456789", monoStyle).size
-        (m.width / 10f).coerceAtLeast(1f) to m.height.coerceAtLeast(1).toFloat()
+    val fontSizePx = with(density) { monoStyle.fontSize.toPx() }
+    val cellMetrics = remember(measurer, monoStyle, fontSizePx) {
+        val cw = (measurer.measure("0123456789", monoStyle).size.width / 10f).coerceAtLeast(1f)
+        // 真实终端单元格高宽比约为 2:1（使 `██` 双列方块恰好呈 1:1 正方形、框线紧凑无缝），
+        // 避免 Compose 正文 1.5x lineHeight 把方块拉扁并在上下行间留下空隙。
+        val ch = (cw * 2.0f).coerceIn(fontSizePx * 1.14f, fontSizePx * 1.30f).coerceAtLeast(1f)
+        cw to ch
     }
     val charWidthPx = cellMetrics.first
     val lineHeightPx = cellMetrics.second
@@ -1743,18 +1749,7 @@ private fun SurfaceMetaBadge(text: String, tint: Color) {
 }
 
 /** 从扩展自绘行里尽量提取首条非纯框线标题，避免顶部永远只写泛泛的「扩展界面」。 */
-private fun inferSurfaceTitle(lines: List<String>): String? {
-    for (raw in lines.take(4)) {
-        val plain = stripAnsiControls(raw)
-            .trim()
-            .trim('─', '━', '═', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼', '│', '┃', '║', '╭', '╮', '╰', '╯', ' ')
-            .trim()
-        if (plain.length in 2..36 && !plain.all { it == '─' || it == '═' || it == '-' || it == '=' }) {
-            return plain
-        }
-    }
-    return null
-}
+
 
 private const val LIVE_SENTINEL = "\u200B"
 private val SurfaceSidePadding = 12.dp

@@ -115,8 +115,8 @@ object PiProjectTrust {
             "Applies to this session only and is not saved to the trust store. Reverts after engine restart.",
         )
         Source.Default -> tr(
-            "没有为这个项目单独表态，按设置里的「默认项目信任」走。要改，去「安全与隐私」。",
-            "No project-specific decision saved; following the default project trust policy under Security & Privacy.",
+            "没有为这个项目单独表态，按全局默认信任策略（defaultProjectTrust）走；点下方「默认策略」可即时调整。",
+            "No project-specific decision saved; following the global default project trust policy (tap Default Policy below to change).",
         )
         else -> if (s.trusted) {
             tr(

@@ -104,4 +104,47 @@ class ExtensionSurfaceRulesTest {
         assertEquals(Alignment.BottomEnd, overlayAnchorAlignment("bottom-right"))
         assertEquals(Alignment.BottomEnd, overlayAnchorAlignment(null))
     }
+
+    @Test
+    fun `isGeometricTerminalGlyph covers box drawing and block elements only`() {
+        assertTrue(isGeometricTerminalGlyph('─'.code))
+        assertTrue(isGeometricTerminalGlyph('│'.code))
+        assertTrue(isGeometricTerminalGlyph('╭'.code))
+        assertTrue(isGeometricTerminalGlyph('═'.code))
+        assertTrue(isGeometricTerminalGlyph('█'.code))
+        assertTrue(isGeometricTerminalGlyph('░'.code))
+        assertTrue(isGeometricTerminalGlyph('▒'.code))
+        assertTrue(isGeometricTerminalGlyph('▀'.code))
+        assertFalse(isGeometricTerminalGlyph('A'.code))
+        assertFalse(isGeometricTerminalGlyph('.'.code))
+        assertFalse(isGeometricTerminalGlyph('♔'.code))
+    }
+
+    @Test
+    fun `inferSurfaceTitle skips dot-grid board cells and picks clean title`() {
+        val tetrisLines = listOf(
+            "        ┌──────────────────────┐",
+            "        │ . . . . . . . . . .  │    TETRIS",
+            "        │ . . . . . . . . . .  │    Score 7",
+        )
+        assertEquals("TETRIS", inferSurfaceTitle(tetrisLines))
+        assertEquals("Chess", inferSurfaceTitle(listOf("╭──── Chess ────╮")))
+        assertNull(inferSurfaceTitle(listOf("┌──────────┐", "│ . . . .  │")))
+    }
+
+    @Test
+    fun `extractSurfaceShortcuts extracts vertical Controls legend without false positives`() {
+        val tetrisRows = listOf(
+            "        │ . . . . . . . . . .  │    Controls",
+            "        │ . . . . . . . . . .  │      ← →   Move",
+            "        │ . . . . . . . . . .  │      ↑     Rotate",
+            "        │ . . . . . . . . . .  │      Spc   Hard drop",
+            "        │ . . . . . . . . . .  │      ESC   Pause",
+            "        │ . . . . . . . . . .  │      Q     Quit",
+            "        │ . . . . . . . . . .  │      R     Restart",
+        )
+        val shortcuts = extractSurfaceShortcuts(tetrisRows)
+        assertEquals(listOf("q", "r"), shortcuts.map { it.sendData })
+        assertEquals(listOf("Quit", "Restart"), shortcuts.map { it.description })
+    }
 }

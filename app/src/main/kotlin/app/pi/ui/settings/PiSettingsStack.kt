@@ -171,7 +171,7 @@ fun PiSettingsStack(
     // The device capability screen is the one branch of this stack that is not a
     // group in pi's settings catalog — the switches grant the *phone's* abilities
     // to the agent, and pi has no such settings.
-    // 设置首页的「其他」一屏：终端 / Pi 文件 / 设备能力 / 扩展包 / 安全与隐私 / 开源许可。
+    // 设置首页的「其他」一屏：终端 / 设备能力 / 开源许可。
     var other by rememberSaveable { mutableStateOf(false) }
     var deviceCapabilities by rememberSaveable { mutableStateOf(false) }
     // 「扩展与资源」枢纽（`ui/resources/ResourcesHubScreen`）：扩展 / 技能 / 提示 / 主题 / 上下文 / 包 / MCP / 项目信任都从这里进。
@@ -304,8 +304,8 @@ fun PiSettingsStack(
     val openSetting: (String) -> Unit = { key ->
         val setting = PiSettingsCatalog.byKey[key]
         when {
-            key == "hub:resources" || key == "hub:resources:project" -> {
-                resourcesProject = key.endsWith(":project")
+            key == "hub:resources" || key == "hub:resources:project" || key == "defaultProjectTrust" -> {
+                resourcesProject = key.endsWith(":project") || key == "defaultProjectTrust"
                 resources = true
             }
             key == "hub:models" -> modelFlow = true
@@ -457,11 +457,6 @@ fun PiSettingsStack(
                         other = false
                         deviceCapabilities = true
                     },
-                    onOpenSecurity = {
-                        other = false
-                        groupId = "security"
-                        highlightKey = null
-                    },
                     onOpenLicenses = {
                         other = false
                         licenses = true
@@ -527,9 +522,9 @@ fun PiSettingsStack(
                         groupId = "resources"
                         highlightKey = null
                     },
-                    onOpenTrustPolicy = {
-                        groupId = "security"
-                        highlightKey = "defaultProjectTrust"
+                    onSettingsSynced = {
+                        onExternalSettingsWrite()
+                        writeEpoch++
                     },
                 )
 

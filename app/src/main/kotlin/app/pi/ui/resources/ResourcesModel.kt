@@ -189,4 +189,19 @@ internal class ResourcesModel(
             }
         }
     }
+
+    /** 改写官方全局 `defaultProjectTrust`（ask / always / never）并立刻同步当前项目信任态与资源。 */
+    fun setDefaultProjectTrust(policy: String, onDone: (String?) -> Unit = {}) {
+        scope.launch {
+            when (val r = access.resources.setDefaultProjectTrust(policy)) {
+                is Parsed.Ok -> {
+                    trust = r.value
+                    pendingReload = false
+                    readAll()
+                    onDone(null)
+                }
+                is Parsed.Error -> onDone(r.message)
+            }
+        }
+    }
 }

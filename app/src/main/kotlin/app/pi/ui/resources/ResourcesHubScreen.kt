@@ -97,7 +97,7 @@ internal fun ResourcesHubScreen(
     advanced: () -> HostAdvanced?,
     onOpenMcp: () -> Unit,
     onOpenCommandSettings: () -> Unit,
-    onOpenTrustPolicy: () -> Unit,
+    onSettingsSynced: () -> Unit = {},
     startOnProject: Boolean = false,
 ) {
     // 页内层级：hub / ext / skills / prompts / themes / context / packages。它自己接返回键（组合顺序在设置栈之后，先收到）。
@@ -182,7 +182,7 @@ internal fun ResourcesHubScreen(
                         onOpenMcp = onOpenMcp,
                         onOpenFlags = { showFlagsSheet = true },
                         onOpenCommandSettings = onOpenCommandSettings,
-                        onOpenTrustPolicy = onOpenTrustPolicy,
+                        onSettingsSynced = onSettingsSynced,
                     )
                 }
             }
@@ -213,7 +213,7 @@ private fun Hub(
     onOpenMcp: () -> Unit,
     onOpenFlags: () -> Unit,
     onOpenCommandSettings: () -> Unit,
-    onOpenTrustPolicy: () -> Unit,
+    onSettingsSynced: () -> Unit,
 ) {
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scrolled by remember(listState) {
@@ -252,7 +252,7 @@ private fun Hub(
             }
         }
 
-        item { TrustCard(model, onOpenTrustPolicy) }
+        item { TrustCard(model, onSettingsSynced) }
 
         item {
             PiSeg(
@@ -480,9 +480,10 @@ private fun HubRow(
  * 改的是官方信任库，改完宿主会让会话重载，所以卡上不用再提示「重启」。
  */
 @Composable
-private fun TrustCard(model: ResourcesModel, onOpenTrustPolicy: () -> Unit) {
+private fun TrustCard(model: ResourcesModel, onSettingsSynced: () -> Unit) {
     val st = model.trust
     var expanded by remember { mutableStateOf(false) }
+    var policyExpanded by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
@@ -527,7 +528,7 @@ private fun TrustCard(model: ResourcesModel, onOpenTrustPolicy: () -> Unit) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (!st.trusted || expanded) {
+                if (!st.trusted || expanded || policyExpanded) {
                     Text(PiProjectTrust.explanation(st), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                     PiProjectTrust.recordNote(st)?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.dim) }
                 }
@@ -547,9 +548,106 @@ private fun TrustCard(model: ResourcesModel, onOpenTrustPolicy: () -> Unit) {
                         },
                     )
                 }
+                if (policyExpanded) {
+                    DefaultTrustPolicyList(
+                        current = st.defaultProjectTrust,
+                        enabled = !busy,
+                        onPick = { nextPolicy ->
+                            if (nextPolicy == st.defaultProjectTrust) {
+                                policyExpanded = false
+                                return@DefaultTrustPolicyList
+                            }
+                            busy = true
+                            error = null
+                            model.setDefaultProjectTrust(nextPolicy) { failure ->
+                                busy = false
+                                error = failure
+                                if (failure == null) {
+                                    policyExpanded = false
+                                    onSettingsSynced()
+                                }
+                            }
+                        },
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    PiSettingsChip(text = if (expanded) tr("收起", "Collapse") else tr("更改", "Change"), onClick = { expanded = !expanded })
-                    PiSettingsChip(text = tr("默认策略：${policyLabel(st.defaultProjectTrust)}", "Default Policy: ${policyLabel(st.defaultProjectTrust)}"), onClick = onOpenTrustPolicy)
+                    PiSettingsChip(
+                        text = if (expanded) tr("收起", "Collapse") else tr("更改", "Change"),
+                        onClick = {
+                            expanded = !expanded
+                            if (expanded) policyExpanded = false
+                        },
+                    )
+                    PiSettingsChip(
+                        text = tr("默认策略：${policyLabel(st.defaultProjectTrust)}", "Default Policy: ${policyLabel(st.defaultProjectTrust)}"),
+                        active = policyExpanded,
+                        onClick = {
+                            policyExpanded = !policyExpanded
+                            if (policyExpanded) expanded = false
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DefaultTrustPolicyList(
+    current: String,
+    enabled: Boolean,
+    onPick: (String) -> Unit,
+) {
+    val palette = PiTheme.palette
+    val choices = listOf(
+        Triple(
+            "ask",
+            tr("每次询问（默认）", "Ask every time (default)"),
+            tr("打开含 .pi/ 配置的新项目时弹窗确认。", "Prompt when opening an undecided project with .pi/ resources."),
+        ),
+        Triple(
+            "always",
+            tr("总是信任", "Always trust"),
+            tr("未单独表态的项目默认信任并加载项目级资源。", "Automatically trust undecided projects and load their resources."),
+        ),
+        Triple(
+            "never",
+            tr("从不信任", "Never trust"),
+            tr("未单独表态的项目默认跳过项目级扩展、技能与配置。", "Skip project-level extensions, skills, and settings unless explicitly trusted."),
+        ),
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            tr("全局默认策略（defaultProjectTrust）", "Global default policy (defaultProjectTrust)"),
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = palette.muted,
+        )
+        choices.forEach { (wire, title, desc) ->
+            val selected = wire == current
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (selected) palette.accent.copy(alpha = 0.12f) else palette.cardBg)
+                    .clickable(enabled = enabled) { onPick(wire) }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = title,
+                        style = PiTheme.text.prose.copy(fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium),
+                        color = if (selected) palette.accent else palette.text,
+                    )
+                    Text(
+                        text = desc,
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                    )
+                }
+                if (selected) {
+                    TagPill(tr("当前", "Active"), tone = palette.accent)
                 }
             }
         }

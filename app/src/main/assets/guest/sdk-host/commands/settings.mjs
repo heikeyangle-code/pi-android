@@ -45,6 +45,7 @@ export function register(reg, { controller, hub }) {
     const errors = sm.drainErrors();
     if (errors.length) throw new HostError(ERR.REJECTED, errors.map((e) => String(e?.error?.message ?? e?.message ?? e)).join("; "));
     if (method === "setHttpIdleTimeoutMs") await controller.applyHttpSettings?.();
+    if (method === "setDefaultProjectTrust") await controller.reconcileProjectTrust?.();
     // 与 Pi 官方 `interactive-mode.js` / `settings-selector.js` 一致：同步运行中会话与 Agent 的实时状态。
     const session = controller.session;
     if (session) {
@@ -74,21 +75,35 @@ export function register(reg, { controller, hub }) {
     return view(sm);
   });
 
-  // 外部改了 settings.json（App 的旧路径 / 用户手改）之后让会话重读，并同步 Agent 运行时字段。
+  // 外部改了 settings.json（或无直接 setter 的嵌套键落盘后）让会话重读，并同步运行中会话/Agent/项目信任态。
   reg.add("settings.reload", async () => {
     const sm = manager();
     const prevWarming = sm.getCacheWarmingMode?.();
     await sm.reload();
     await controller.applyHttpSettings?.();
+    await controller.reconcileProjectTrust?.();
     const session = controller.session;
     if (session) {
-      const nextWarming = sm.getCacheWarmingMode?.();
-      if (nextWarming && nextWarming !== prevWarming) {
-        try {
+      try {
+        const steering = sm.getSteeringMode?.();
+        if (steering) session.setSteeringMode?.(steering);
+        const followUp = sm.getFollowUpMode?.();
+        if (followUp) session.setFollowUpMode?.(followUp);
+        const compactionEnabled = sm.getCompactionEnabled?.();
+        if (typeof compactionEnabled === "boolean") session.setAutoCompactionEnabled?.(compactionEnabled);
+        const retryEnabled = sm.getRetryEnabled?.();
+        if (typeof retryEnabled === "boolean") session.setAutoRetryEnabled?.(retryEnabled);
+        const nextWarming = sm.getCacheWarmingMode?.();
+        if (nextWarming && nextWarming !== prevWarming) {
           session.setCacheWarmingMode?.(nextWarming);
-        } catch {
-          // ignore if session not ready
         }
+        const cur = session.model;
+        if (cur) {
+          const override = sm.getModelThinkingLevel?.(cur.provider, cur.id);
+          if (typeof override === "string") session.setThinkingLevel?.(override);
+        }
+      } catch {
+        // ignore if session not ready
       }
       if (session.agent) {
         try {

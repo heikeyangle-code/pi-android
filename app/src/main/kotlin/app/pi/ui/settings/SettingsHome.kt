@@ -32,7 +32,7 @@ import app.pi.ui.theme.PiTheme
  *  2. **扩展与工具**：扩展与资源（含项目信任、扩展/技能/提示/主题/包与运行时 flag）、工具；
  *  3. **对话与提示词**：系统提示词、对话与消息、上下文与压缩、网络与重试；
  *  4. **外观**：主题、配色、排版、思考块显示；
- *  5. **系统**：运行时与诊断（含导出 JSONL / 问题报告）、其他（终端、设备能力、安全与隐私、开源许可）。
+ *  5. **系统**：运行时与诊断（含导出 JSONL / 问题报告）、其他（终端、设备能力、开源许可）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -214,7 +214,7 @@ fun SettingsHome(
                         if (onOpenRuntime != null) PiSettingsHairline()
                         PiSettingsEntryRow(
                             title = tr("其他", "More"),
-                            supporting = tr("终端、设备能力、安全与隐私、开源许可", "Terminal, device capabilities, security & privacy, licenses"),
+                            supporting = tr("终端、设备能力、开源许可", "Terminal, device capabilities, licenses"),
                             onClick = onOpenOther,
                             leadingIcon = Icons.Filled.MoreVert,
                             leadingTint = palette.muted,
@@ -250,7 +250,7 @@ private fun buildCustomSearchEntries(): List<CustomSearchEntry> = listOf(
         routeKey = "hub:resources",
         title = tr("扩展与资源", "Extensions & Resources"),
         subtitle = tr("管理扩展、技能、提示模板、主题与 npm 包", "Manage extensions, skills, prompt templates, themes, and packages"),
-        keywords = "extension skill prompt theme package npm trust project resources",
+        keywords = "extension skill prompt theme package npm trust project defaultProjectTrust 项目信任 resources",
     ),
     CustomSearchEntry(
         routeKey = "hub:tools",

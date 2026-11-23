@@ -202,7 +202,7 @@ private fun isWideCodePoint(cp: Int): Boolean = when {
     else -> false
 }
 
-/** 从扩展组件底部提示栏提取出的快捷单键动作（例如 Chess 的 `F flip`、`N new`、`G games`、`Q/ESC quit`）。 */
+/** 从扩展组件底部/侧栏提示提取出的快捷单键动作（例如 Chess 的 `F flip`、`N new`，或 Tetris 侧栏的 `Q Quit`、`R Restart`）。 */
 internal data class SurfaceQuickShortcut(
     val keyLabel: String,
     val description: String,
@@ -211,18 +211,54 @@ internal data class SurfaceQuickShortcut(
 
 private val PIPE_SHORTCUT_RE = Regex("^([A-Za-z0-9?])(?:/[A-Za-z]+)?\\s+([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\\s\\-/]{0,14})$")
 private val BRACKET_SHORTCUT_RE = Regex("\\[([A-Za-z0-9?])\\]\\s*([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\\-/]{0,12})")
+private val LEGEND_HEADER_RE = Regex("^(?:controls|keys|shortcuts|help|按键|操作|快捷键)[:：]?$", RegexOption.IGNORE_CASE)
+private val VERTICAL_SHORTCUT_RE = Regex("^([A-Za-z?])\\s{2,}([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\\s\\-/]{1,14})$")
+
+private val TITLE_BORDER_CHARS = charArrayOf(
+    '─', '━', '═', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼',
+    '│', '┃', '║', '╭', '╮', '╰', '╯', '|', ' ', '\t',
+)
 
 /**
- * 扫描 TUI 表面最后若干非空行，自动识别扩展自带的快捷键图例（`| F flip | N new |` 或 `[r] restart`），
- * 排除已经存在于手柄主区的方向/回车/Esc/Tab/Space，最多返回 6 个可一键点按的快捷芯片。
+ * 从 TUI 表面前若干行推断可读标题：
+ * 按竖线框符分段，过滤纯棋盘点阵（如 `. . . . . .`）与纯框线装饰，优先挑出干净的标题段（如 `TETRIS`、`Chess`）。
+ */
+internal fun inferSurfaceTitle(lines: List<String>): String? {
+    for (raw in lines.take(6)) {
+        val clean = stripAnsiControls(raw)
+        val segments = clean.split('│', '┃', '║', '|')
+        for (seg in segments) {
+            val plain = seg.trim().trim(*TITLE_BORDER_CHARS).trim()
+            if (plain.length !in 2..36) continue
+            // 至少包含 2 个字母或汉字，跳过 `. . . . .` 棋盘格、纯数字或装饰线
+            var readableChars = 0
+            var dotLikeChars = 0
+            for (ch in plain) {
+                when {
+                    ch.isLetter() || ch.code in 0x4E00..0x9FFF -> readableChars++
+                    ch == '.' || ch == '·' || ch == '•' || ch == '─' || ch == '═' || ch == '-' || ch == '=' -> dotLikeChars++
+                }
+            }
+            if (readableChars >= 2 && readableChars >= dotLikeChars) {
+                return plain
+            }
+        }
+    }
+    return null
+}
+
+/**
+ * 扫描 TUI 表面底部与侧栏按键图例，自动识别扩展自带的快捷单键：
+ *  1. 底部竖线/圆点分隔（`| F flip | N new | Q/ESC quit`）；
+ *  2. 方括号风格（`[r] restart  [q] quit`）；
+ *  3. 侧栏/底部 `Controls` / `Keys` 段落下的双列按键表（`Q   Quit` / `R   Restart`）。
  * 纯函数、零硬编码，任何遵循 Pi TUI 惯例的扩展都会自动获得专属快捷操作条。
  */
 internal fun extractSurfaceShortcuts(rows: List<String>, maxCount: Int = 6): List<SurfaceQuickShortcut> {
     if (rows.isEmpty()) return emptyList()
-    val tail = rows
-        .map { stripAnsiControls(it).trim() }
-        .filter { it.isNotEmpty() }
-        .takeLast(4)
+    val cleanLines = rows.map { stripAnsiControls(it) }
+    val nonEmpty = cleanLines.map { it.trim() }.filter { it.isNotEmpty() }
+    val tail = nonEmpty.takeLast(4)
     val out = ArrayList<SurfaceQuickShortcut>()
     val seenKeys = HashSet<String>()
 
@@ -238,7 +274,7 @@ internal fun extractSurfaceShortcuts(rows: List<String>, maxCount: Int = 6): Lis
         out += SurfaceQuickShortcut(
             keyLabel = k.uppercase(),
             description = desc,
-            // 终端 TUI 单键快捷键通常监听小写字母（Chess 等组件常做 key.toLowerCase() 或直接比对小写）。
+            // 终端 TUI 单键快捷键通常监听小写字母（Chess/Tetris 等组件常做 key.toLowerCase() 或直接比对小写）。
             sendData = lower,
         )
     }
@@ -258,6 +294,28 @@ internal fun extractSurfaceShortcuts(rows: List<String>, maxCount: Int = 6): Lis
         if (line.contains('[')) {
             for (m in BRACKET_SHORTCUT_RE.findAll(line)) {
                 addCandidate(m.groupValues[1], m.groupValues[2])
+            }
+        }
+    }
+
+    // 3) 侧栏/底部纵向图例（例如 Tetris 右栏 `Controls` 下方的 `Q   Quit`、`R   Restart`）
+    if (out.isEmpty()) {
+        var inLegend = false
+        for (line in cleanLines) {
+            val rightPanel = line.substringAfterLast('│', line)
+                .substringAfterLast('┃', line.substringAfterLast('│', line))
+                .substringAfterLast('|', line.substringAfterLast('│', line))
+                .trim()
+            if (rightPanel.isEmpty()) continue
+            if (LEGEND_HEADER_RE.matches(rightPanel)) {
+                inLegend = true
+                continue
+            }
+            if (inLegend) {
+                val m = VERTICAL_SHORTCUT_RE.matchEntire(rightPanel)
+                if (m != null) {
+                    addCandidate(m.groupValues[1], m.groupValues[2])
+                }
             }
         }
     }

@@ -6,6 +6,7 @@ import app.pi.packages.PiResourceCatalog
 import app.pi.packages.PiResourceFile
 import app.pi.packages.PiResourceCatalog.Parsed
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -71,6 +72,25 @@ class HostResources(private val commands: () -> HostCommands?) {
     /** 项目信任的表态（官方弹窗的回答）：写进 pi 的信任库（或只记本次）并重载会话；应答是新的状态。 */
     suspend fun setTrust(option: PiProjectTrust.Option): Parsed<PiProjectTrust.State> =
         trust { it.setTrust(option.trusted, option.remember.key) }
+
+    /**
+     * 修改官方全局默认项目信任策略（`defaultProjectTrust`: `"ask"` / `"always"` / `"never"`）：
+     * 直接走 SDK `settings.set("setDefaultProjectTrust", [policy])` 落盘并即时重算/重载当前项目信任态，
+     * 再读回权威 `project.trustState`。
+     */
+    suspend fun setDefaultProjectTrust(policy: String): Parsed<PiProjectTrust.State> = trust { c ->
+        c.call(
+            "settings.set",
+            JsonObject(
+                mapOf(
+                    "method" to JsonPrimitive("setDefaultProjectTrust"),
+                    "params" to JsonArray(listOf(JsonPrimitive(policy))),
+                ),
+            ),
+            HostCommands.LONG_TIMEOUT_MS,
+        )
+        c.trustState()
+    }
 
     // ---- 资源文件：技能 / 提示 / 主题 / 扩展 / 上下文文件。位置白名单与「项目未信任不让动」在宿主判。 ----
 

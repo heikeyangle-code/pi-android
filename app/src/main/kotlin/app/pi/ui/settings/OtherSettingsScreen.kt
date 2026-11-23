@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.runtime.Composable
@@ -25,7 +24,6 @@ internal fun OtherSettingsScreen(
     onBack: () -> Unit,
     onOpenTerminal: (() -> Unit)?,
     onOpenDeviceCapabilities: (() -> Unit)?,
-    onOpenSecurity: () -> Unit,
     onOpenLicenses: (() -> Unit)?,
 ) {
     val palette = PiTheme.palette
@@ -69,15 +67,6 @@ internal fun OtherSettingsScreen(
                         tr("设备能力", "Device Capabilities"),
                         capSupporting,
                         onOpenDeviceCapabilities,
-                    ),
-                )
-                add(
-                    OtherEntry(
-                        Icons.Filled.Lock,
-                        palette.warning,
-                        tr("安全与隐私", "Security & Privacy"),
-                        tr("项目默认信任策略与安装遥测", "Default project trust policy and install telemetry"),
-                        onOpenSecurity,
                     ),
                 )
                 if (onOpenLicenses != null) add(

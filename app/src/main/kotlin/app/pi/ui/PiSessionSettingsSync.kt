@@ -175,9 +175,9 @@ internal fun PiSessionViewModel.readPrefs(): UiPrefs {
  * document changed. Without this an appearance edit would only take effect
  * after a restart, i.e. the row would still look inert.
  *
- * Two things happen here, and they are different in kind: the app re-reads
- * what *it* renders, and the four keys pi also keeps in memory for the live
- * session are pushed over RPC (see the `when` below). Everything else the
+ * Two things happen here: the app re-reads what *it* renders, and every pi
+ * setting is forwarded live to sdk-host via `settings.set` / `settings.reload`
+ * (and the live session accessors below) so changes take effect immediately. Everything else the
  * settings page writes is picked up by pi the next time it reads a settings
  * document — a new session, or a new process.
  *
@@ -283,8 +283,8 @@ private fun PiSessionViewModel.sdkSetterFor(key: String): Pair<String, List<Json
         "images.blockImages" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setBlockImages" to listOf(JsonPrimitive(it)) }
         "enableInstallTelemetry" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setEnableInstallTelemetry" to listOf(JsonPrimitive(it)) }
         "defaultProjectTrust" -> (raw as? JsonPrimitive)?.content?.let { "setDefaultProjectTrust" to listOf(JsonPrimitive(it)) }
-        "shellPath" -> (raw as? JsonPrimitive)?.content?.let { "setShellPath" to listOf(JsonPrimitive(it)) }
-        "shellCommandPrefix" -> (raw as? JsonPrimitive)?.content?.let { "setShellCommandPrefix" to listOf(JsonPrimitive(it)) }
+        "shellPath" -> (raw as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }?.let { "setShellPath" to listOf(JsonPrimitive(it)) }
+        "shellCommandPrefix" -> (raw as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }?.let { "setShellCommandPrefix" to listOf(JsonPrimitive(it)) }
         "enabledModels" -> (raw as? JsonArray)?.let { arr -> "setEnabledModels" to listOf(arr) }
         "markdown.mermaid" -> (raw as? JsonPrimitive)?.content?.let { "setMermaidRenderingMode" to listOf(JsonPrimitive(it)) }
         "npmCommand" -> (raw as? JsonArray)?.let { arr -> "setNpmCommand" to listOf(arr) }

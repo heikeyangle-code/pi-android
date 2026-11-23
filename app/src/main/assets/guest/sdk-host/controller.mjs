@@ -228,8 +228,9 @@ export class Controller {
       const sm = this.runtime?.services?.settingsManager
         ?? (this.sdk ? this.sdk.SettingsManager.create(this.cwd, this.cfg.agentDir, { projectTrusted: false }) : null);
       if (!sm) return;
+      const hadProxy = Boolean(this.appliedHttpProxy);
       const proxy = this.#applyProxyEnvFromSettings(sm);
-      if (!this.#hasCustomHttpSettings(sm) && !this.httpDispatcherMod) {
+      if (!hadProxy && !this.#hasCustomHttpSettings(sm) && !this.httpDispatcherMod) {
         this.httpSettingsApplied = true;
         return;
       }
@@ -237,8 +238,8 @@ export class Controller {
         const { pathToFileURL } = await import("node:url");
         this.httpDispatcherMod = await import(pathToFileURL(join(this.cfg.piDir, "dist", "core", "http-dispatcher.js")).href);
       }
-      if (proxy) {
-        this.httpDispatcherMod.applyHttpProxySettings?.(proxy);
+      if (proxy || hadProxy) {
+        this.httpDispatcherMod.applyHttpProxySettings?.(proxy || undefined);
       }
       const idle = sm.getHttpIdleTimeoutMs?.();
       if (idle !== undefined) {
@@ -458,7 +459,7 @@ export class Controller {
     return { value: false, undecided: true, source: "ask" };
   }
 
-  /** 全局设置 `defaultProjectTrust`（SDK 自己把非法值归成 `ask`）。读不到就当 `ask`：宁可多问一次。 */
+  /** 全局设置 `defaultProjectTrust`（SDK 自己把非法值归成 `ask`）。每次读盘（含刚 flush 的 settings.set 与外部手改）。 */
   #defaultProjectTrust(cwd) {
     try {
       return this.sdk.SettingsManager.create(cwd, this.cfg.agentDir, { projectTrusted: false }).getDefaultProjectTrust();
@@ -742,6 +743,24 @@ export class Controller {
     const now = this.#projectTrusted(cwd);
     session.settingsManager.setProjectTrusted(now.value);
     await this.reloadSession();
+    if (now.undecided) this.hub.emit("project.trust.required", { cwd });
+    return this.trustState();
+  }
+
+  /**
+   * 当 `defaultProjectTrust` 变更（或 `settings.reload`）时，重新评估当前项目的有效信任态：
+   * 若该项目未单独表态且有效信任态发生变化，立即同步给运行中会话的 `SettingsManager.setProjectTrusted` 并热重载资源。
+   */
+  async reconcileProjectTrust() {
+    const session = this.session;
+    if (!session) return null;
+    const cwd = this.cwd;
+    const now = this.#projectTrusted(cwd);
+    const prevTrusted = session.settingsManager?.isProjectTrusted?.();
+    if (typeof prevTrusted === "boolean" && now.value !== prevTrusted) {
+      session.settingsManager.setProjectTrusted(now.value);
+      await this.reloadSession();
+    }
     if (now.undecided) this.hub.emit("project.trust.required", { cwd });
     return this.trustState();
   }

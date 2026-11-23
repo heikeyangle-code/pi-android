@@ -210,8 +210,8 @@ val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
         ChatAction.OpenSettings,
         "保存项目信任决定",
         "Save project trust decision for future sessions",
-        noteZh = "项目信任在 设置 → 安全与隐私，或工作区里该项目的资源页。",
-        noteEn = "Project trust is in Settings → Security & Privacy, or the project's Resources tab.",
+        noteZh = "项目信任与默认策略在 设置 → 扩展与资源 → 项目信任。",
+        noteEn = "Project trust and default policy are in Settings → Extensions & Resources → Project Trust.",
     ),
     "login" to ClientBuiltin(
         ChatAction.OpenSettings,

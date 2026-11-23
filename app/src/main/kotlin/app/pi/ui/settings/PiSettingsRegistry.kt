@@ -8,7 +8,6 @@ import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.ui.graphics.vector.ImageVector
 import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
@@ -78,7 +77,6 @@ private const val G_RETRY = "retry"
 private const val G_TOOLS = "tools"
 private const val G_RESOURCES = "resources"
 private const val G_APPEARANCE = "appearance"
-private const val G_SECURITY = "security"
 
 private fun str(value: String): JsonElement = JsonPrimitive(value)
 private fun bool(value: Boolean): JsonElement = JsonPrimitive(value)
@@ -122,11 +120,6 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
         "labeled-only" to t("仅书签", "Labeled only"),
         "all" to t("全部", "All"),
     )
-    val trustOptions = choices(
-        "ask" to t("询问", "Ask"),
-        "always" to t("总是信任", "Always trust"),
-        "never" to t("从不信任", "Never trust"),
-    )
     val emptyDefault = t("空", "Empty")
 
     return listOf(
@@ -159,11 +152,11 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
         PiSetting(
             key = "modelThinkingLevels",
             title = t("逐模型思考等级", "Per-Model Thinking Levels"),
-            description = t("按模型覆盖启动思考等级。清空并保存 = 回到默认。", "Override startup thinking level per model. Clear and save to reset."),
+            description = t("按模型覆盖思考等级（命中当前模型时立即同步）。清空并保存 = 回到默认。", "Override thinking level per model (applies immediately if matching active model). Clear and save to reset."),
             kind = PiRowKind.List,
             group = G_MODELS_SCREEN,
             section = t("逐模型与预算", "Per-Model & Budgets"),
-            effective = EffectiveKind.NewSession,
+            effective = EffectiveKind.Immediate,
             container = PiValueContainer.Object,
             emptyListLabel = t("无覆盖", "No overrides"),
         ),
@@ -686,6 +679,17 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
             presets = listOf("npm", "--registry=https://registry.npmmirror.com"),
             emptyListLabel = t("默认（npm）", "Default (npm)"),
         ),
+        PiSetting(
+            key = "enableInstallTelemetry",
+            title = t("安装遥测", "Install Telemetry"),
+            description = t("执行 pi install/update 时发送匿名安装遥测与来源标头。", "Send anonymous install/update telemetry and attribution headers."),
+            kind = PiRowKind.Switch,
+            group = G_RESOURCES,
+            section = t("包安装", "Package Install"),
+            effective = EffectiveKind.Immediate,
+            defaultValue = bool(true),
+            emptyListLabel = emptyDefault,
+        ),
 
         // ------------------------------------------------------------------
         // 8 外观
@@ -839,32 +843,6 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
             emptyListLabel = emptyDefault,
         ),
 
-        // ------------------------------------------------------------------
-        // 9 安全与隐私
-        // ------------------------------------------------------------------
-        PiSetting(
-            key = "defaultProjectTrust",
-            title = t("项目信任策略", "Default Project Trust"),
-            description = t("未决定时：询问、总是信任、或始终忽略项目资源。", "Default policy for undecided projects: ask, always trust, or never trust."),
-            kind = PiRowKind.Value,
-            group = G_SECURITY,
-            section = t("信任与隐私", "Trust & Privacy"),
-            defaultValue = str("ask"),
-            effective = EffectiveKind.Immediate,
-            options = trustOptions,
-            emptyListLabel = emptyDefault,
-        ),
-        PiSetting(
-            key = "enableInstallTelemetry",
-            title = t("安装遥测", "Install Telemetry"),
-            description = t("发送匿名安装/更新上报；关掉后两者都停。", "Send anonymous install/update telemetry and attribution headers."),
-            kind = PiRowKind.Switch,
-            group = G_SECURITY,
-            section = t("信任与隐私", "Trust & Privacy"),
-            effective = EffectiveKind.Immediate,
-            defaultValue = bool(true),
-            emptyListLabel = emptyDefault,
-        ),
     )
 }
 
@@ -915,12 +893,6 @@ private fun buildGroups(zh: Boolean): List<PiSettingsGroup> {
         PiSettingsGroup(G_APPEARANCE, t("外观", "Appearance"), Icons.Filled.ColorLens) { store ->
             val themeValue = PiSettingsCatalog.summaryText(store, "theme")
             t("主题 $themeValue · 语言与排版", "Theme $themeValue · Language & Typography")
-        },
-        PiSettingsGroup(G_SECURITY, t("安全与隐私", "Security & Privacy"), Icons.Filled.Security) { store ->
-            t(
-                "信任：${PiSettingsCatalog.summaryText(store, "defaultProjectTrust")} · 遥测：${PiSettingsCatalog.summaryText(store, "enableInstallTelemetry")}",
-                "Trust: ${PiSettingsCatalog.summaryText(store, "defaultProjectTrust")} · Telemetry: ${PiSettingsCatalog.summaryText(store, "enableInstallTelemetry")}",
-            )
         },
     )
 }
