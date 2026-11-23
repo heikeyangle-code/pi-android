@@ -1,6 +1,7 @@
 package app.pi.ui.render
 
 import app.pi.ui.render.rich.PiFenceSniff
+import app.pi.ui.render.rich.svg.computeTightCropRect
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
@@ -589,6 +590,37 @@ class PiRichRenderTest {
         assertTrue(bracketRes.hasInlineMath)
         assertEquals(1, bracketRes.entries.size)
         assertEquals("E = mc^2", bracketRes.entries[0].tex)
+    }
+
+    @Test
+    fun `computeTightCropRect trims oversized empty margins while clamping padding to bounds`() {
+        val rect = computeTightCropRect(
+            bitmapWidth = 1200,
+            bitmapHeight = 900,
+            minX = 40,
+            minY = 30,
+            maxX = 440,
+            maxY = 330,
+            paddingPx = 16,
+        )
+        assertEquals(24, rect[0])
+        assertEquals(14, rect[1])
+        assertEquals(433, rect[2])
+        assertEquals(333, rect[3])
+
+        val edge = computeTightCropRect(
+            bitmapWidth = 300,
+            bitmapHeight = 200,
+            minX = 2,
+            minY = 1,
+            maxX = 298,
+            maxY = 199,
+            paddingPx = 16,
+        )
+        assertEquals(0, edge[0])
+        assertEquals(0, edge[1])
+        assertEquals(300, edge[2])
+        assertEquals(200, edge[3])
     }
 
     private fun parseGfm(markdown: String): ASTNode =

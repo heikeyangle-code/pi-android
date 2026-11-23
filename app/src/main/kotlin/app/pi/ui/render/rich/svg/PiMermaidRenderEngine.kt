@@ -403,21 +403,21 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
                     }
                     val stage = parseStageReply(rawHtmlReply)
                     if (stage != null && stage.stageReady && stage.stageWidth > 0 && stage.stageHeight > 0) {
-                        val bitmap = withTimeoutOrNull(CAPTURE_TIMEOUT_MS) {
-                            renderHost.captureStageBitmap(stage.stageWidth, stage.stageHeight, density, stage.dpr)
+                        val captured = withTimeoutOrNull(CAPTURE_TIMEOUT_MS) {
+                            renderHost.captureStageBitmap(stage.stageWidth, stage.stageHeight, density)
                         }
-                        if (bitmap != null && hasVisiblePixels(bitmap)) {
-                            val aspect = (stage.stageWidth.toFloat() / stage.stageHeight.toFloat()).coerceIn(0.05f, 40f)
+                        if (captured != null) {
+                            val bmp = captured.bitmap
+                            val aspect = (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.05f, 40f)
                             PiMermaidRendered.Raster(
-                                bitmap = bitmap,
-                                baseWidthPx = bitmap.width,
-                                baseHeightPx = bitmap.height,
+                                bitmap = bmp,
+                                baseWidthPx = bmp.width,
+                                baseHeightPx = bmp.height,
                                 aspect = aspect,
-                                cssWidth = stage.stageWidth,
-                                cssHeight = stage.stageHeight,
+                                cssWidth = captured.cssWidth,
+                                cssHeight = captured.cssHeight,
                             )
                         } else {
-                            bitmap?.recycle()
                             // Fallback cleanly to pure-SVG (htmlLabels = false) for AndroidSVG
                             val fallbackReply = withTimeout(RENDER_TIMEOUT_MS) {
                                 renderHost.render { taskId -> renderScript(taskId, task.request, htmlLabels = false) }
@@ -741,32 +741,41 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
     }
 
     /**
-     * Fast 24×24 strided check verifying Chromium drew real visible non-blank diagram pixels.
-     * Deliberately does NOT require multi-color contrast so valid monochrome/sparse line diagrams
-     * on a transparent stage are never misclassified as blank.
+     * Exact single-pass row-buffered scan that locates the tight non-transparent ink bounding box
+     * and crops away oversized Mermaid/WebView margins. Returns `null` if the frame is blank
+     * (< 24 visible pixels), guaranteeing we never display an empty card or a tiny corner stamp.
      */
-    internal fun hasVisiblePixels(bitmap: Bitmap): Boolean {
+    internal fun trimVisibleBitmap(bitmap: Bitmap, paddingPx: Int = 16): Bitmap? {
         val w = bitmap.width
         val h = bitmap.height
-        if (w <= 0 || h <= 0) return false
-        val stepX = (w / 24).coerceAtLeast(1)
-        val stepY = (h / 24).coerceAtLeast(1)
-        var visibleCount = 0
-        var y = stepY / 2
-        while (y < h) {
-            var x = stepX / 2
-            while (x < w) {
-                val px = bitmap.getPixel(x, y)
-                val alpha = (px ushr 24) and 0xFF
-                if (alpha > 8) {
-                    visibleCount++
-                    if (visibleCount >= 3) return true
+        if (w <= 0 || h <= 0) return null
+        val row = IntArray(w)
+        var minX = w
+        var minY = h
+        var maxX = -1
+        var maxY = -1
+        var visiblePixels = 0
+        for (y in 0 until h) {
+            bitmap.getPixels(row, 0, w, 0, y, w, 1)
+            for (x in 0 until w) {
+                val alpha = (row[x] ushr 24) and 0xFF
+                if (alpha > 12) {
+                    visiblePixels++
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
                 }
-                x += stepX
             }
-            y += stepY
         }
-        return visibleCount >= 3
+        if (visiblePixels < 24 || maxX <= minX || maxY <= minY) return null
+        val rect = computeTightCropRect(w, h, minX, minY, maxX, maxY, paddingPx)
+        val cropW = rect[2]
+        val cropH = rect[3]
+        if (cropW >= w - 16 && cropH >= h - 16) return bitmap
+        val cropped = Bitmap.createBitmap(bitmap, rect[0], rect[1], cropW, cropH)
+        bitmap.recycle()
+        return cropped
     }
 
     /**
@@ -1058,7 +1067,8 @@ private class RenderHost(
         settings.setMediaPlaybackRequiresUserGesture(true)
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW)
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE)
-        view.setInitialScale(100)
+        // Do NOT call view.setInitialScale(100): on Android WebView, 100 means literal 100%
+        // physical pixels (1 CSS px = 1 px instead of 1 dp), shrinking pages to 1/3 on 3x screens!
     }
 
     // ------------------------------------------------------------ readiness
@@ -1133,19 +1143,30 @@ private class RenderHost(
      * crisp, bounded high-DPI `ARGB_8888` bitmap, then clears the stage and restores the default
      * viewport dimensions.
      */
+    class CapturedStage(
+        val bitmap: Bitmap,
+        val cssWidth: Int,
+        val cssHeight: Int,
+    )
+
     suspend fun captureStageBitmap(
         stageCssWidth: Int,
         stageCssHeight: Int,
         deviceDensity: Float,
-        stageDpr: Float = 0f,
-    ): Bitmap? {
+    ): CapturedStage? {
         if (dead) return null
         val view = webView ?: return null
         val safeDensity = deviceDensity.coerceIn(1f, 4f)
-        val effectiveDpr = stageDpr.takeIf { it.isFinite() && it in 0.5f..6f } ?: safeDensity
-        val desiredDpr = effectiveDpr.coerceIn(1.5f, 2.5f)
-        var bmpW = (stageCssWidth * desiredDpr).roundToInt().coerceAtLeast(1)
-        var bmpH = (stageCssHeight * desiredDpr).roundToInt().coerceAtLeast(1)
+        // Render compact diagrams at crisp high DPI (at least ~960px on the longer side) while
+        // keeping large diagrams bounded to MAX_BITMAP_SIDE / MAX_BITMAP_PIXELS.
+        val minSharpScale = if (maxOf(stageCssWidth, stageCssHeight) < 360) {
+            (960f / maxOf(stageCssWidth, stageCssHeight).coerceAtLeast(1)).coerceIn(2f, 3.5f)
+        } else {
+            safeDensity.coerceIn(2f, 3f)
+        }
+        val desiredScale = maxOf(safeDensity.coerceIn(2f, 3f), minSharpScale)
+        var bmpW = (stageCssWidth * desiredScale).roundToInt().coerceAtLeast(1)
+        var bmpH = (stageCssHeight * desiredScale).roundToInt().coerceAtLeast(1)
         val maxSide = maxOf(bmpW, bmpH)
         val sideLimit = PiMermaidRenderEngine.MAX_BITMAP_SIDE
         if (maxSide > sideLimit) {
@@ -1161,18 +1182,20 @@ private class RenderHost(
             bmpH = (bmpH * factor).roundToInt().coerceAtLeast(1)
         }
 
-        // Compute scale against Chromium's real window.devicePixelRatio so the diagram fills
-        // the target bitmap 1:1 instead of shrinking to a tiny corner thumbnail.
-        val cssScale = bmpW.toFloat() / (stageCssWidth.toFloat() * effectiveDpr).coerceAtLeast(1f)
         val prevLayerType = view.layerType
         var switchedToSoftware = false
         return try {
             view.scrollTo(0, 0)
             resizeStageView(view, bmpW, bmpH)
             val scaleToken = nextTaskId++
-            evaluate(view, "window.__piSetStageScaleAndFlush($cssScale,$scaleToken)")
+            // Fit #pi-stage directly to Chromium's real post-resize CSS viewport instead of
+            // guessing WebView's internal scale from Android DisplayMetrics.
+            evaluate(
+                view,
+                "window.__piFitStageToViewport($stageCssWidth,$stageCssHeight,$bmpW,$bmpH,$scaleToken)",
+            )
             var waited = 0
-            while (waited < 240 && !dead && webView === view) {
+            while (waited < 420 && !dead && webView === view) {
                 val ready = evaluate(view, "window.__piScaleReady($scaleToken)")
                 if (ready == "true") break
                 delay(16L)
@@ -1180,22 +1203,31 @@ private class RenderHost(
             }
             awaitVisualState(view)
             if (dead || webView !== view) return null
-            val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
+            val rawBitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(rawBitmap)
             view.draw(canvas)
+            var trimmed = PiMermaidRenderEngine.trimVisibleBitmap(rawBitmap)
             // On MIUI/HyperOS/Samsung GPUs, offscreen hardware WebViews can tile-cull into an
             // all-transparent frame. Retry once in software layer before falling back to AndroidSVG.
-            if (!PiMermaidRenderEngine.hasVisiblePixels(bitmap) && prevLayerType != View.LAYER_TYPE_SOFTWARE) {
+            if (trimmed == null && prevLayerType != View.LAYER_TYPE_SOFTWARE) {
                 switchedToSoftware = true
                 view.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                 view.invalidate()
-                delay(24L)
+                awaitVisualState(view)
+                delay(40L)
                 if (!dead && webView === view) {
-                    bitmap.eraseColor(Color.TRANSPARENT)
+                    rawBitmap.eraseColor(Color.TRANSPARENT)
                     view.draw(canvas)
+                    trimmed = PiMermaidRenderEngine.trimVisibleBitmap(rawBitmap)
                 }
             }
-            bitmap
+            if (trimmed == null) {
+                rawBitmap.recycle()
+                return null
+            }
+            val tightCssW = (stageCssWidth * (trimmed.width.toFloat() / bmpW.toFloat())).roundToInt().coerceAtLeast(1)
+            val tightCssH = (stageCssHeight * (trimmed.height.toFloat() / bmpH.toFloat())).roundToInt().coerceAtLeast(1)
+            CapturedStage(bitmap = trimmed, cssWidth = tightCssW, cssHeight = tightCssH)
         } catch (error: Throwable) {
             Log.w(TAG, "Mermaid Skia 位图捕获失败，将回退 SVG：${error.message}")
             null
@@ -1515,4 +1547,23 @@ private class OffscreenStageContainer(
             getChildAt(i).layout(0, 0, stageW, stageH)
         }
     }
+}
+
+/** Pure-Kotlin crop-rect calculation `(left, top, width, height)` for [PiMermaidRenderEngine.trimVisibleBitmap]. */
+internal fun computeTightCropRect(
+    bitmapWidth: Int,
+    bitmapHeight: Int,
+    minX: Int,
+    minY: Int,
+    maxX: Int,
+    maxY: Int,
+    paddingPx: Int = 16,
+): IntArray {
+    val left = (minX - paddingPx).coerceAtLeast(0)
+    val top = (minY - paddingPx).coerceAtLeast(0)
+    val right = (maxX + 1 + paddingPx).coerceAtMost(bitmapWidth)
+    val bottom = (maxY + 1 + paddingPx).coerceAtMost(bitmapHeight)
+    val cropW = (right - left).coerceAtLeast(1)
+    val cropH = (bottom - top).coerceAtLeast(1)
+    return intArrayOf(left, top, cropW, cropH)
 }

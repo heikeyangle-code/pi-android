@@ -75,8 +75,8 @@ Node 宿主 sdk-host（app/src/main/assets/guest/sdk-host/host.bundle.mjs）  �
 
 1. **WebView 离屏捕获铁律**：
    - 任何新 WebView 创建前必须先调 `PiWebViewBootstrap.ensureWholeDocumentDraw()`。
-   - `mermaid/host.html` 与 `mathjax/host.html` 必须携带 `<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">`；`PiMermaidRenderEngine.configure()` 必须锁定 `useWideViewPort = false`、`loadWithOverviewMode = false`、`textZoom = 100`、`setInitialScale(100)`，杜绝 WebView 默认 980px 桌面缩略图缩放导致图缩成角落小点。
-   - 位图缩放系数 `cssScale` 必须基于 JS 实测 `window.devicePixelRatio` 计算，并通过 `__piSetStageScaleAndFlush`（双 `requestAnimationFrame`）+ `awaitVisualState` 后抓取；若硬件层被 ROM（MIUI/HyperOS/Samsung）离屏剔除出全透明帧，必须自动触发一次 `LAYER_TYPE_SOFTWARE` 重试，再走 AndroidSVG 兜底。
+   - `mermaid/host.html` 与 `mathjax/host.html` 必须携带 `<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">`；`PiMermaidRenderEngine.configure()` 锁定 `useWideViewPort = false`、`loadWithOverviewMode = false`、`textZoom = 100`，**严禁调用 `view.setInitialScale(100)`**（Android WebView 中 `100` 表示 1 CSS px = 1 物理像素而非 1 dp，在 3x 屏上会把图硬缩成左上角 1/3 小方块）。
+   - 抓图缩放必须经 `__piFitStageToViewport` 在 Chromium 真实回传的新视口 `clientWidth / clientHeight` 中直接计算 `min(vw/sw, vh/sh)`，并在 `view.draw()` 后做逐行精确 `trimVisibleBitmap()` 自动裁切空白边距（兼作全透明帧检测，触发 `LAYER_TYPE_SOFTWARE` 重试与 AndroidSVG 兜底）。
    - 修改 `mermaid/host.html` 或升级 `mermaid.min.js` 时，必须同步递增 `PiMermaidSvg.ENGINE_VERSION` 令旧缓存失效。
 2. **公式与围栏完备性**：
    - `PiMathRenderEngine` 保持 MathJax 4 `linebreaks.inline: false`，确保行内公式不异常断行。

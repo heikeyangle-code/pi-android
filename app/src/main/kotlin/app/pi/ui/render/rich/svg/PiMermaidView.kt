@@ -319,27 +319,18 @@ fun PiMermaidView(
                 val estimatedWidthDp = (configuration.screenWidthDp - 48).coerceAtLeast(220).dp
                 val heightCap = maxOf(
                     PI_MERMAID_MAX_IMAGE_HEIGHT,
-                    (configuration.screenHeightDp * 0.7f).dp,
+                    (configuration.screenHeightDp * 0.68f).dp,
                 )
-                val canvasHeight = if (image.cssWidth > 0 && image.cssHeight > 0) {
-                    val naturalW = image.cssWidth.dp
-                    val naturalH = image.cssHeight.dp
-                    if (naturalW <= estimatedWidthDp) {
-                        naturalH.coerceIn(76.dp, heightCap)
-                    } else {
-                        (estimatedWidthDp / aspect.coerceIn(0.05f, 60f))
-                            .coerceIn(PI_MERMAID_MIN_IMAGE_HEIGHT, heightCap)
-                    }
+                // Because raster captures are tightly auto-cropped to visible ink bounds, sizing
+                // directly from the cropped aspect fills the card cleanly with zero corner shrinkage.
+                val targetWidthDp = if (image.cssWidth > 0) {
+                    minOf(estimatedWidthDp, maxOf(image.cssWidth.dp * 1.25f, estimatedWidthDp * 0.80f))
                 } else {
-                    (estimatedWidthDp / aspect.coerceIn(0.05f, 60f))
-                        .coerceIn(PI_MERMAID_MIN_IMAGE_HEIGHT, heightCap)
+                    estimatedWidthDp
                 }
-                val maxFitScale = if (image.cssWidth > 0 && image.baseWidthPx > 0) {
-                    val naturalPxPerBasePx = (image.cssWidth * density.density) / image.baseWidthPx.toFloat()
-                    (naturalPxPerBasePx * 1.15f).coerceAtLeast(0.25f)
-                } else {
-                    Float.POSITIVE_INFINITY
-                }
+                val canvasHeight = (targetWidthDp / aspect.coerceIn(0.08f, 30f))
+                    .coerceIn(96.dp, heightCap)
+                val maxFitScale = Float.POSITIVE_INFINITY
                 Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)) {
                     Canvas(
                         modifier = Modifier

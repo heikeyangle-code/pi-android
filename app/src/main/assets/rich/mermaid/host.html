@@ -211,14 +211,14 @@
         gitBranchLabel3: foreground,
         commitLabelColor: foreground,
         commitLabelBackground: edgeLabelBg,
-        cScale0: secondaryFill,
-        cScale1: mixHex(background, series[1], 0.22),
-        cScale2: mixHex(background, series[2], 0.22),
-        cScale3: mixHex(background, series[3], 0.22),
-        cScale4: mixHex(background, series[4], 0.22),
-        cScale5: mixHex(background, series[5], 0.22),
-        cScale6: mixHex(background, series[6], 0.22),
-        cScale7: mixHex(background, series[7], 0.22),
+        cScale0: mixHex(background, series[0], isLight ? 0.26 : 0.30),
+        cScale1: mixHex(background, series[1], isLight ? 0.26 : 0.30),
+        cScale2: mixHex(background, series[2], isLight ? 0.26 : 0.30),
+        cScale3: mixHex(background, series[3], isLight ? 0.26 : 0.30),
+        cScale4: mixHex(background, series[4], isLight ? 0.26 : 0.30),
+        cScale5: mixHex(background, series[5], isLight ? 0.26 : 0.30),
+        cScale6: mixHex(background, series[6], isLight ? 0.26 : 0.30),
+        cScale7: mixHex(background, series[7], isLight ? 0.26 : 0.30),
         cScaleLabel0: foreground,
         cScaleLabel1: foreground,
         cScaleLabel2: foreground,
@@ -227,6 +227,43 @@
         cScaleLabel5: foreground,
         cScaleLabel6: foreground,
         cScaleLabel7: foreground,
+        fillType0: mixHex(background, series[0], isLight ? 0.16 : 0.24),
+        fillType1: mixHex(background, series[1], isLight ? 0.16 : 0.24),
+        fillType2: mixHex(background, series[2], isLight ? 0.16 : 0.24),
+        fillType3: mixHex(background, series[3], isLight ? 0.16 : 0.24),
+        fillType4: mixHex(background, series[4], isLight ? 0.16 : 0.24),
+        fillType5: mixHex(background, series[5], isLight ? 0.16 : 0.24),
+        fillType6: mixHex(background, series[6], isLight ? 0.16 : 0.24),
+        fillType7: mixHex(background, series[7], isLight ? 0.16 : 0.24),
+        quadrant1Fill: mixHex(background, series[0], isLight ? 0.12 : 0.18),
+        quadrant2Fill: mixHex(background, series[1], isLight ? 0.10 : 0.14),
+        quadrant3Fill: mixHex(background, series[2], isLight ? 0.08 : 0.12),
+        quadrant4Fill: mixHex(background, series[3], isLight ? 0.10 : 0.15),
+        quadrant1TextFill: foreground,
+        quadrant2TextFill: foreground,
+        quadrant3TextFill: foreground,
+        quadrant4TextFill: foreground,
+        quadrantPointFill: accent,
+        quadrantPointTextFill: foreground,
+        quadrantTitleFill: foreground,
+        quadrantXAxisTextFill: foreground,
+        quadrantYAxisTextFill: foreground,
+        quadrantInternalBorderStrokeFill: mixHex(background, muted, 0.55),
+        quadrantExternalBorderStrokeFill: mixHex(background, muted, 0.72),
+        archEdgeColor: muted,
+        archEdgeArrowColor: muted,
+        archGroupBorderColor: borderSoft,
+        radar: {
+          axisColor: muted,
+          axisStrokeWidth: 1.4,
+          axisLabelFontSize: 13,
+          graticuleColor: mixHex(background, muted, isLight ? 0.45 : 0.50),
+          graticuleStrokeWidth: 1,
+          graticuleOpacity: isLight ? 0.14 : 0.18,
+          curveOpacity: isLight ? 0.26 : 0.34,
+          curveStrokeWidth: 2.2,
+          legendFontSize: 12
+        },
         xyChart: {
           backgroundColor: "transparent",
           titleColor: foreground,
@@ -248,7 +285,13 @@
         ".node rect { rx: 8px; ry: 8px; } " +
         ".cluster rect { rx: 10px; ry: 10px; stroke-width: 1.2px; } " +
         ".edgePath .path { stroke-width: 1.5px; } " +
-        ".actor { rx: 8px; ry: 8px; stroke-width: 1.4px; }",
+        ".actor { rx: 8px; ry: 8px; stroke-width: 1.4px; } " +
+        ".radarCurve-0, .radarLegendBox-0 { stroke: " + series[0] + " !important; fill: " + series[0] + " !important; } " +
+        ".radarCurve-1, .radarLegendBox-1 { stroke: " + series[1] + " !important; fill: " + series[1] + " !important; } " +
+        ".radarCurve-2, .radarLegendBox-2 { stroke: " + series[2] + " !important; fill: " + series[2] + " !important; } " +
+        ".radarCurve-3, .radarLegendBox-3 { stroke: " + series[3] + " !important; fill: " + series[3] + " !important; } " +
+        ".radarAxisLabel, .radarLegendText, .radarTitle { fill: " + foreground + " !important; } " +
+        ".treemapLabel, .treemapValue, .treemapSectionLabel, .treemapTitle { fill: " + foreground + " !important; }",
       fontFamily: font,
       maxTextSize: 64 * 1024,
       maxEdges: 500,
@@ -576,7 +619,6 @@
       SCALE_READY[token] = true;
       return false;
     }
-    // Force synchronous layout flush + wait two frames so Chromium commits the scaled layer.
     var stage = document.getElementById("pi-stage");
     if (stage) void stage.offsetWidth;
     requestAnimationFrame(function () {
@@ -584,6 +626,54 @@
         SCALE_READY[token] = true;
       });
     });
+    return true;
+  };
+
+  /**
+   * Scales #pi-stage directly against Chromium's real post-resize CSS viewport
+   * (clientWidth / clientHeight), eliminating all devicePixelRatio / WebView zoom
+   * mismatches that previously shrank diagrams into a 1/3 top-left corner stamp.
+   */
+  window.__piFitStageToViewport = function (stageW, stageH, targetBmpW, targetBmpH, token) {
+    SCALE_READY[token] = false;
+    var stage = document.getElementById("pi-stage");
+    var sw = Number(stageW);
+    var sh = Number(stageH);
+    if (!stage || !isFinite(sw) || !isFinite(sh) || sw <= 0 || sh <= 0) {
+      SCALE_READY[token] = true;
+      return false;
+    }
+    var targetAspect = (Number(targetBmpW) > 0 && Number(targetBmpH) > 0)
+      ? (Number(targetBmpW) / Number(targetBmpH))
+      : (sw / sh);
+    var attempts = 0;
+
+    function applyAndCommit(vw, vh) {
+      var s = Math.min(vw / sw, vh / sh);
+      if (!isFinite(s) || s <= 0) s = 1;
+      stage.style.transformOrigin = "0 0";
+      stage.style.transform = "scale(" + s + ")";
+      void stage.offsetWidth;
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          SCALE_READY[token] = true;
+        });
+      });
+    }
+
+    function waitViewport() {
+      var vw = document.documentElement.clientWidth || window.innerWidth || 0;
+      var vh = document.documentElement.clientHeight || window.innerHeight || 0;
+      attempts++;
+      var aspectOk = vw > 0 && vh > 0 && Math.abs((vw / vh) - targetAspect) <= Math.max(0.12, targetAspect * 0.12);
+      if (aspectOk || attempts >= 8) {
+        applyAndCommit(vw > 0 ? vw : sw, vh > 0 ? vh : sh);
+        return;
+      }
+      requestAnimationFrame(waitViewport);
+    }
+
+    requestAnimationFrame(waitViewport);
     return true;
   };
 
