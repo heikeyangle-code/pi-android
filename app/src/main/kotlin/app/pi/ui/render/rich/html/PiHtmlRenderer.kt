@@ -20,8 +20,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
@@ -461,27 +465,32 @@ private fun HtmlDetails(node: PiHtmlNode.Details, style: TextStyle) {
     var expanded by rememberSaveable(node.summary.hashCode(), node.body.hashCode()) {
         mutableStateOf(node.open)
     }
+    val headerBg = remember(palette) { lerp(palette.cardBg, palette.text, 0.03f) }
     Column(
         Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .border(0.5.dp, palette.borderMuted.copy(alpha = 0.58f), shape),
+            .background(palette.cardBg)
+            .border(0.5.dp, palette.borderMuted.copy(alpha = 0.56f), shape),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 42.dp)
+                .background(if (expanded) headerBg else Color.Transparent)
                 .clickable(
                     onClickLabel = if (expanded) tr("收起详情", "Collapse details") else tr("展开详情", "Expand details"),
                 ) { expanded = !expanded }
-                .padding(horizontal = 14.dp, vertical = 9.dp),
+                .padding(horizontal = 12.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = if (expanded) "▾" else "▸",
-                style = style.copy(color = palette.muted),
-                modifier = Modifier.padding(end = 8.dp),
+            Icon(
+                imageVector = if (expanded) Icons.Filled.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = palette.muted,
+                modifier = Modifier
+                    .padding(end = 6.dp)
+                    .size(18.dp),
             )
             if (node.summary.isEmpty()) {
                 Text(

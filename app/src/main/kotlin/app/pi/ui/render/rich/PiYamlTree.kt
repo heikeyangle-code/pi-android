@@ -252,6 +252,7 @@ object PiYamlTree {
     const val isSupported: Boolean = true
 
     private const val ROOT_PATH = "$"
+    private const val MAX_DOCUMENTS = 32
 
     /**
      * @param source the fence body, verbatim.
@@ -277,7 +278,18 @@ object PiYamlTree {
         // 2.2 infers `java.lang.Void` and the returned Map fails with a
         // ClassCastException (observed while compiling this harness).
         val data: Any? = try {
-            newLoader(limits).load<Any?>(source)
+            val docs = ArrayList<Any?>(2)
+            for (doc in newLoader(limits).loadAll(source)) {
+                if (docs.size >= MAX_DOCUMENTS) {
+                    return YamlTreeResult.Failure(YamlTreeFailure.TooManyNodes)
+                }
+                docs.add(doc)
+            }
+            when (docs.size) {
+                0 -> null
+                1 -> docs[0]
+                else -> docs
+            }
         } catch (_: StackOverflowError) {
             return YamlTreeResult.Failure(YamlTreeFailure.TooDeep)
         } catch (_: Exception) {

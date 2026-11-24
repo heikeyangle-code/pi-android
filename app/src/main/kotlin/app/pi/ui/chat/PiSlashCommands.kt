@@ -179,8 +179,8 @@ val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
     ),
     "export" to ClientBuiltin(
         ChatAction.ExportSession,
-        "导出会话（默认 HTML + JSONL，也可指定 .html / .jsonl 文件名）",
-        "Export session (HTML + JSONL by default, or specify .html/.jsonl filename)",
+        "导出会话（默认 HTML，或指定路径：.html / .jsonl）",
+        "Export session (HTML default, or specify path: .html/.jsonl)",
     ),
     "import" to ClientBuiltin(
         ChatAction.ImportSession,

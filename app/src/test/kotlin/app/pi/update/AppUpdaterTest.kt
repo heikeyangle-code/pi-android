@@ -18,6 +18,8 @@ class AppUpdaterTest {
         assertTrue(AppUpdater.isNewerVersion(current = "0.3.0-rc.1", candidate = "0.3.0"))
         assertFalse(AppUpdater.isNewerVersion(current = "0.3.0", candidate = "0.3.0-rc.1"))
         assertTrue(AppUpdater.isNewerVersion(current = "0.2.1", candidate = "0.3.0-beta.1"))
+        assertTrue(AppUpdater.isNewerVersion(current = "0.3.0-rc.2", candidate = "0.3.0-rc.10"))
+        assertFalse(AppUpdater.isNewerVersion(current = "0.3.0-rc.10", candidate = "0.3.0-rc.2"))
     }
 
     @Test
@@ -41,6 +43,12 @@ class AppUpdaterTest {
 
         assertEquals(sideload, AppUpdater.pickBestApkAsset(assets, targetSdk = 28))
         assertEquals(modern, AppUpdater.pickBestApkAsset(assets, targetSdk = 36))
+        // Must never cross-install sideload28 on modern36 or modern36 on sideload28
+        assertEquals(null, AppUpdater.pickBestApkAsset(listOf(sideload), targetSdk = 36))
+        assertEquals(null, AppUpdater.pickBestApkAsset(listOf(modern), targetSdk = 28))
+        val generic = AppUpdater.ReleaseAsset("pi-android-0.3.0.apk", "https://example.com/app.apk", 64_000_000L)
+        assertEquals(generic, AppUpdater.pickBestApkAsset(listOf(generic), targetSdk = 36))
+        assertEquals(generic, AppUpdater.pickBestApkAsset(listOf(generic), targetSdk = 28))
     }
 
     @Test

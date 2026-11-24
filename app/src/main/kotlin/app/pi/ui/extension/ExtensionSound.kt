@@ -3,7 +3,12 @@ package app.pi.ui.extension
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -13,6 +18,8 @@ import kotlin.math.sin
  * 使用低延迟短正弦波提示音（65ms、880Hz、带淡入淡出包络）通过 `USAGE_GAME` / `CONTENT_TYPE_SONIFICATION`
  * 播放：
  *  - 跟随系统媒体音量，支持耳机外放，且无需任何音频权限；
+ *  - 120ms 节流 + 非堆积并发保护，防止高频 BEL 轰炸导致连续数秒排队响铃；
+ *  - 全局共享静音开关 [muted]，覆盖自定义浮层与交互式小组件面板；
  *  - 全部操作在单线程后台执行并包裹 `runCatching`，硬件不可用或处于无声环境时静默降级、绝不阻塞主线程或崩溃。
  */
 internal object ExtensionSound {
@@ -20,6 +27,12 @@ internal object ExtensionSound {
     private const val DURATION_MS = 65
     private const val FREQ_HZ = 880.0
     private const val AMPLITUDE = 0.28
+    private const val MIN_INTERVAL_MS = 120L
+
+    var muted: Boolean by mutableStateOf(false)
+
+    private val lastPlayedMs = AtomicLong(0L)
+    private val playing = AtomicBoolean(false)
 
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "pi-ext-bell").apply { isDaemon = true }
@@ -41,11 +54,27 @@ internal object ExtensionSound {
         }
     }
 
+    fun toggleMuted() {
+        muted = !muted
+    }
+
     fun playBell() {
+        if (muted) return
+        val now = System.currentTimeMillis()
+        val prev = lastPlayedMs.get()
+        if (now - prev < MIN_INTERVAL_MS) return
+        if (!lastPlayedMs.compareAndSet(prev, now)) return
+        if (!playing.compareAndSet(false, true)) return
         runCatching {
             executor.execute {
-                runCatching { playSync() }
+                try {
+                    if (!muted) runCatching { playSync() }
+                } finally {
+                    playing.set(false)
+                }
             }
+        }.onFailure {
+            playing.set(false)
         }
     }
 

@@ -1016,7 +1016,7 @@ internal fun PiSessionViewModel.exportSessionImpl(fileName: String? = null) {
     when {
         name != null && SessionExportNaming.isJsonl(name) -> exportJsonlOnly(name)
         name != null -> exportHtmlOnly(name)
-        else -> exportBoth()
+        else -> exportHtmlOnly(SessionExportNaming.defaultHtmlName(_state.value.meta.sessionFile, System.currentTimeMillis()))
     }
 }
 
@@ -1039,20 +1039,14 @@ private fun PiSessionViewModel.exportHtmlOnly(htmlName: String) {
     }
 }
 
-/** `/export <名字>.jsonl`：只给会话文件那一份（内容仍是磁盘上那份，逐字节；名字用你给的）。 */
+/** `/export <名字>.jsonl`：直接调用官方 SDK `session.exportToJsonl()` 写出 JSONL。 */
 private fun PiSessionViewModel.exportJsonlOnly(jsonlName: String) {
-    call(tr("导出会话", "Export session")) { _ ->
-        publish(listOfNotNull(exportedSessionFile(jsonlName)))
-    }
-}
-
-/** 普通导出：HTML（默认名）与会话文件（原名）各一份。 */
-private fun PiSessionViewModel.exportBoth() {
-    val htmlName = SessionExportNaming.defaultHtmlName(_state.value.meta.sessionFile, System.currentTimeMillis())
-    val activeTheme = _theme.value.name.takeIf { it.isNotBlank() }
     call(tr("导出会话", "Export session")) { api ->
-        api.exportHtml("${guestWorkspace()}/$htmlName", themeName = activeTheme)
-        publish(listOfNotNull(exportedHtml(htmlName), exportedSessionFile()))
+        api.exportJsonl("${guestWorkspace()}/$jsonlName")
+        val exported = File(defaultWorkspace(), jsonlName).takeIf { it.isFile }?.let {
+            ExportedFile(jsonlName, SessionExportNaming.mimeTypeFor(jsonlName), it.absolutePath)
+        } ?: exportedSessionFile(jsonlName)
+        publish(listOfNotNull(exported))
     }
 }
 

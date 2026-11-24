@@ -261,8 +261,9 @@ internal fun PiTreeRawSource(
 ) {
     val palette = PiTheme.palette
     val highlighted = rememberPiHighlightedCode(source, language)
+    val inCardFrame = LocalPiCardMenuSlot.current != null
     Column(modifier.fillMaxWidth()) {
-        if (!notice.isNullOrEmpty()) {
+        if (!notice.isNullOrEmpty() && !inCardFrame) {
             Text(
                 text = notice,
                 style = PiTheme.text.monoSmall,

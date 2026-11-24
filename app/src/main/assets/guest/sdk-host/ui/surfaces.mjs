@@ -233,7 +233,7 @@ export class Surfaces {
    * 挂载一个组件。`build(tui, surface)` 返回组件（custom() 允许返回 Promise）。
    * @returns {Promise<any>} surface
    */
-  async mount({ mode, key, overlay = false, overlayOptions = null, blocked = null, build, onClose, onHandle }) {
+  async mount({ mode, key, overlay = false, overlayOptions = null, blocked = null, blockedKind = null, build, onClose, onHandle }) {
     if (key) this.closeKey(key);
     const surface = {
       id: randomUUID(),
@@ -242,6 +242,7 @@ export class Surfaces {
       overlay,
       overlayOptions,
       blocked,
+      blockedKind,
       hidden: false,
       focused: false,
       component: null,
@@ -507,6 +508,7 @@ export class Surfaces {
       effectiveHidden,
       surface.focused,
       surface.blocked ?? null,
+      surface.blockedKind ?? null,
       interactive,
       supportsMouse,
       hasTextCursor,
@@ -525,6 +527,7 @@ export class Surfaces {
       hidden: effectiveHidden,
       focused: surface.focused,
       blocked: surface.blocked ?? null,
+      blockedKind: surface.blockedKind ?? null,
       rev: ++surface.rev,
       interactive,
       supportsMouse,

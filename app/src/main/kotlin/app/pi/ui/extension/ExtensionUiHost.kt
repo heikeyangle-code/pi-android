@@ -85,7 +85,8 @@ fun ExtensionUiHost(
         session.state.map { it.toExtensionHostSlice() }.distinctUntilChanged()
     }.collectAsStateWithLifecycle(initialValue = session.state.value.toExtensionHostSlice())
     val hostState = remember { SnackbarHostState() }
-    var bellMuted by remember { mutableStateOf(false) }
+    val bellMuted = ExtensionSound.muted
+    var lastHandledBellSeq by remember { mutableStateOf(hostSlice.bellSeq) }
     var minimizedSurfaceId by remember { mutableStateOf<String?>(null) }
     var promotedFloatingId by remember { mutableStateOf<String?>(null) }
 
@@ -105,7 +106,8 @@ fun ExtensionUiHost(
     }
 
     LaunchedEffect(hostSlice.bellSeq) {
-        if (hostSlice.bellSeq > 0L && !bellMuted) {
+        if (hostSlice.bellSeq > lastHandledBellSeq) {
+            lastHandledBellSeq = hostSlice.bellSeq
             ExtensionSound.playBell()
         }
     }
@@ -177,7 +179,7 @@ fun ExtensionUiHost(
             minimized = activeSurfaceId != null && minimizedSurfaceId == activeSurfaceId,
             minimizedBottomPadding = snackbarBottomPadding + MinimizedSurfaceClearance,
             soundMuted = bellMuted,
-            onToggleSound = { bellMuted = !bellMuted },
+            onToggleSound = { ExtensionSound.toggleMuted() },
             onMinimize = {
                 if (activeCustom != null && activeCustom.nonCapturing) {
                     promotedFloatingId = null

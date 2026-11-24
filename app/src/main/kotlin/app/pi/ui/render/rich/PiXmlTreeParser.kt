@@ -54,6 +54,33 @@ internal object PiXmlTreeParser {
         if (!settled) return XmlTreeResult.Failure(XmlTreeFailure.NotSettled)
         PiXmlTree.checkSource(source, limits)?.let { return XmlTreeResult.Failure(it) }
 
+        val direct = parseDocument(source, limits)
+        if (direct is XmlTreeResult.Tree) return direct
+        if (direct is XmlTreeResult.Failure && direct.reason == XmlTreeFailure.Malformed) {
+            val stripped = stripXmlProlog(source)
+            if (stripped.startsWith("<")) {
+                val wrapped = "<fragment>\n$stripped\n</fragment>"
+                if (wrapped.length <= limits.maxChars) {
+                    val frag = parseDocument(wrapped, limits)
+                    if (frag is XmlTreeResult.Tree && frag.root.children.count { it is XmlElementNode } >= 2) {
+                        return frag
+                    }
+                }
+            }
+        }
+        return direct
+    }
+
+    private fun stripXmlProlog(source: String): String {
+        var s = source.trimStart()
+        if (s.startsWith("<?xml", ignoreCase = true)) {
+            val end = s.indexOf("?>")
+            if (end > 0) s = s.substring(end + 2).trimStart()
+        }
+        return s
+    }
+
+    private fun parseDocument(source: String, limits: XmlTreeLimits): XmlTreeResult {
         val parser: XmlPullParser = Xml.newPullParser()
         // Both features are optional per the XmlPullParser contract; a parser that
         // does not know one throws. The declaration pre-scan above is the

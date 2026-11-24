@@ -218,14 +218,19 @@ object PiJsonTree {
         // One linear pass before the parser: it bounds recursion, and it rejects
         // the one malformed shape `Json.parseToJsonElement` accepts silently (a raw
         // control character inside a string, e.g. a literal newline).
-        val scan = scanSource(source)
+        // Normalize JSONC (// line comments, /* block comments */, trailing commas before } or ])
+        // outside string literals so tsconfig / settings.json / jsonc fences render cleanly as trees.
+        val normalized = normalizeJsonc(source) ?: return JsonTreeResult.Failure(JsonTreeFailure.Malformed)
+        if (normalized.isBlank()) return JsonTreeResult.Failure(JsonTreeFailure.Empty)
+
+        val scan = scanSource(normalized)
         if (scan.hasRawControlCharacter) return JsonTreeResult.Failure(JsonTreeFailure.Malformed)
         if (scan.maxDepth > limits.maxDepth) {
             return JsonTreeResult.Failure(JsonTreeFailure.TooDeep)
         }
 
         val element: JsonElement = try {
-            parser.parseToJsonElement(source)
+            parser.parseToJsonElement(normalized)
         } catch (_: StackOverflowError) {
             // Defense in depth: the pre-scan should have caught this. A library
             // stack overflow must still not escape into the UI thread.
@@ -282,6 +287,98 @@ object PiJsonTree {
      * Escaped characters (`\n`, `\"`, `\u0000`) are fine: the scan tracks the
      * backslash so an escaped quote never ends the string.
      */
+    /**
+     * Strip JSONC line/block comments and trailing commas before `}` / `]`
+     * outside string literals in O(n). Returns `null` on an unterminated block comment.
+     * Standard strict JSON without comments or trailing commas passes through fast.
+     */
+    private fun normalizeJsonc(source: String): String? {
+        val len = source.length
+        // Fast path: no '/' and no ',' means nothing to strip.
+        if (source.indexOf('/') < 0 && source.indexOf(',') < 0) return source
+        // Pass 1: strip comments outside strings.
+        val noComments = StringBuilder(len)
+        var i = 0
+        var inString = false
+        var escaped = false
+        while (i < len) {
+            val ch = source[i]
+            if (inString) {
+                noComments.append(ch)
+                when {
+                    escaped -> escaped = false
+                    ch == '\\' -> escaped = true
+                    ch == '"' -> inString = false
+                }
+                i++
+                continue
+            }
+            if (ch == '"') {
+                inString = true
+                noComments.append(ch)
+                i++
+            } else if (ch == '/' && i + 1 < len && source[i + 1] == '/') {
+                i += 2
+                while (i < len && source[i] != '\n' && source[i] != '\r') i++
+            } else if (ch == '/' && i + 1 < len && source[i + 1] == '*') {
+                i += 2
+                var closed = false
+                while (i + 1 < len) {
+                    if (source[i] == '*' && source[i + 1] == '/') {
+                        i += 2
+                        closed = true
+                        break
+                    }
+                    i++
+                }
+                if (!closed) return null
+                noComments.append(' ')
+            } else {
+                noComments.append(ch)
+                i++
+            }
+        }
+        // Pass 2: strip trailing commas immediately before '}' or ']' outside strings.
+        val text = noComments.toString()
+        if (text.indexOf(',') < 0) return text
+        val out = StringBuilder(text.length)
+        inString = false
+        escaped = false
+        var idx = 0
+        val n = text.length
+        while (idx < n) {
+            val ch = text[idx]
+            if (inString) {
+                out.append(ch)
+                when {
+                    escaped -> escaped = false
+                    ch == '\\' -> escaped = true
+                    ch == '"' -> inString = false
+                }
+                idx++
+                continue
+            }
+            if (ch == '"') {
+                inString = true
+                out.append(ch)
+                idx++
+            } else if (ch == ',') {
+                var look = idx + 1
+                while (look < n && text[look].isWhitespace()) look++
+                if (look < n && (text[look] == '}' || text[look] == ']')) {
+                    idx++
+                } else {
+                    out.append(ch)
+                    idx++
+                }
+            } else {
+                out.append(ch)
+                idx++
+            }
+        }
+        return out.toString()
+    }
+
     private fun scanSource(source: String): SourceScan {
         var depth = 0
         var max = 0

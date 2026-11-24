@@ -1,6 +1,16 @@
 package app.pi.ui.render
 
+import app.pi.ui.render.rich.CsvFailure
+import app.pi.ui.render.rich.CsvFormat
+import app.pi.ui.render.rich.CsvParseResult
+import app.pi.ui.render.rich.JsonObjectNode
+import app.pi.ui.render.rich.JsonTreeResult
+import app.pi.ui.render.rich.PiCsvTable
 import app.pi.ui.render.rich.PiFenceSniff
+import app.pi.ui.render.rich.PiJsonTree
+import app.pi.ui.render.rich.PiYamlTree
+import app.pi.ui.render.rich.YamlListNode
+import app.pi.ui.render.rich.YamlTreeResult
 import app.pi.ui.render.rich.svg.computeTightCropRect
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
@@ -621,6 +631,51 @@ class PiRichRenderTest {
         assertEquals(0, edge[1])
         assertEquals(300, edge[2])
         assertEquals(200, edge[3])
+    }
+
+    @Test
+    fun `PiJsonTree parses JSONC with line comments, block comments, trailing commas, and URL strings`() {
+        val jsonc = """
+            {
+              // line comment
+              "url": "https://example.com/a//b",
+              "items": [1, 2, 3,],
+            }
+        """.trimIndent()
+        val res = PiJsonTree.parse(jsonc, settled = true)
+        assertTrue("Expected JSONC to parse cleanly, got $res", res is JsonTreeResult.Tree)
+        val root = (res as JsonTreeResult.Tree).root as JsonObjectNode
+        assertEquals(2, root.entries.size)
+        assertEquals("url", root.entries[0].key)
+    }
+
+    @Test
+    fun `PiYamlTree parses multi-document YAML streams into a root list`() {
+        val multi = """
+            ---
+            kind: ConfigMap
+            name: first
+            ---
+            kind: Deployment
+            name: second
+        """.trimIndent()
+        val res = PiYamlTree.parse(multi, settled = true)
+        assertTrue("Expected multi-doc YAML to parse, got $res", res is YamlTreeResult.Tree)
+        val root = (res as YamlTreeResult.Tree).root as YamlListNode
+        assertEquals(2, root.items.size)
+    }
+
+    @Test
+    fun `PiCsvTable parses spaced quoted fields while still rejecting mid-field quotes`() {
+        val spaced = "name, bio, age\nAlice, \"Engineer, Android\" , 30"
+        val res = PiCsvTable.parse(spaced, CsvFormat.Csv, settled = true)
+        assertTrue("Expected spaced CSV to parse, got $res", res is CsvParseResult.Table)
+        val table = res as CsvParseResult.Table
+        assertEquals("Engineer, Android", table.cell(row = 1, column = 1))
+
+        val bad = "a,b\nfoo\"bar,baz"
+        val badRes = PiCsvTable.parse(bad, CsvFormat.Csv, settled = true)
+        assertEquals(CsvParseResult.Failure(CsvFailure.Malformed), badRes)
     }
 
     private fun parseGfm(markdown: String): ASTNode =

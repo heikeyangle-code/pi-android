@@ -277,8 +277,26 @@ object AppUpdater {
             preA.isEmpty() && preB.isEmpty() -> 0
             preA.isEmpty() -> 1
             preB.isEmpty() -> -1
-            else -> preA.compareTo(preB, ignoreCase = true)
+            else -> comparePrerelease(preA, preB)
         }
+    }
+
+    private fun comparePrerelease(a: String, b: String): Int {
+        val segA = a.split('.')
+        val segB = b.split('.')
+        val maxLen = maxOf(segA.size, segB.size)
+        for (i in 0 until maxLen) {
+            val sa = segA.getOrNull(i) ?: return -1
+            val sb = segB.getOrNull(i) ?: return 1
+            val na = sa.toIntOrNull()
+            val nb = sb.toIntOrNull()
+            val cmp = when {
+                na != null && nb != null -> na.compareTo(nb)
+                else -> sa.compareTo(sb, ignoreCase = true)
+            }
+            if (cmp != 0) return cmp
+        }
+        return 0
     }
 
     fun isNewerVersion(current: String, candidate: String): Boolean =
@@ -292,10 +310,13 @@ object AppUpdater {
     fun pickBestApkAsset(assets: List<ReleaseAsset>, targetSdk: Int): ReleaseAsset? {
         val apks = assets.filter { it.name.endsWith(".apk", ignoreCase = true) }
         if (apks.isEmpty()) return null
+        val neutral = apks.firstOrNull { !it.isModern36 && !it.isSideload28 }
         return if (targetSdk >= 30) {
-            apks.firstOrNull { it.isModern36 } ?: apks.first()
+            // modern36 (targetSdk 36) cannot downgrade to sideload28 (INSTALL_FAILED_TARGET_SDK_VERSION_DOWNGRADE)
+            apks.firstOrNull { it.isModern36 } ?: neutral
         } else {
-            apks.firstOrNull { it.isSideload28 } ?: apks.first()
+            // sideload28 must not silently upgrade to modern36 and lose native execve() capability
+            apks.firstOrNull { it.isSideload28 } ?: neutral
         }
     }
 

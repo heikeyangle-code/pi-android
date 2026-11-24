@@ -56,6 +56,7 @@ object PiLoadedResources {
         val events: List<String>,
         val replaceable: Boolean = false,
         val toolRenderers: List<String> = emptyList(),
+        val toolRendererCount: Int = 0,
         val messageRenderers: List<String> = emptyList(),
         val entryRenderers: List<String> = emptyList(),
         val hasMarkdownTransformer: Boolean = false,
@@ -63,7 +64,7 @@ object PiLoadedResources {
         /** 一个扩展注册的「东西」总数（命令 + 工具 + 参数 + 快捷键 + 渲染器 + Markdown 变换器）。 */
         val registered: Int
             get() = commands.size + tools.size + flags.size + shortcuts.size +
-                toolRenderers.size + messageRenderers.size + entryRenderers.size +
+                maxOf(toolRenderers.size, toolRendererCount) + messageRenderers.size + entryRenderers.size +
                 (if (hasMarkdownTransformer) 1 else 0)
     }
 
@@ -189,6 +190,7 @@ object PiLoadedResources {
         events = (o["events"] as? JsonArray).orEmpty().mapNotNull { str(it) },
         replaceable = bool(o["replaceable"]),
         toolRenderers = (o["toolRenderers"] as? JsonArray).orEmpty().mapNotNull { str(it) },
+        toolRendererCount = (o["toolRendererCount"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0,
         messageRenderers = (o["messageRenderers"] as? JsonArray).orEmpty().mapNotNull { str(it) },
         entryRenderers = (o["entryRenderers"] as? JsonArray).orEmpty().mapNotNull { str(it) },
         hasMarkdownTransformer = bool(o["hasMarkdownTransformer"]),

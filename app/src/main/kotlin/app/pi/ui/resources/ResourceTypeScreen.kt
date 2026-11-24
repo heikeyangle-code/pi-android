@@ -485,7 +485,13 @@ private fun ExtensionDetail(e: PiLoadedResources.Extension?) {
     if (e.tools.isNotEmpty()) Fact(tr("工具", "Tools"), e.tools.joinToString("\n") { it.name + (it.description?.let { d -> " — ${d.lineSequence().first()}" } ?: "") })
     if (e.flags.isNotEmpty()) Fact(tr("启动参数", "Flags"), e.flags.joinToString("\n") { "--" + it.name + (if (it.isBoolean) "" else tr(" <值>", " <value>")) + (it.description?.let { d -> " — $d" } ?: "") })
     if (e.shortcuts.isNotEmpty()) Fact(tr("快捷键", "Shortcuts"), e.shortcuts.joinToString("\n") { it.shortcut + (it.description?.let { d -> " — $d" } ?: "") })
-    if (e.toolRenderers.isNotEmpty()) Fact(tr("工具渲染器", "Tool Renderers"), e.toolRenderers.joinToString(tr("、", ", ")))
+    if (e.toolRenderers.isNotEmpty() || e.toolRendererCount > 0) {
+        val value = buildList {
+            if (e.toolRenderers.isNotEmpty()) add(e.toolRenderers.joinToString(tr("、", ", ")))
+            if (e.toolRendererCount > 0) add(tr("${e.toolRendererCount} 个自定义解析器", "${e.toolRendererCount} custom resolver(s)"))
+        }.joinToString(tr(" · ", " · "))
+        Fact(tr("工具渲染器", "Tool Renderers"), value)
+    }
     if (e.messageRenderers.isNotEmpty()) Fact(tr("消息渲染器", "Message Renderers"), e.messageRenderers.joinToString(tr("、", ", ")))
     if (e.entryRenderers.isNotEmpty()) Fact(tr("自定义条目渲染器", "Entry Renderers"), e.entryRenderers.joinToString(tr("、", ", ")))
     if (e.hasMarkdownTransformer) Fact(tr("Markdown 变换器", "Markdown Transformer"), tr("已注册（拦截并改写对话 Markdown）", "Registered (transforms conversation Markdown)"))

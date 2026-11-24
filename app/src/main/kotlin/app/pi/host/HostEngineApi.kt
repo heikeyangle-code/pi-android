@@ -198,6 +198,19 @@ class HostEngineApi(private val commands: HostCommands) {
             ),
         )?.path ?: throw HostCommandException("session.export", app.pi.i18n.tr("宿主没有返回导出路径", "Host did not return an export path"))
 
+    /** 直接调用官方 SDK `session.exportToJsonl(outputPath)` 导出 JSONL 会话文件。 */
+    suspend fun exportJsonl(outputPath: String): String =
+        PiResponses.exportResult(
+            read(
+                "session.export",
+                obj {
+                    put("outputPath", JsonPrimitive(outputPath))
+                    put("format", JsonPrimitive("jsonl"))
+                },
+                HostCommands.LONG_TIMEOUT_MS,
+            ),
+        )?.path ?: throw HostCommandException("session.export", app.pi.i18n.tr("宿主没有返回导出路径", "Host did not return an export path"))
+
     // ---- 会话 ----
 
     /** [cwd]（guest 路径）非空 = 在那个项目里开新会话，宿主不重启（SDK 的 cwd 是会话的属性）。 */

@@ -445,6 +445,17 @@ internal fun AppUpdateSheet(
                                     },
                                 )
                             }
+                            res.hasUpdate && asset == null -> {
+                                val variant = AppUpdater.expectedVariantLabel(res.targetSdk)
+                                Text(
+                                    tr(
+                                        "此版本暂未上传匹配当前变体（$variant）的安装包，请前往 GitHub Release 页面查看。",
+                                        "No compatible $variant APK found in this release. Check the GitHub Release page.",
+                                    ),
+                                    style = PiTheme.text.meta,
+                                    color = palette.warning,
+                                )
+                            }
                         }
 
                         if (latest != null) {

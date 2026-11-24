@@ -585,7 +585,7 @@ object PiMcpConfig {
         val text = rawText.trim()
         if (text.isEmpty()) return ImportPreview()
         val parsed = runCatching { Json.parseToJsonElement(text) }.getOrNull() as? JsonObject
-            ?: return ImportPreview(error = "JSON 语法有误")
+            ?: return ImportPreview(error = app.pi.i18n.tr("JSON 语法有误", "Invalid JSON syntax"))
         val table = (parsed["mcpServers"] as? JsonObject) ?: (parsed["servers"] as? JsonObject)
         if (table != null) {
             val items = table.entries.mapNotNull { (k, v) ->
@@ -606,7 +606,7 @@ object PiMcpConfig {
                 isSingleServer = true,
             )
         }
-        return ImportPreview(error = "未找到 mcpServers / servers 或单个服务器配置")
+        return ImportPreview(error = app.pi.i18n.tr("未找到 mcpServers / servers 或单个服务器配置", "No mcpServers / servers or single server config found"))
     }
 }
 

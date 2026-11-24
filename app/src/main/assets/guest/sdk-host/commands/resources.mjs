@@ -70,6 +70,24 @@ const wireDiagnostics = (list) =>
   }));
 
 /** 一个已加载扩展：它**注册了什么**（命令 / 工具 / flag / 快捷键 / 渲染器 / 监听的事件）——这才是用户想知道的。 */
+function extractToolRenderers(e) {
+  const names = new Set();
+  if (e.toolRenderers && typeof e.toolRenderers.keys === "function" && !Array.isArray(e.toolRenderers)) {
+    for (const key of e.toolRenderers.keys()) {
+      if (typeof key === "string" && key) names.add(key);
+    }
+  }
+  if (e.tools && typeof e.tools.entries === "function") {
+    for (const [name, t] of e.tools.entries()) {
+      const def = t?.definition;
+      if (typeof def?.renderCall === "function" || typeof def?.renderResult === "function") {
+        names.add(String(name));
+      }
+    }
+  }
+  return [...names].sort();
+}
+
 export function wireExtension(e) {
   return {
     path: e.path,
@@ -81,10 +99,17 @@ export function wireExtension(e) {
     tools: [...(e.tools?.entries?.() ?? [])].map(([name, t]) => ({ name, description: t?.definition?.description ?? null })),
     flags: [...(e.flags?.values?.() ?? [])].map((f) => ({ name: f.name, description: f.description ?? null, type: f.type })),
     shortcuts: [...(e.shortcuts?.values?.() ?? [])].map((k) => ({ shortcut: String(k.shortcut), description: k.description ?? null })),
-    toolRenderers: [...(e.toolRenderers?.keys?.() ?? [])].sort(),
+    toolRenderers: extractToolRenderers(e),
+    toolRendererCount: Array.isArray(e.toolRenderers)
+      ? e.toolRenderers.length
+      : typeof e.toolRenderers?.size === "number"
+        ? e.toolRenderers.size
+        : 0,
     messageRenderers: [...(e.messageRenderers?.keys?.() ?? [])].sort(),
     entryRenderers: [...(e.entryRenderers?.keys?.() ?? [])].sort(),
-    hasMarkdownTransformer: typeof e.markdownTransformer === "function",
+    hasMarkdownTransformer:
+      typeof e.markdownTransformer?.transformer === "function" ||
+      typeof e.markdownTransformer === "function",
     events: [...(e.handlers?.keys?.() ?? [])].sort(),
   };
 }

@@ -244,9 +244,15 @@ export function register(reg, { controller }) {
   });
   reg.add("session.compact", async (args) => withState(controller, await controller.requireSession().compact(optStr(args, "customInstructions"))));
   reg.add("session.export", async (args) => {
+    const outputPath = optStr(args, "outputPath");
+    const format = optStr(args, "format")?.toLowerCase();
+    const s = controller.requireSession();
+    if (format === "jsonl" || outputPath?.toLowerCase().endsWith(".jsonl")) {
+      return { path: s.exportToJsonl(outputPath) };
+    }
     const themeName = optStr(args, "themeName");
     const opts = themeName ? { themeName } : undefined;
-    return { path: await controller.requireSession().exportToHtml(optStr(args, "outputPath"), opts) };
+    return { path: await s.exportToHtml(outputPath, opts) };
   });
   reg.add("session.reload", async () => {
     const r = await controller.reloadSession();

@@ -291,6 +291,16 @@ private fun scan(text: String, delimiter: Char, limits: CsvLimits): ScanResult {
                     if (failure != null) return ScanResult.Failure(failure)
                     index = newlineEnd(text, index)
                 }
+                delimiter == ',' && (char == ' ' || char == '\t') -> {
+                    // Tolerate optional trailing horizontal whitespace after closing quote before delimiter/EOL.
+                    var look = index + 1
+                    while (look < text.length && (text[look] == ' ' || text[look] == '\t')) look++
+                    if (look >= text.length || text[look] == delimiter || text[look] == '\r' || text[look] == '\n') {
+                        index = look
+                    } else {
+                        return ScanResult.Failure(CsvFailure.Malformed)
+                    }
+                }
                 else -> return ScanResult.Failure(CsvFailure.Malformed)
             }
             continue
@@ -305,9 +315,11 @@ private fun scan(text: String, delimiter: Char, limits: CsvLimits): ScanResult {
                 index++
             }
             char == '"' -> {
-                // RFC 4180: a quote is only legal as the first character of a
-                // field. `a"b` is malformed; it is not a literal quote.
-                if (field.isNotEmpty()) return ScanResult.Failure(CsvFailure.Malformed)
+                // Allow optional leading spaces/tabs before an opening quote in comma-delimited CSV
+                // (very common in LLM-emitted CSV like `name, "Alice, Bob", 30`), while still rejecting `a"b`.
+                val onlyIndent = delimiter == ',' && field.isNotEmpty() && field.all { it == ' ' || it == '\t' }
+                if (field.isNotEmpty() && !onlyIndent) return ScanResult.Failure(CsvFailure.Malformed)
+                if (onlyIndent) field.setLength(0)
                 inQuotes = true
                 index++
             }

@@ -1181,6 +1181,62 @@ try {
     );
   }
 
+  // ---- 7.9 Pi 1.6.0 扩展元数据、blockedKind 与 JSONL 导出回归检查 --------
+  {
+    const { wireExtension } = await import(
+      new URL("../../app/src/main/assets/guest/sdk-host/commands/resources.mjs", import.meta.url).href
+    );
+    const wired = wireExtension({
+      path: "/ext/demo.ts",
+      resolvedPath: "/ext/demo.ts",
+      tools: new Map([
+        ["custom_tool", { definition: { description: "demo", renderCall: () => null } }],
+      ]),
+      toolRenderers: [() => undefined, () => undefined],
+      markdownTransformer: { transformer: (t) => t, messageTypes: new Set(["assistant"]) },
+      messageRenderers: new Map([["note", () => null]]),
+      entryRenderers: new Map([["audit", () => null]]),
+    });
+    expect(
+      "wireExtension 正确识别 Pi 1.6.0 ToolRendererResolver[] 与工具自定义渲染器",
+      wired.toolRendererCount === 2 && wired.toolRenderers.includes("custom_tool"),
+      JSON.stringify(wired),
+    );
+    expect(
+      "wireExtension 正确识别 Pi 1.6.0 MarkdownTransformerRegistration 对象",
+      wired.hasMarkdownTransformer === true,
+      JSON.stringify(wired),
+    );
+
+    const { Surfaces } = await import(
+      new URL("../../app/src/main/assets/guest/sdk-host/ui/surfaces.mjs", import.meta.url).href
+    );
+    const emitted = [];
+    const mockSurfaces = new Surfaces({ emit: (ev, data) => emitted.push({ ev, data }) });
+    const surf = await mockSurfaces.mount({
+      mode: "custom",
+      overlay: true,
+      blocked: "waiting",
+      blockedKind: "input",
+      build: () => ({ render: () => ["line"] }),
+    });
+    const surfEv = emitted.find((e) => e.ev === "ui.surface");
+    expect(
+      "Surfaces.mount 透传 blockedKind 到 ui.surface 事件",
+      surfEv?.data?.blocked === "waiting" && surfEv?.data?.blockedKind === "input",
+      JSON.stringify(surfEv),
+    );
+    mockSurfaces.close(surf.id);
+
+    const exportJsonlPath = join(h.root, "exported-session.jsonl");
+    const ej = await h.call("session.export", { outputPath: exportJsonlPath });
+    expect(
+      "session.export 对 .jsonl 后缀直接调用官方 SDK exportToJsonl 写出文件",
+      ej.ok && typeof ej.data?.path === "string" && ej.data.path.endsWith(".jsonl") && existsSync(ej.data.path),
+      JSON.stringify(ej),
+    );
+  }
+
   // ---- 8. 退出 ----------------------------------------------------------
   await h.call("host.shutdown");
   const code = await new Promise((r) => (h.child.exitCode !== null ? r(h.child.exitCode) : h.child.once("exit", r)));

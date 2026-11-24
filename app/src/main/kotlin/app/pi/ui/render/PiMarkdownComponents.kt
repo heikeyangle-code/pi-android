@@ -92,15 +92,23 @@ import app.pi.settings.PiSettingsFileStore
 import app.pi.settings.readString
 import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.render.rich.LinkCardResult
+import app.pi.ui.render.rich.CsvParseResult
+import app.pi.ui.render.rich.JsonTreeResult
 import app.pi.ui.render.rich.PiCsvTable
 import app.pi.ui.render.rich.PiCsvTableView
+import app.pi.ui.render.rich.PiJsonTree
 import app.pi.ui.render.rich.PiJsonTreeView
 import app.pi.ui.render.rich.PiLinkCard
 import app.pi.ui.render.rich.PiLinkPreview
 import app.pi.ui.render.rich.PiStackTraceView
 import app.pi.ui.render.rich.PiTreeMode
+import app.pi.ui.render.rich.PiXmlTreeParser
 import app.pi.ui.render.rich.PiXmlTreeView
+import app.pi.ui.render.rich.PiYamlTree
 import app.pi.ui.render.rich.PiYamlTreeView
+import app.pi.ui.render.rich.XmlTreeResult
+import app.pi.ui.render.rich.YamlTreeResult
+import app.pi.ui.render.rich.rememberTreeParse
 import app.pi.ui.render.rich.RichBlock
 import app.pi.ui.render.rich.RichBlockKind
 import app.pi.ui.render.rich.svg.PiMathView
@@ -1481,12 +1489,29 @@ private fun PiHtmlBlock(content: String, node: ASTNode) {
     val text = remember(content, node) {
         PiHtml.blockTextAt(content, node.startOffset, node.endOffset)
     }
-    if (text.isEmpty()) return
+    if (text.isEmpty() || isPureHtmlComment(text)) return
     if (isSingleSvgRoot(text)) {
         PiSvgFenceView(source = text, settled = !LocalPiMarkdownStreaming.current)
         return
     }
     PiHtmlSegments(text = text, settled = !LocalPiMarkdownStreaming.current)
+}
+
+/** Per CommonMark/GFM, bare HTML comments (`<!-- ... -->`) are non-visible and should not render fallback cards. */
+private fun isPureHtmlComment(raw: String): Boolean {
+    var i = 0
+    val n = raw.length
+    var sawComment = false
+    while (i < n) {
+        while (i < n && raw[i].isWhitespace()) i++
+        if (i >= n) break
+        if (!raw.startsWith("<!--", i)) return false
+        val end = raw.indexOf("-->", i + 4)
+        if (end < 0) return false
+        sawComment = true
+        i = end + 3
+    }
+    return sawComment
 }
 
 @Composable
@@ -1732,9 +1757,7 @@ private fun PiCodeSurface(
         val effective = when {
             parsed.language.isNotEmpty() -> app.pi.ui.render.rich.PiFenceSniff.alias(parsed.language)
             settled -> app.pi.ui.render.rich.PiFenceSniff.sniff(code) { text ->
-                runCatching {
-                    if (text.startsWith("{")) org.json.JSONObject(text) else org.json.JSONArray(text)
-                }.isSuccess
+                PiJsonTree.parse(text, settled = true) is JsonTreeResult.Tree
             }
             else -> null
         }
@@ -1751,16 +1774,22 @@ private fun PiCodeSurface(
         return
     }
     val csvFormat = normalized?.let { PiCsvTable.formatForLanguage(it) }
-    if (csvFormat != null) {
-        PiRichCardFrame(code, info, palette) {
-            PiCsvTableView(
-                source = code,
-                format = csvFormat,
-                settled = settled,
-                initialMode = PiTreeMode.Tree,
-            )
+    if (csvFormat != null && settled) {
+        val csvLimits = PiCsvTable.DEFAULT_LIMITS
+        val csvParsed = rememberTreeParse("csv-$csvFormat-${csvLimits.hashCode()}", code, settled) {
+            PiCsvTable.parse(code, csvFormat, settled, csvLimits)
         }
-        return
+        if (csvParsed is CsvParseResult.Table) {
+            PiRichCardFrame(code, info, palette) {
+                PiCsvTableView(
+                    source = code,
+                    format = csvFormat,
+                    settled = settled,
+                    initialMode = PiTreeMode.Tree,
+                )
+            }
+            return
+        }
     }
     if (normalized?.lowercase() in STACK_TRACE_LANGUAGES) {
         PiStackTraceView(source = code, settled = settled)
@@ -1787,22 +1816,31 @@ private fun PiCodeSurface(
     }
     when (kind) {
         RichBlockKind.Json -> {
-            PiRichCardFrame(code, info, palette) {
-                PiJsonTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+            val parsed = rememberTreeParse("json", code, settled) { PiJsonTree.parse(code, settled) }
+            if (parsed is JsonTreeResult.Tree) {
+                PiRichCardFrame(code, info, palette) {
+                    PiJsonTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+                }
+                return
             }
-            return
         }
         RichBlockKind.Xml -> {
-            PiRichCardFrame(code, info, palette) {
-                PiXmlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+            val parsed = rememberTreeParse("xml", code, settled) { PiXmlTreeParser.parse(code, settled) }
+            if (parsed is XmlTreeResult.Tree) {
+                PiRichCardFrame(code, info, palette) {
+                    PiXmlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+                }
+                return
             }
-            return
         }
         RichBlockKind.Yaml -> {
-            PiRichCardFrame(code, info, palette) {
-                PiYamlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+            val parsed = rememberTreeParse("yaml", code, settled) { PiYamlTree.parse(code, settled) }
+            if (parsed is YamlTreeResult.Tree) {
+                PiRichCardFrame(code, info, palette) {
+                    PiYamlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+                }
+                return
             }
-            return
         }
         else -> Unit
     }

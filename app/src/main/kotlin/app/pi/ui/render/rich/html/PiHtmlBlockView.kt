@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
+import app.pi.ui.render.LocalPiCardMenuSlot
 import app.pi.ui.render.PiRichCardFrame
 import app.pi.ui.render.rememberPiHighlightedCode
 import app.pi.ui.render.rich.FenceInfo
@@ -83,8 +84,34 @@ private fun HtmlSourceFallback(
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
-    val info = remember { FenceInfo.parse("html") }
     val highlighted = rememberPiHighlightedCode(source, "html")
+    val inCardFrame = LocalPiCardMenuSlot.current != null
+    if (inCardFrame) {
+        // Already wrapped by PiHtmlFence's PiRichCardFrame: avoid nested double card chrome.
+        Column(modifier = modifier.fillMaxWidth()) {
+            if (!notice.isNullOrEmpty()) {
+                Text(
+                    text = notice,
+                    style = PiTheme.text.monoSmall,
+                    color = palette.muted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
+            if (source.isNotBlank()) {
+                Text(
+                    text = highlighted.text,
+                    style = PiTheme.text.code.copy(
+                        color = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        return
+    }
+    val info = remember { FenceInfo.parse("html") }
     PiRichCardFrame(
         code = source,
         info = info,
@@ -105,25 +132,21 @@ private fun HtmlSourceFallback(
     }
 }
 
-private fun htmlFailureNotice(reason: PiHtmlFailure): String {
+private fun htmlFailureNotice(reason: PiHtmlFailure): String? {
     val limits = PiHtmlDocument.DEFAULT_LIMITS
     val text = when (reason) {
-        PiHtmlFailure.NotSettled -> tr("HTML 还在生成，先显示源码", "HTML still streaming; showing source")
-        PiHtmlFailure.Empty -> tr("HTML 为空，显示原始内容", "HTML is empty; showing raw content")
-        PiHtmlFailure.TooLarge -> tr("HTML 超过 ${limits.maxChars / 1024} KiB，已回退源码", "HTML exceeds ${limits.maxChars / 1024} KiB; showing source")
-        PiHtmlFailure.TooDeep -> tr("HTML 嵌套超过 ${limits.maxDepth} 层，已回退源码", "HTML nesting exceeds ${limits.maxDepth} levels; showing source")
-        PiHtmlFailure.TooManyNodes -> tr("HTML 节点超过 ${limits.maxNodes} 个，已回退源码", "HTML exceeds ${limits.maxNodes} nodes; showing source")
-        PiHtmlFailure.EmptyAfterPolicy -> tr("HTML 安全清理后为空，已回退源码", "HTML empty after sanitization; showing source")
-        PiHtmlFailure.Malformed -> tr("HTML 解析失败，已回退源码", "Invalid HTML; showing source")
+        PiHtmlFailure.NotSettled -> null
+        PiHtmlFailure.Empty -> null
+        PiHtmlFailure.TooLarge -> tr("超过 ${limits.maxChars / 1024} KiB 上限", "Exceeds ${limits.maxChars / 1024} KiB limit")
+        PiHtmlFailure.TooDeep -> tr("嵌套超过 ${limits.maxDepth} 层", "Nesting exceeds ${limits.maxDepth} levels")
+        PiHtmlFailure.TooManyNodes -> tr("节点超过 ${limits.maxNodes} 个", "Exceeds ${limits.maxNodes} nodes")
+        PiHtmlFailure.EmptyAfterPolicy -> tr("无可预览正文内容", "No previewable content")
+        PiHtmlFailure.Malformed -> null
         is PiHtmlFailure.Rejected -> {
             val detail = oneLine(reason.reason, maxChars = 120)
-            if (detail.isEmpty()) {
-                tr("HTML 未通过安全策略，已回退源码", "HTML blocked by safety policy; showing source")
-            } else {
-                tr("HTML 未通过安全策略：$detail", "HTML blocked by safety policy: $detail")
-            }
+            detail.ifEmpty { tr("未通过安全策略", "Blocked by safety policy") }
         }
-    }
+    } ?: return null
     return oneLine(text, maxChars = 180)
 }
 

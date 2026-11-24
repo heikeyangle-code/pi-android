@@ -390,10 +390,13 @@ internal fun Composer(
                                     latestOnSelectionChange(restoredSel)
                                     latestOnDraftChange(prevText)
                                 } else if (rewritten != edit.sequence) {
+                                    val safeRewritten = rewritten.filter { ch ->
+                                        ch == '\n' || ch == '\t' || (!ch.isISOControl() && ch != '\u007f')
+                                    }
                                     val prefix = expectedText.substring(0, edit.prefixLen)
                                     val suffix = expectedText.substring(expectedText.length - edit.suffixLen)
-                                    val nextText = prefix + rewritten + suffix
-                                    val nextCursor = (edit.prefixLen + rewritten.length).coerceIn(0, nextText.length)
+                                    val nextText = prefix + safeRewritten + suffix
+                                    val nextCursor = (edit.prefixLen + safeRewritten.length).coerceIn(0, nextText.length)
                                     val nextSel = TextRange(nextCursor, nextCursor)
                                     fieldState = TextFieldValue(text = nextText, selection = nextSel)
                                     latestOnSelectionChange(nextSel)
