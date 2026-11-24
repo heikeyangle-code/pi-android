@@ -189,19 +189,12 @@ export interface HealthPayload {
 	 */
 	legacyStoragePermissionGranted?: boolean;
 	/**
-	 * The workspace, as the device shell sees it. It is **not** a write boundary any
-	 * more — the shell does not restrict where it writes — so this is positioning
-	 * information only.
-	 *
-	 * `guestPath` is the **engine's** spelling of that directory, i.e. where *this*
-	 * process sees it; `guestPathAliases` also carries the terminal tab's plain
-	 * `/workspace`, which is a different mount of the same host directory
-	 * (`PiEngineHost.guestPathFor` vs `PtyLauncher.guestWorkspace`).
+	 * The active project directory on host (`shellPath`) and inside the Linux guest (`guestPath`).
+	 * Engine, terminal, and file manager all share the exact same `guestPath`.
 	 */
 	workspace?: {
 		shellPath: string | null;
 		guestPath: string;
-		guestPathAliases?: string[];
 		known: boolean;
 	};
 	/** Shizuku (uid 2000 / root) status: the elevated shell backend. */

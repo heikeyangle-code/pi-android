@@ -3,121 +3,59 @@ package app.pi.runtime
 import app.pi.i18n.tr
 
 /**
- * 工作区选择里那一半**不需要 Android** 的规则。
- *
- * ## 为什么这些规则要单独住一个文件
- *
- * 它们原来一个都不在这里：`workspace-N` 的名字正则、label 清洗、以及**「当前工作区是谁」的
- * 裁决**都在 `WorkspaceStore` 的私有函数里，而 `WorkspaceStore` 是 Android 对象（它拿
- * `Context` 去读 pi 的 `settings.json`），所以本机那个 bare-JVM harness 一行都执行不到；
- * 屏幕侧的「点了这一行之后做什么」则是 `ProjectScreen` 里 `onPick` 那个 lambda 的直接分支。
- * 两者都不是小事：
- *
- *  - `decide` 决定**引擎在哪个目录里跑**。它错了，进程就活在一个「设置说 A、引擎跑 B」的
- *    状态里 —— `WorkspaceStore` 的 KDoc 把这个状态点名为「绝不能停在那里的状态」。
- *  - `decidePick` 决定**要不要中断一轮正在跑的回合**。用户点一行就杀一次模型调用是可以说
- *    得过去的，但只能是因为用户被问过；这一支错了，问题就不会出现。
- *
- * 两者都是纯的（String / Boolean / 一个探测 lambda），所以它们搬到这里，由
- * `app/src/test/kotlin/app/pi/runtime/WorkspaceChoiceCheck.kt` 逐个钉死。
- *
- * ## 这里不碰文件系统
- *
- * 「这个目录存在吗 / 是符号链接吗」是 [Look]，由调用方探测后传进来。这样做的直接好处是
- * harness 能构造出设备上很难造的状态（一个符号链接、一个被外部删掉的工作区），而间接好处
- * 是**注释里那句「我们只探测自己创建的名字」变成了可执行的性质**：[decide] 只在名字通过
- * [isOwned] 之后才调用那个 lambda。
+ * Pure, Android-free rules for project naming, selection, validation, and session grouping.
  */
 object WorkspaceChoice {
 
-    /**
-     * 默认编号名 `workspace-N`（自动命名与排序用；根下合法目录名的判据是 [nameProblem]）。
-     *
-     * 刻意是模式而不是「任何子目录」：`pi/workspaces` 里也可能有用户自己放进去的目录，而
-     * 这个名字集合同时是**删除的许可范围**（`WorkspaceStore.previewDelete`/`delete` 都先问
-     * 它）。数字位数封顶 6 位，好让 `toInt()` 不会溢出。
-     */
-    private val OWNED = Regex("^workspace-([1-9][0-9]{0,5})$")
-
-    /** 名字里那个数字的上限，也就是 [nextFreeName] 搜索空间的边界。 */
-    const val MAX_NUMBER: Int = 999_999
-
-    /**
-     * 显示名的长度上限。
-     *
-     * 这是一个**渲染**问题而不是数据问题：显示名只出现在一行/一张卡上，超过一行字宽的部分
-     * 谁也读不到，而把它截在写入侧意味着列表、切换面板、通知三处印的是同一个名字。
-     */
+    /** Maximum characters for a custom project display label. */
     const val MAX_LABEL_CHARS: Int = 40
 
-    /** 用户起的目录名长度上限（一个目录名，不是路径）。 */
+    /** Maximum characters for a single sandbox project directory name. */
     const val MAX_NAME_CHARS: Int = 64
 
     /**
-     * 一个**项目目录名**能不能用，不能用就返回给人看的那句话，能用返回 null。
-     *
-     * pi 里项目就是一个目录（cwd）：会话头记它、信任库按它记，名字是用户的自由，所以这里
-     * 只挡真会出事的：路径分隔与控制字符（一个名字不能变成两级目录、也不能逃出根）、`.`/`..`、
-     * 前导点（`.pi` 这类隐藏目录是 pi 自己的）、首尾空白或结尾的点（同一个名字印出来看不见
-     * 差别）、超长。**不再**要求 `workspace-N` 的形状。
+     * Validates a sandbox project directory name under `/root/projects/`.
+     * Returns a user-facing error message, or `null` when valid.
      */
     fun nameProblem(raw: String): String? = when {
         raw.isEmpty() -> tr("名字不能为空。", "Name cannot be empty.")
-        raw.any { it == '/' || it == '\\' || it == '\u0000' || it.isISOControl() } -> tr("名字里不能有 / \\ 或控制字符。", "Name cannot contain /, \\, or control characters.")
-        raw == "." || raw == ".." -> tr("「$raw」不能当目录名。", "\"$raw\" cannot be used as a directory name.")
-        raw.startsWith('.') -> tr("不能以点开头（. 开头的是隐藏目录，pi 的 .pi 就在里面）。", "Name cannot start with a dot (hidden directories).")
-        raw != raw.trim() || raw.endsWith('.') -> tr("名字首尾不能是空格，结尾也不能是点。", "Name cannot start/end with spaces or end with a dot.")
-        raw.length > MAX_NAME_CHARS -> tr("名字最多 $MAX_NAME_CHARS 个字符。", "Name must be at most $MAX_NAME_CHARS characters.")
+        raw.any { it == '/' || it == '\\' || it == '\u0000' || it.isISOControl() } ->
+            tr("名字里不能有 / \\ 或控制字符。", "Name cannot contain /, \\, or control characters.")
+        raw == "." || raw == ".." ->
+            tr("「$raw」不能当目录名。", "\"$raw\" cannot be used as a directory name.")
+        raw.startsWith('.') ->
+            tr("不能以点开头（. 开头的是隐藏目录，pi 的 .pi 就在里面）。", "Name cannot start with a dot (hidden directories).")
+        raw != raw.trim() || raw.endsWith('.') ->
+            tr("名字首尾不能是空格，结尾也不能是点。", "Name cannot start/end with spaces or end with a dot.")
+        raw.length > MAX_NAME_CHARS ->
+            tr("名字最多 $MAX_NAME_CHARS 个字符。", "Name must be at most $MAX_NAME_CHARS characters.")
         else -> null
     }
 
     /**
-     * 名字是不是**根目录下的一个项目目录**（[nameProblem] 通过）。外部目录登记的是绝对路径，
-     * 带 `/`，所以天然不是。这个判据同时是**删除的许可范围**：根下的东西都是本应用管的，
-     * 根外的（外部登记）永远只取消登记、不删文件。
+     * True when [name] is a valid single-segment project directory directly inside `/root/projects/`.
+     * Registered external/custom paths always start with `/` and therefore return `false`.
      */
     fun isOwned(name: String): Boolean = nameProblem(name) == null
 
     /**
-     * `workspace-7` 里的那个 7；不是我们的名字就是 null。
-     *
-     * 列表按它排序（`WorkspaceStore.list`），于是「`workspace-10` 排在 `workspace-9` 之后」
-     * 由这里保证，而不是每个调用点各自 `substringAfterLast('-').toInt()` 保证 —— 那种写法在
-     * 连字符后面不是数字时会抛，而这个名字可以来自设置文件。
+     * Generates a clean default folder name (`project`, `project-2`, `project-3`, ...) that does not
+     * collide with [existing]. Used only if a caller asks to create a sandbox project without specifying a name.
      */
-    fun number(name: String): Int? = OWNED.find(name)?.groupValues?.get(1)?.toIntOrNull()
-
-    /**
-     * [existing] 之外最小的空闲编号，拼成 `workspace-N`；1..[MAX_NUMBER] 全占满时 null。
-     *
-     * 从 1 开始往上找**第一个空位**，不是「最大编号 + 1」：被删掉的 `workspace-2` 应该被
-     * 下一个新建的工作区补上，否则一个列表里删删建建几次之后，编号会长到没人愿意念。
-     * 不认识的名字直接忽略 —— 它们不占位，因为 [isOwned] 说不出它们是什么。
-     */
-    fun nextFreeName(existing: Collection<String>): String? {
-        val used = existing
-            .mapNotNull { number(it) }
-            .toHashSet()
-        return (1..MAX_NUMBER).firstOrNull { it !in used }?.let { "workspace-$it" }
+    fun nextDefaultProjectName(existing: Collection<String>): String {
+        val used = existing.map { it.lowercase() }.toHashSet()
+        if ("project" !in used) return "project"
+        var index = 2
+        while ("project-$index" in used) index++
+        return "project-$index"
     }
 
-    /**
-     * 一个 label 的清洗，null 表示「没有 label」。
-     *
-     * 去控制字符（一个 `\n` 会把一行撑成两行，而列表行高是算好的）、去首尾空白（否则
-     * 「abc 」与「abc」是两个不同的名字却印成一样）、截到 [MAX_LABEL_CHARS]。
-     * 清完是空的就是 null：调用方把那当成「清掉 label，显示目录名」，而不是一个空名字。
-     */
+    /** Sanitizes a custom display label; returns `null` when empty. */
     fun label(raw: String): String? =
         raw.filterNot { it.isISOControl() }.trim().take(MAX_LABEL_CHARS).ifEmpty { null }
 
     /**
-     * 一行、一张卡、一条通知该印什么：label 优先，空白 label 退回目录名。
-     *
-     * **这是全应用唯一一处「当前工作区叫什么」的算法**。它存在的理由是一次真实的矛盾：
-     * ① 卡曾经用「当前会话头部记的 cwd」推名字（`PiProject.workspaceName`），而切换面板用的是
-     * 目录名/label，于是同一个工作区在两处印出两个名字（改过 label 之后是 `我的项目` 与
-     * `workspace-2`），切完的头一两秒还会印着**上一个**工作区的名字。
+     * Single source of truth for displaying a project's human-readable name.
      */
     fun displayName(name: String, label: String?): String {
         val custom = label?.trim()?.takeIf { it.isNotEmpty() && it != name }
@@ -131,14 +69,18 @@ object WorkspaceChoice {
     }
 
     /**
-     * 会话列表里一组的标题：一个 **guest** cwd 该印成什么名字。
+     * Formats the group heading for a Pi session's recorded guest `cwd`.
      */
-    fun sessionGroupLabel(cwd: String, workspacesRoot: String, labels: Map<String, String>): String {
+    fun sessionGroupLabel(
+        cwd: String,
+        projectsRootGuest: String = GuestWorkspacePath.PROJECTS_ROOT_GUEST,
+        labels: Map<String, String>,
+    ): String {
         val raw = cwd.trim()
         if (raw.isEmpty()) return tr("工作目录未记录", "Working directory not recorded")
         val clean = raw.trimEnd('/')
         if (clean.isEmpty()) return "/"
-        val root = workspacesRoot.trimEnd('/')
+        val root = projectsRootGuest.trimEnd('/')
         val prefix = "$root/"
         if (clean.startsWith(prefix)) {
             val leaf = clean.removePrefix(prefix)
@@ -146,39 +88,11 @@ object WorkspaceChoice {
                 return displayName(leaf, labels[leaf])
             }
         }
-        // Check custom labels for external project directories (both direct `/storage/...` and legacy `/workspace/storage/...`).
         labels[clean]?.takeIf { it.isNotBlank() }?.let { return it }
-        if (clean.startsWith("${GuestWorkspacePath.GUEST_ROOT}/")) {
-            val unprefixed = "/" + clean.removePrefix("${GuestWorkspacePath.GUEST_ROOT}/")
-            labels[unprefixed]?.takeIf { it.isNotBlank() }?.let { return it }
-        }
         return clean.substringAfterLast('/').ifEmpty { clean }
     }
 
-    // ------------------------------------------------------------ 外部工作区
-
-    // `isExternal(hostPath, filesRoot)` was here until 2026-09-23. It answered "is this
-    // directory outside the app's own tree" **by position**, and it had no production
-    // caller: the decision that actually gets made — "does deleting this workspace delete
-    // files?" — is `deleteRemovesFiles(name)` below, and it answers **by name**, because
-    // only names this app minted are ours to delete. The function had drifted with the
-    // layout too: after the workspace moved into the rootfs, its `filesRoot` argument would
-    // have judged every app-owned workspace *external*, which is the direction that loses
-    // no data but silently stops deleting. Deleting the function removes both the dead code
-    // and the trap; if a position-based question is ever needed again, `PiPaths.workspaces`
-    // is the root to compare against, not the files directory.
-
-    /**
-     * 设备的哪个存储卷根可以给用户选，以及要不要「所有文件访问」。
-     *
-     * [primary] 是主共享存储（`Environment.getExternalStorageDirectory()`），[removable] 是可移除卷
-     * 的根（`StorageManager.storageVolumes` 里 `isRemovable` 的那些）。**顺序与去重在这里定**：
-     * 主存储永远第一（它是用户唯一肯定有的那个），可移除卷按调用方给的顺序跟在后面，重复的根只留
-     * 一次 —— 同一张卡在 `storageVolumes` 里出现两次不是没见过的事，而两个一样的根在列表里
-     * 就是两行一样的字。
-     *
-     * 空白的根被丢掉：一个空字符串在界面上是一行点不动的空行。
-     */
+    /** Deduplicated, ordered device storage volume roots (primary shared storage first). */
     fun volumeRoots(primary: String?, removable: List<String>): List<String> {
         val out = LinkedHashSet<String>()
         (listOfNotNull(primary) + removable).forEach { raw ->
@@ -189,19 +103,7 @@ object WorkspaceChoice {
     }
 
     /**
-     * 用户点了「就选这个目录」时，**为什么不能选**；null 表示可以选。
-     *
-     * 每一条拒绝都要给一句原因，因为静默置灰的按钮就是这个仓库反复记账的那种「看起来在跑」。
-     * 规则分三档：
-     *
-     *  - **不是用户内容**：`/`、`/system`、`/data`、`/vendor`、`/apex`、`/proc`、`/sys`、`/dev`、
-     *    `/etc`、`/root` 以及 `/storage` 本身。这些要么是 Android 的系统树（选它等于把
-     *    `rm -rf` 指向系统），要么根本不是目录。判据按**段**比较，所以 `/datax` 不在其中。
-     *  - **必须是某个存储卷里的目录**（[volumeRoots] 的那些根之一，或它们下面）。这样「同一张
-     *    卡的两个拼法」不会一边能选一边不能选。
-     *  - **必须真的读得到**：[readable] 由调用方探测（`listFiles()` 非 null），因为 Android 上
-     *    「有权限」与「这个目录现在能用」是两件事（SD 卡刚拔、卷正在卸载）。空目录是合法工作区，
-     *    所以「读得到但里面没东西」不是拒绝的理由。
+     * Explains why a host storage directory cannot be picked as an external project, or `null` if allowed.
      */
     fun pickRefusal(path: String, volumes: List<String>, readable: Boolean): String? {
         val clean = path.trim().trimEnd('/').ifEmpty { "/" }
@@ -215,111 +117,64 @@ object WorkspaceChoice {
         }
         val inVolume = volumes.any { volume -> clean == volume || clean.startsWith("$volume/") }
         if (!inVolume) {
-            val where = volumes.joinToString(tr("、", ", ")).ifEmpty { tr("（这台设备没报告任何存储卷）", "(no storage volumes reported)") }
+            val where = volumes.joinToString(tr("、", ", "))
+                .ifEmpty { tr("（这台设备没报告任何存储卷）", "(no storage volumes reported)") }
             return tr("只能选存储卡或共享存储里的目录（当前可用：$where）。", "Only directories under shared storage or SD card are allowed ($where).")
         }
-        if (!readable) return tr("这个目录现在读不到（可能是存储卡被拔出、正在卸载，或缺少权限），请换一个。", "This directory is not readable right now (storage unmounted or missing permission).")
+        if (!readable) {
+            return tr("这个目录现在读不到（可能是存储卡被拔出、正在卸载，或缺少权限），请换一个。", "This directory is not readable right now (storage unmounted or missing permission).")
+        }
         return null
     }
 
     /**
-     * 外部工作区在 guest 里的拼法 —— 与内部工作区**同一条规则**（`GuestWorkspacePath.under`：
-     * 某个基底镜像在 `/workspace`，工作区就是去掉那个前缀之后剩下的路径）。
-     *
-     * 基底由调用方给：`PiPaths.workspaceBase`（`<rootfs>/workspace`）。**它不是 files 目录**
-     * —— 2026-09-23 工作区搬进 rootfs 时基底跟着换过，而 guest 拼写一个字没变。
-     *
-     * 这一个薄门存在的唯一理由是**它要能被 harness 执行**：规则本身在 `GuestWorkspacePath`，
-     * 这里只把「外部工作区也走同一条规则」这件事记下来，免得有人以为外部目录要另配一个挂载点。
-     * 举例：`/storage/emulated/0/Foo` 在 guest 里是 `/workspace/storage/emulated/0/Foo`；
-     * pi 的项目设置因此是那个目录里的 `.pi/settings.json`（`PiProjectConfig.root`），
-     * 这正是 pi 的语义：项目设置跟着 cwd 走。
+     * Maps a host path to its canonical guest path via [GuestWorkspacePath.hostToGuest].
      */
-    fun guestPathOf(hostPath: String, base: String): String =
-        GuestWorkspacePath.under(base, hostPath)
+    fun guestPathOf(hostPath: String, rootfsPath: String): String =
+        GuestWorkspacePath.hostToGuest(rootfsPath, hostPath)
 
     /**
-     * 反过来：pi 在会话头里记的 **guest cwd** 属于哪个工作区。
-     *
-     * 为什么需要它：会话列表是**按 cwd 分组**的（`SessionsScreen` 的 `groupBy { it.cwd }`），
-     * 所以用户能点开一段属于别的工作区的对话。pi 的 `switch_session` 会"用会话自己的 cwd
-     * 重建整套 cwd 相关服务"（`agent-session-runtime.ts:204-224`），也就是说**引擎已经切过去了**，
-     * 而 App 的工作区状态、终端、`@` 补全、包命令还停在原地 —— 两个真相。这个函数就是让 App
-     * 把另一半对齐：把 cwd 翻译回工作区名字（自建的 `workspace-N`）或外部目录的绝对路径。
-     *
-     * @param rootRelative `WorkspaceStore.ROOT_RELATIVE`（`pi/workspaces`），由调用方给，
-     *   这样这个函数不依赖任何常量、能在裸 JVM 上被 harness 执行。
-     * @return 工作区名字；`null` 表示这个 cwd 不是本应用的工作区（例如用户自己 `cd` 出去的
-     *   目录、或会话来自别的安装），此时**不要**改当前工作区。
+     * Maps a guest `cwd` recorded in a Pi session header back to a project identity:
+     *  - Direct child of `/root/projects/<name>` -> `<name>` (owned project).
+     *  - Under `/storage/...` or `/sdcard/...` -> same host path.
+     *  - Under `/mnt/external/<host>` -> `/<host>`.
+     *  - Any other rootfs directory -> `null` (caller resolves via `hostDirForGuestCwd`).
      */
-    fun nameForGuestCwd(guestCwd: String, rootRelative: String): String? {
-        val root = GuestWorkspacePath.GUEST_ROOT
-        if (guestCwd == root) return null
-        val prefix = "$root/"
-        if (guestCwd.startsWith(prefix)) {
-            val rest = guestCwd.removePrefix(prefix)
-            val owned = "$rootRelative/"
-            if (rest.startsWith(owned)) {
-                val name = rest.removePrefix(owned)
-                // 只认**直接**在 `pi/workspaces/` 下的一层；`workspace-1/sub` 不是另一个工作区。
-                return name.takeIf { it.isNotEmpty() && !it.contains('/') }
-            }
-            // 外部工作区：guest 拼法是 `GuestWorkspacePath.under` 的产物，也就是 `/workspace` +
-            // 宿主绝对路径，所以去掉 `/workspace` 前缀就回到宿主路径。
-            val hostPath = "/" + rest
+    fun nameForGuestCwd(
+        guestCwd: String,
+        projectsRootGuest: String = GuestWorkspacePath.PROJECTS_ROOT_GUEST,
+    ): String? {
+        val clean = guestCwd.trim().trimEnd('/')
+        if (clean.isEmpty() || clean == "/") return null
+        val rootPrefix = projectsRootGuest.trimEnd('/') + "/"
+        if (clean.startsWith(rootPrefix)) {
+            val leaf = clean.removePrefix(rootPrefix)
+            return leaf.takeIf { it.isNotEmpty() && !it.contains('/') && isOwned(it) }
+        }
+        val externalPrefix = GuestWorkspacePath.EXTERNAL_MOUNT_ROOT.trimEnd('/') + "/"
+        if (clean.startsWith(externalPrefix)) {
+            val hostPath = "/" + clean.removePrefix(externalPrefix)
             return hostPath.takeIf { it.length > 1 }
         }
-        // **旧拼法**：2026-09-23 工作区搬进 rootfs 之前，pi 记的 cwd 是宿主路径
-        // （`<files>/pi/workspaces/workspace-1`）。这些会话还在用户的列表里，点开它们时
-        // pi 会按这个 cwd 重建运行时（目录仍在），而 App 这边必须同样认得出它是哪个工作区
-        // —— 否则芯片就停在旧工作区（用户报的「文件都换了、芯片没换」）。
-        val marker = "/$rootRelative/"
-        val at = guestCwd.lastIndexOf(marker)
-        if (at >= 0) {
-            val name = guestCwd.substring(at + marker.length)
-            return name.takeIf { it.isNotEmpty() && !it.contains('/') }
-        }
-        // 旧拼法里的**外部**工作区就是它的宿主绝对路径；只有存储卷下的路径才认
-        // （系统目录不是工作区，`existing()` 还会再校验一次）。
-        return guestCwd.takeIf {
+        return clean.takeIf {
             it.length > 1 && (it.startsWith("/storage/") || it.startsWith("/sdcard/"))
         }
     }
 
     /**
-     * 删一个工作区时，磁盘上的文件会不会一起消失。
-     *
-     * **只有名字是本应用创建的（`workspace-N`）才删文件**；外部目录永远只是「取消登记」。
-     * 这是这条产品决定唯一的判据，所以它在这里有一个名字，由 harness 钉住：一个根据路径长相
-     * 临时决定的实现，会在某次重构里把 `rm -rf` 指向用户的相册。
+     * Only owned sandbox projects under `/root/projects/` delete files from disk when removed.
+     * Registered external / custom directories are only unregistered; their files are never touched.
      */
     fun deleteRemovesFiles(name: String): Boolean = isOwned(name)
 
-    // ---------------------------------------------------------------- 当前工作区
-    /**
-     * 目录探测的结果，由调用方给出（见类 KDoc）。
-     *
-     * 两项都要：一个指向目录的符号链接 `isDirectory` 是真的，而它是被拒绝的那一种
-     * —— 工作区同时是设备 shell 的写边界和引擎的 cwd，两者都该描述一个本应用拥有的真实目录。
-     */
     data class Look(val isDirectory: Boolean, val isSymlink: Boolean)
 
-    /**
-     * 「当前工作区是谁」，以及为了得到这个答案所做的纠正。
-     *
-     * [requested] 是设置文件里写的那个名字（null 表示它什么都没写，或者写的全是空白），
-     * [note] 非 null **当且仅当** [name] 不是用户选的那个 —— 这张表由 [decide] 的五种返回
-     * 一一对应，调用方要做的就是有 note 就把它印出来。
-     */
     sealed interface Current {
         val name: String
         val requested: String?
-
-        /** 非 null 就是要给用户看的那句话；null 表示「就是用户选的那个」。 */
         val note: String?
     }
 
-    /** [Current] 的正常路径：设置里那个名字可用，或者压根没有选择（第一次启动）。 */
     data class Chosen(
         override val name: String,
         override val requested: String?,
@@ -327,40 +182,15 @@ object WorkspaceChoice {
         override val note: String? get() = null
     }
 
-    /** [Current] 的纠正路径：设置里那个名字不可用，已回到默认工作区，[note] 说明为什么。 */
     data class Fallback(
         override val name: String,
         override val requested: String?,
         override val note: String,
     ) : Current
 
-    /**
-     * 裁决：设置里写的 [requested] 该不该被采纳。
-     *
-     * 四条规则的**顺序**是判定的一部分，不是风格：
-     *
-     *  1. 没写 / 空白 → 默认工作区，且**不是**一次纠正（第一次启动不该弹一句话）。
-     *  2. 既不是本应用创建的名字（`workspace-N`）也不是已登记的外部目录 → 默认工作区。这一支
-     *     在任何目录探测**之前**，所以 `../..` 这类值根本到不了 `look`（见类 KDoc）。
-     *  3. 符号链接 → 默认工作区。在「存在吗」之前，因为一个指向目录的链接是存在的。
-     *  4. 目录不存在 → 默认工作区，但**默认工作区自己不存在时不是纠正**：那是第一次启动，
-     *     每条启动路径都会当场建它（`GuestWorkspacePath.ensureHost`），所以这里只说
-     *     「名字就是这个」，不说「被删了」。
-     *
-     * [externals] 是**已登记的外部工作区路径**（`app.workspace.external` 的读数）。它必须参与
-     * 第 2 条，否则用户切到设备目录之后重启一次就会被「不是本应用创建的工作区」踢回默认工作区
-     * —— 而那句解释还是错的：那个目录是他自己选的，不是坏值。
-     *
-     * 只做判定，不写任何东西：写回设置是 [WorkspaceStore.refresh] 的事，而它只在这个答案
-     * 与设置不一致时才写。
-     */
     fun decide(
         requested: String?,
         defaultName: String,
-        // Before `look`, deliberately: callers pass the probe as a **trailing lambda**
-        // (`decide(requested, DEFAULT) { ... }`), and a trailing lambda binds to the last
-        // parameter whatever its type — a new parameter after `look` silently rebinds every
-        // such call site to it.
         externals: Collection<String> = emptySet(),
         look: (String) -> Look,
     ): Current {
@@ -396,46 +226,13 @@ object WorkspaceChoice {
         return Chosen(name, name)
     }
 
-    // ---------------------------------------------------------------- 点了某一行
-
-    /**
-     * 用户点了切换面板里的一行之后，屏幕该做什么。
-     *
-     * `Refused`/`Failed` 是 ViewModel 推的通知，屏幕不拼第二句（见 `ProjectScreen.switchWorkspaceTo`
-     * 的 KDoc），所以那两条不在这个表里。
-     */
     sealed interface Pick {
-        /**
-         * 那一行现在读不到（SD 卡拔出、卷正在卸载、权限被撤销、目录被删）：一句话，引擎不动。
-         *
-         * 这一支必须**最先**判。它在列表里看得见 —— 那正是它存在的理由：一个工作区不见了，用户
-         * 需要看到「它还在，只是现在拿不到」，而不是那一行凭空消失（那会让人以为注册丢了）。
-         */
         object Unavailable : Pick
-
-        /** 点的就是当前工作区：一句话，引擎一下都不碰。 */
         object AlreadyHere : Pick
-
-        /**
-         * 别的工作区，但正有一轮在跑：先问一次。
-         *
-         * pi 的一轮是「一次模型调用 + 一串工具调用」，切工作区要重启进程，也就是把这一轮
-         * 从中间掐掉。`switchWorkspace` 默认 `allowInterrupt = true`，所以那个「是」必须
-         * 由用户说出来 —— 这一支就是问话的那一格。
-         */
         object ConfirmInterrupt : Pick
-
-        /** 直接切。 */
         object Switch : Pick
     }
 
-    /**
-     * 四条判定，顺序是判定的一部分：**先看那一行现在能不能用**，再看是不是当前工作区。
-     *
-     * 反过来的话有两处错：读不到的当前工作区会得到「已经在这个工作区里」（而引擎其实跑在别处，
-     * 因为启动时已经按回退规则回到默认工作区）；回合正跑着时点当前那一行会得到「会中断正在运行
-     * 的回合」这句警告，而那一行根本不会中断任何东西 —— 一句吓人的、而且不真的话。
-     */
     fun decidePick(isCurrent: Boolean, turnRunning: Boolean, available: Boolean = true): Pick = when {
         !available -> Pick.Unavailable
         isCurrent -> Pick.AlreadyHere

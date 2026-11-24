@@ -1666,9 +1666,9 @@ When the user declines, stop — do not route around it.
 
 | path | what it is |
 |---|---|
-| /workspace | the workspace (engine and terminal mount it separately) |
-| /sdcard | shared phone storage (directly accessible via \`read\`/\`write\`/\`bash\`) |
-| ~/.pi/agent | pi's agent dir (SYSTEM.md, skills/, device-bridge.json) |
+| ~/projects | sandbox projects inside Linux rootfs (fast local ext4/f2fs; default \`~/projects/default\`) |
+| /sdcard | shared phone storage (\`/storage/emulated/0\`, directly accessible via \`read\`/\`write\`/\`bash\`) |
+| ~/.pi/agent | pi's agent dir (\`settings.json\`, \`auth.json\`, \`sessions/\`, \`skills/\`, \`extensions/\`) |
 
 - Guest work (git, npm, builds, local files) uses pi's standard \`read\`/\`write\`/\`bash\`, never \`android_shell\`.
 ${shellSection}`;

@@ -128,7 +128,7 @@ class SecurityAndHostTest {
             val paths = PiPaths(filesDir = dir, nativeLibDir = nativeLib)
             paths.rootfs.mkdirs()
             val guestArgv = SdkHostLaunch.argv(
-                cwd = "/workspace/pi/workspaces/default",
+                cwd = "/root/projects/default",
                 agentDir = "/root/.pi/agent",
                 sessionDir = "/root/.pi/agent/sessions",
                 piDir = "/opt/pi/node_modules/@earendil-works/pi-coding-agent",
@@ -143,7 +143,7 @@ class SecurityAndHostTest {
                     paths = paths,
                     engine = engine,
                     guestArgv = guestArgv,
-                    cwd = "/workspace/pi/workspaces/default",
+                    cwd = "/root/projects/default",
                     storage = null,
                 )
                 assertFalse("Direct argv for $engine must not spawn /bin/bash: $built", built.contains("/bin/bash"))

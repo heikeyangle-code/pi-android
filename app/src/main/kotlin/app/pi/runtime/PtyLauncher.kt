@@ -43,10 +43,7 @@ object PtyLauncher {
         val paths = pathsFor(context)
         val storage = android.os.Environment.getExternalStorageDirectory()
         val workspace = workspaceHost(context)
-        val projectGuestPath = GuestWorkspacePath.under(
-            paths.workspaceBase.absolutePath,
-            workspace.absolutePath,
-        )
+        val projectGuestPath = GuestWorkspacePath.hostToGuest(paths.rootfs, workspace)
         val targetGuestCwd = guestCwdOverride
             ?.trim()
             ?.takeIf { it.startsWith("/") }

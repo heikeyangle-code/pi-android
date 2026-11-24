@@ -400,7 +400,7 @@ internal object GuestImageBytes {
             if (f == null) return
             runCatching { f.canonicalPath }.getOrNull()?.let { add(it) }
         }
-        addCanon(paths.workspaceBase)
+        addCanon(paths.projectsRoot)
         addCanon(File(paths.rootfs, "tmp"))
         addCanon(File(paths.rootfs, "var/tmp"))
         addCanon(runCatching { app.pi.runtime.WorkspaceStore.currentHost(context) }.getOrNull())
@@ -693,7 +693,6 @@ internal object GuestImageBytes {
             nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
         )
         val roots = GuestPathRoots(
-            workspaceBase = paths.workspaceBase.absolutePath,
             rootfs = paths.rootfs.absolutePath,
             agentDir = paths.agentDir.absolutePath,
             workspaceHost = runCatching { PtyLauncher.workspaceHost(context).absolutePath }.getOrNull(),

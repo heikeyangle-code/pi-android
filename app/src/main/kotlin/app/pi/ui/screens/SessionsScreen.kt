@@ -244,16 +244,12 @@ fun SessionsScreen(
     val workspaceLabels by produceState(emptyMap<String, String>(), labelsKey) {
         value = withContext(Dispatchers.IO) { WorkspaceStore.labels(context) }
     }
-    val workspacesRoot = GuestWorkspacePath.GUEST_ROOT + "/" + GuestWorkspacePath.ROOT_RELATIVE
+    val workspacesRoot = GuestWorkspacePath.PROJECTS_ROOT_GUEST
     val currentCwds = remember(sessionSlice.workspaceGuestPath, sessionSlice.workspaceHostPath) {
         buildList {
             add(sessionSlice.workspaceGuestPath.trimEnd('/'))
             sessionSlice.workspaceHostPath?.let { host ->
-                val clean = host.trimEnd('/')
-                add(clean)
-                if (clean.startsWith("/storage/") || clean.startsWith("/sdcard/")) {
-                    add(GuestWorkspacePath.GUEST_ROOT + clean)
-                }
+                add(host.trimEnd('/'))
             }
         }.distinct()
     }

@@ -1042,7 +1042,7 @@ class PiEngineHost(private val appContext: Context) {
      * drifted apart before.
      */
     private fun guestPathFor(host: File): String =
-        GuestWorkspacePath.under(paths.workspaceBase.absolutePath, host.absolutePath)
+        GuestWorkspacePath.hostToGuest(paths.rootfs, host)
 
     companion object {
         /** Log tag for the proroot launch/reap bookkeeping; nothing else in here logs. */

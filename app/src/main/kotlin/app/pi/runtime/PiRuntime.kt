@@ -48,33 +48,14 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
     val agentDir: File get() = File(rootfs, DurableLayout.AGENT_IN_ROOTFS)
 
     /**
-     * The base [GuestWorkspacePath] treats as the guest's `/workspace`: `<rootfs>/workspace`.
+     * The sandbox projects root: `<rootfs>/root/projects`, which **is** the guest's
+     * `/root/projects` (`~/projects`, since guest `HOME=/root`).
      *
-     * Every workspace path in the app is derived from this one value, and it is the *only*
-     * thing that changed when the workspace moved into the rootfs (2026-09-23). The guest
-     * spelling did not change at all: `<rootfs>/workspace/pi/workspaces/<name>` is exactly
-     * the `/workspace/pi/workspaces/<name>` pi already had as its cwd — which matters,
-     * because pi's project trust keys are `canonicalizePath(cwd)` and a changed spelling
-     * would silently drop every project-level skill, prompt, theme and extension.
+     * Lives inside the rootfs so every sandbox project resolves natively with **no bind**,
+     * keeping `git`, `npm`, `gcc`, and `scandir`/`mkstemp` fast and defect-free under all
+     * container engines, and preserved across runtime rebuilds by [DurablePreserve].
      */
-    val workspaceBase: File get() = File(rootfs, DurableLayout.WORKSPACE_BASE_IN_ROOTFS)
-
-    /**
-     * The workspace root: `<rootfs>/workspace/pi/workspaces`, one directory per workspace —
-     * which is the guest's `/workspace/pi/workspaces`.
-     *
-     * The engine's cwd (`/workspace/pi/workspaces/<name>`, [GuestWorkspacePath.RELATIVE])
-     * therefore resolves through the rootfs with **no bind at all**, and that is what makes
-     * `git` work inside a workspace again: `.git/tXXXXXX` is created in the workspace, and
-     * proroot's `scandir`/`mkstemp`/`mkdtemp` fail anywhere under a bind whose host source
-     * is an app-private directory.
-     *
-     * The terminal keeps a second, shorter spelling of *one* workspace — `/workspace`
-     * ([GuestWorkspacePath.TERMINAL_GUEST_PATH]) — and that one is still a bind
-     * (`PtyLauncher`), because it names a different path for the same directory and only a
-     * bind can do that. Its host side is inside the rootfs now too.
-     */
-    val workspaces: File get() = File(workspaceBase, GuestWorkspacePath.ROOT_RELATIVE)
+    val projectsRoot: File get() = File(rootfs, DurableLayout.PROJECTS_IN_ROOTFS)
 
     /**
      * This app's own durable directory: `<files>/pi/persist`.
@@ -193,7 +174,7 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
         GuestConfigTarget("etc/resolv.conf", directory = false),
         GuestConfigTarget("etc/hosts", directory = false),
         GuestConfigTarget(DurableLayout.AGENT_IN_ROOTFS, directory = true),
-        GuestConfigTarget(DurableLayout.WORKSPACE_BASE_IN_ROOTFS, directory = true),
+        GuestConfigTarget(DurableLayout.PROJECTS_IN_ROOTFS, directory = true),
     )
 
     /**

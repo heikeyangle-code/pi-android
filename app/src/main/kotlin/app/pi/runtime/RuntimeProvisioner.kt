@@ -1787,11 +1787,11 @@ class RuntimeProvisioner(
 
         // pi's home inside the guest: the same layout a desktop install has, so
         // settings, skills, extensions and themes are interchangeable. `paths.agentDir` and
-        // `paths.workspaceBase` are the *same* two spellings `PiPaths.guestConfigTargets()`
+        // `paths.projectsRoot` are the *same* two spellings `PiPaths.guestConfigTargets()`
         // checks, so "the function that writes them" and "the function that asks whether they
         // are missing" cannot drift into two different directories.
         paths.agentDir.mkdirs()
-        paths.workspaceBase.mkdirs()
+        paths.projectsRoot.mkdirs()
     }
 
     /**

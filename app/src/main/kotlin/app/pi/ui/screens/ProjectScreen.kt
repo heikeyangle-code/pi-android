@@ -445,11 +445,6 @@ fun ProjectScreen(
                 val direct = allowed(File(raw))
                 if (direct != null && direct.exists()) return WorkspaceSessionFile(direct, workspaceDisplayPath(workspace, direct))
             }
-            // Legacy `/workspace/storage/...` guest spelling
-            if (raw.startsWith("/workspace/storage/") || raw.startsWith("/workspace/sdcard/")) {
-                val direct = allowed(File(raw.removePrefix("/workspace")))
-                if (direct != null && direct.exists()) return WorkspaceSessionFile(direct, workspaceDisplayPath(workspace, direct))
-            }
             val guest = raw.trimStart('/')
             if (guest.isNotEmpty()) {
                 val candidate = allowed(File(guestRootfs, guest))
@@ -757,12 +752,10 @@ fun ProjectScreen(
                         val currentEntry = remember(workspaceEntries, state.workspace.name) {
                             workspaceEntries.firstOrNull { it.name == state.workspace.name }
                         }
-                        val prettyPath = remember(currentEntry, state.workspace.relative, state.workspace.guestPath) {
-                            when {
-                                currentEntry?.external == true -> currentEntry.host.absolutePath
-                                state.workspace.isExternal -> state.workspace.hostPath ?: state.workspace.relative
-                                else -> "~/projects/" + state.workspace.name
-                            }
+                        val prettyPath = remember(currentEntry, state.workspace.guestPath) {
+                            app.pi.runtime.GuestWorkspacePath.shortenForDisplay(
+                                currentEntry?.guestPath ?: state.workspace.guestPath,
+                            )
                         }
                         WorkspaceHeroCard(
                             workspaceName = workspaceName,
@@ -1334,7 +1327,7 @@ fun ProjectScreen(
                 inputDialog = WorkspaceInputDialog(
                     kind = WorkspaceInputKind.RenameWorkspace,
                     title = tr("重命名项目", "Rename Project"),
-                    where = if (entry.external) entry.host.absolutePath else "~/projects/${entry.name}",
+                    where = app.pi.runtime.GuestWorkspacePath.shortenForDisplay(entry.guestPath),
                     relativeParent = null,
                     absoluteParent = null,
                     initial = entry.displayName,

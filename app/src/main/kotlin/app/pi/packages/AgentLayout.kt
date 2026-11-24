@@ -67,9 +67,9 @@ class AgentLayout(
      * `hasTrustRequiringProjectResources(cwd)` inspects `<cwd>/.pi`, both using
      * the **guest** cwd — which is also the key pi writes into `trust.json`.
      */
-    val guestWorkspace: String = GuestWorkspacePath.under(
-        paths.workspaceBase.absolutePath,
-        hostWorkspace.absolutePath,
+    val guestWorkspace: String = GuestWorkspacePath.hostToGuest(
+        paths.rootfs,
+        hostWorkspace,
     )
 
     /** The one bind this layer needs when it runs a command in the workspace. */

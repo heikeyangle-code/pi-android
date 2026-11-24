@@ -36,22 +36,17 @@ internal fun PiSessionViewModel.defaultWorkspace(): File = PtyLauncher.workspace
  * guest**, so they must be written in the guest's spelling. This used to be a
  * literal here, which is one more place the engine's cwd could drift.
  */
-internal fun PiSessionViewModel.guestWorkspace(): String = GuestWorkspacePath.under(
-    workspaceBase().absolutePath,
-    defaultWorkspace().absolutePath,
+internal fun PiSessionViewModel.guestWorkspace(): String = GuestWorkspacePath.hostToGuest(
+    guestRootfs(),
+    defaultWorkspace(),
 )
 
-/**
- * `GuestWorkspacePath`'s base for this install: `<rootfs>/workspace`, which the guest
- * sees as `/workspace`. It replaced `<filesDir>` when the workspace moved into the
- * rootfs (2026-09-23) — the guest spelling is unchanged, only the host base is.
- */
-private fun PiSessionViewModel.workspaceBase(): java.io.File {
+private fun PiSessionViewModel.guestRootfs(): java.io.File {
     val application = getApplication<Application>()
     return PiPaths(
         filesDir = application.filesDir,
         nativeLibDir = java.io.File(application.applicationInfo.nativeLibraryDir),
-    ).workspaceBase
+    ).rootfs
 }
 
 // ------------------------------------------------------------ workspaces
@@ -335,11 +330,10 @@ internal fun PiSessionViewModel.publishWorkspaceState(name: String, note: String
     val app = getApplication<Application>()
     val entry = runCatching { WorkspaceStore.existing(app, name) }.getOrNull()
     val owned = WorkspaceStore.isOwned(name)
-    val relative = entry?.relative ?: if (owned) WorkspaceStore.relativeOf(name) else name
     val guestPath = entry?.guestPath ?: if (owned) {
-        GuestWorkspacePath.GUEST_ROOT + "/" + WorkspaceStore.relativeOf(name)
+        "${GuestWorkspacePath.PROJECTS_ROOT_GUEST}/$name"
     } else {
-        GuestWorkspacePath.under(workspaceBase().absolutePath, name)
+        GuestWorkspacePath.hostToGuest(guestRootfs(), File(name))
     }
     val displayName = entry?.displayName ?: WorkspaceChoice.displayName(name, null)
     val revision = current.revision + if (bumped) 1 else 0
@@ -347,7 +341,6 @@ internal fun PiSessionViewModel.publishWorkspaceState(name: String, note: String
         workspace = current.copy(
             name = name,
             displayName = displayName,
-            relative = relative,
             guestPath = guestPath,
             hostPath = entry?.host?.absolutePath,
             isExternal = entry?.external ?: !owned,

@@ -118,7 +118,7 @@ internal fun WorkspaceRootSheet(
             else entries.filter {
                 it.displayName.contains(q, ignoreCase = true) ||
                     it.name.contains(q, ignoreCase = true) ||
-                    it.relative.contains(q, ignoreCase = true)
+                    it.guestPath.contains(q, ignoreCase = true)
             }
         }
         WsCard {
@@ -156,7 +156,7 @@ internal fun WorkspaceRootSheet(
 
         // 一行项目：当前与其它共用同一份画法。
         val entryRow: @Composable (WorkspaceStore.Entry) -> Unit = { item ->
-            val pathMeta = if (item.external) item.host.absolutePath else "~/projects/${item.name}"
+            val pathMeta = app.pi.runtime.GuestWorkspacePath.shortenForDisplay(item.guestPath)
             WsRow(
                 title = item.displayName,
                 mono = false,
@@ -260,7 +260,7 @@ internal fun WorkspaceRowMenuSheet(
     WsSheet(
         title = entry.displayName,
         onClose = onClose,
-        subtitle = if (entry.external) entry.host.absolutePath else "~/projects/${entry.name}",
+        subtitle = app.pi.runtime.GuestWorkspacePath.shortenForDisplay(entry.guestPath),
         subtitleMono = true,
     ) {
         MenuAction(

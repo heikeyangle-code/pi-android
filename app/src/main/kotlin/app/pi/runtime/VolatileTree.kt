@@ -107,15 +107,8 @@ object DurableLayout {
     /** `<rootfs>/root/.pi/agent`，相对 rootfs。就是 guest 的 `/root/.pi/agent`。 */
     const val AGENT_IN_ROOTFS: String = "root/.pi/agent"
 
-    /**
-     * `<rootfs>/workspace`，相对 rootfs —— `GuestWorkspacePath` 当作 guest `/workspace`
-     * 的那一层。工作区根在它下面，所以 guest 的 `/workspace/pi/workspaces/<名>`
-     * 就是一条普通的 rootfs 路径。
-     */
-    const val WORKSPACE_BASE_IN_ROOTFS: String = "workspace"
-
-    /** `<rootfs>/workspace/pi/workspaces`，相对 rootfs。guest 侧是 `/workspace/pi/workspaces`。 */
-    const val WORKSPACES_IN_ROOTFS: String = "workspace/pi/workspaces"
+    /** `<rootfs>/root/projects`，相对 rootfs。guest 侧是 `/root/projects`（即 `~/projects`）。 */
+    const val PROJECTS_IN_ROOTFS: String = "root/projects"
 
     /** `<files>/pi/persist`，相对 `PiPaths.home`。本 App 自己的耐久目录。 */
     const val PERSIST_RELATIVE: String = "persist"
@@ -127,7 +120,7 @@ object DurableLayout {
     fun durableDirs(home: File, runtime: File): List<File> {
         val rootfs = rootfsOf(runtime)
         return listOf(
-            File(rootfs, WORKSPACES_IN_ROOTFS),
+            File(rootfs, PROJECTS_IN_ROOTFS),
             File(rootfs, AGENT_IN_ROOTFS),
             File(home, PERSIST_RELATIVE),
         )
