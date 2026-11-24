@@ -1163,13 +1163,6 @@ fun PiThemeEditorSheet(
                         Spacer(Modifier.height(PiSpacing.inline))
                         PiInfoNote(error)
                     }
-                    if (notes.isNotEmpty()) {
-                        Spacer(Modifier.height(PiSpacing.inline))
-                        PiInfoNote(
-                            tr("当前主题有部分颜色无法照搬：\n", "Some colors in the active theme required fallbacks:\n") +
-                                notes.joinToString("\n") { "· $it" },
-                        )
-                    }
                     Spacer(Modifier.height(PiSpacing.unit))
                     Text(
                         tr("固定主题", "Fixed Theme"),

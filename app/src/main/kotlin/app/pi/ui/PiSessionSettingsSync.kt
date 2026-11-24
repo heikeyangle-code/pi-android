@@ -21,6 +21,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import app.pi.packages.PiResourceCatalog
+import app.pi.ui.theme.PiThemeEntry
+import app.pi.ui.theme.PiThemeScope
+import java.io.File
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -45,6 +50,25 @@ internal fun PiSessionViewModel.refreshThemeImpl(systemDark: Boolean = lastSyste
     viewModelScope.launch {
         val configured = configuredThemePaths()
         val setting = runCatching { settingsStore.readString("theme") }.getOrNull()
+        val packageThemes: List<PiThemeEntry> = if (session?.state?.value == PiEngineSession.EngineState.Ready) {
+            val loaded = withTimeoutOrNull(400) {
+                runCatching { extensionsAccess()?.resources?.loaded() }.getOrNull()
+            }
+            val rawThemes = when (loaded) {
+                is PiResourceCatalog.Parsed.Ok -> loaded.value.themes
+                else -> emptyList()
+            }
+            val rootfs = host.paths().rootfs
+            rawThemes.mapNotNull { t ->
+                val name = t.name?.trim()?.takeIf { it.isNotEmpty() && !it.contains('/') } ?: return@mapNotNull null
+                val guestPath = t.path?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                val hostFile = if (guestPath.startsWith("/")) File(rootfs, guestPath.removePrefix("/")) else File(defaultWorkspace(), guestPath)
+                if (!hostFile.isFile) return@mapNotNull null
+                PiThemeEntry(name = name, path = hostFile.absolutePath, scope = PiThemeScope.Package)
+            }
+        } else {
+            emptyList()
+        }
         val resolved = withContext(Dispatchers.IO) {
             // 「配色方案」必须**先**灌进注入点，再让 loader 读它：`system` 分支的颜色
             // （`resolveSystemTheme`）就是从那个值推导的，写晚一步就会拿上一档的调色板
@@ -58,11 +82,12 @@ internal fun PiSessionViewModel.refreshThemeImpl(systemDark: Boolean = lastSyste
                 configured = configured,
                 setting = setting,
                 systemDark = systemDark,
+                extraThemes = packageThemes,
             )
         }
         val entries = withContext(Dispatchers.IO) {
             runCatching {
-                PiThemeLoader.discover(host.paths().agentDir, defaultWorkspace(), configured)
+                PiThemeLoader.discover(host.paths().agentDir, defaultWorkspace(), configured, packageThemes)
             }.getOrDefault(emptyList())
         }
         _theme.value = resolved

@@ -93,13 +93,83 @@ internal fun PiSystemPaletteSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(PiSettingsMetrics.rowGap))
+            val previewRgb = hsvToRgb(hsv)
+            val previewPalette = remember(previewRgb, saturationWire) {
+                val input = PiSystemPalettes.paletteOf(PiSystemPalettes.CUSTOM_ID, hexOf(previewRgb))
+                app.pi.ui.theme.deriveSystemPalette(input, PiSystemPalettes.saturationOf(saturationWire))
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+                    .background(previewPalette.pageBg)
+                    .border(
+                        PiSettingsMetrics.hairline,
+                        previewPalette.borderMuted,
+                        RoundedCornerShape(PiSettingsMetrics.cardRadius),
+                    )
+                    .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSettingsMetrics.rowPaddingVertical),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            tr("实时推导预览", "Live Derived Preview"),
+                            style = PiTheme.text.meta,
+                            color = previewPalette.muted,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
+                            listOf(
+                                previewPalette.accent,
+                                previewPalette.success,
+                                previewPalette.warning,
+                                previewPalette.error,
+                                previewPalette.mdHeading,
+                            ).forEach { swatch ->
+                                Box(
+                                    Modifier
+                                        .size(PiSpacing.inner)
+                                        .clip(CircleShape)
+                                        .background(swatch),
+                                )
+                            }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(PiSpacing.inline))
+                                .background(previewPalette.userMessageBg)
+                                .padding(horizontal = PiSpacing.inline, vertical = PiSpacing.small),
+                        ) {
+                            Text(
+                                tr("用户消息", "User"),
+                                style = PiTheme.text.meta,
+                                color = previewPalette.userMessageText,
+                            )
+                        }
+                        Text(
+                            "val theme = \"system\"",
+                            style = PiTheme.text.monoSmall,
+                            color = previewPalette.text,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(PiSettingsMetrics.rowGap))
             Column(
                 Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
             ) {
-                // 顺序按“先选、再微调、再确认”排：常用底色 → 三条滑杆 → 强度 →
-                // HEX → 应用。预览色带按用户要求删掉了，滑杆本身和预设色块就是预览。
                 Text(tr("常用底色", "Preset Backgrounds"), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap)) {

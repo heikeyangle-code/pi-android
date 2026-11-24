@@ -67,14 +67,18 @@ enum class PiThemeScope {
     Project,
 
     /** A path or directory named by the `themes` setting. */
-    Configured;
+    Configured,
+
+    /** A theme provided by an installed Pi package via ResourceLoader. */
+    Package;
 
     val label: String
         get() = when (this) {
             Builtin -> tr("内置", "Built-in")
-            AgentDir -> "~/.pi/agent/themes"
-            Project -> "${PiProjectConfig.DIRECTORY}/themes"
-            Configured -> tr("themes 设置", "themes setting")
+            AgentDir -> tr("自定义", "Custom")
+            Project -> tr("项目", "Project")
+            Configured -> tr("配置", "Configured")
+            Package -> tr("扩展包", "Package")
         }
 }
 
@@ -85,7 +89,22 @@ data class PiThemeEntry(
     val scope: PiThemeScope,
 )
 
-/** A theme resolved into the app's palette, plus every caveat that applies. */
+/** Preview result for an imported theme JSON before saving. */
+data class PiThemeImportPreview(
+    val name: String,
+    val palette: PiPalette,
+    val dark: Boolean,
+)
+
+/** Result of importing & normalizing a theme JSON into `~/.pi/agent/themes/`. */
+data class PiImportedTheme(
+    val name: String,
+    val file: File,
+    val palette: PiPalette,
+    val dark: Boolean,
+)
+
+/** A theme resolved into the app's palette. */
 data class PiResolvedTheme(
     /** The raw `theme` setting, e.g. `dark`, `my-theme`, `light/dark`. */
     val setting: String,
@@ -94,8 +113,8 @@ data class PiResolvedTheme(
     val palette: PiPalette,
     val dark: Boolean,
     val source: PiThemeEntry?,
-    /** Things the app could not honour literally, in the user's language. */
-    val notes: List<String>,
+    /** Reserved compatibility list (kept empty — unsupported tokens fall back silently). */
+    val notes: List<String> = emptyList(),
     /** Non-null when the requested theme could not be used at all. */
     val error: String? = null,
 ) {
@@ -116,31 +135,18 @@ data class PiResolvedTheme(
 }
 
 /**
- * A theme file that was found and read but cannot be used, with a message
- * written for the user.
- *
- * It exists so [PiThemeLoader.load] can tell "this file says something the app
- * cannot honour" (worth showing, in the user's language) apart from any other
- * failure (worth hiding, because a JVM or library exception's text is not the
- * app's to print). Its `message` is always a complete Chinese sentence naming
- * what is wrong and what to do about it.
+ * A theme file that was found and read but cannot be used, with a concise user-facing message.
  */
 private class ThemeParseException(message: String) : Exception(message)
 
 object PiThemeLoader {
 
-    /**
-     * pi's reserved built-in name for the terminal-derived theme
-     * (`system-theme.ts:32` `export const SYSTEM_THEME_NAME = "system"`). It is
-     * 0.99.0's default theme, it has no document on disk, and a custom theme may not
-     * take the name (`loadTheme`, `theme.ts:632-633`).
-     */
     private const val SYSTEM_THEME_NAME = "system"
+    private const val OFFICIAL_SCHEMA_URL = "https://pi.dev/schemas/theme.schema.json"
 
     /**
-     * `theme-schema.json`'s **51 required** `colors` tokens — the five optional ones
-     * live in [OPTIONAL_FALLBACKS] below, so the schema's whole set is 56 (plus the
-     * three `export` surfaces, which `parseThemeJson` reads separately).
+     * `theme-schema.json`'s 51 required `colors` tokens — plus the 5 optional tokens
+     * in [OPTIONAL_FALLBACKS] = 56 official tokens total.
      */
     private val REQUIRED_TOKENS = listOf(
         "accent", "border", "borderAccent", "borderMuted", "success", "error", "warning",
@@ -155,7 +161,18 @@ object PiThemeLoader {
         "thinkingLow", "thinkingMedium", "thinkingHigh", "thinkingXhigh", "bashMode",
     )
 
-    /** `theme.ts:164-179` `withThemeColorFallbacks`: optional token, and its fallback. */
+    /** Official `THEME_TOKENS` background slots (`theme-tokens.js`). */
+    private val BACKGROUND_TOKENS = setOf(
+        "selectedBg",
+        "searchMatchBg",
+        "userMessageBg",
+        "customMessageBg",
+        "toolPendingBg",
+        "toolSuccessBg",
+        "toolErrorBg",
+    )
+
+    /** `theme.js` `withThemeTokenFallbacks`: optional token → fallback token. */
     private val OPTIONAL_FALLBACKS = mapOf(
         "scrollbarTrack" to "muted",
         "scrollbarThumb" to "text",
@@ -167,25 +184,18 @@ object PiThemeLoader {
     // ------------------------------------------------------------- discovery
 
     /**
-     * Every theme name the app could offer, in the same order pi's
-     * `getAvailableThemesWithPaths` (`theme.ts:467-497`) ends up with.
-     *
-     * `system` has no file and is still a name the picker must know about: pi
-     * registers it beside the built-ins (`theme.ts:480-483`) and sorts it first
-     * (`:496-497`), and it is 0.99.0's default theme, so a user who picked it in
-     * pi's own `/settings` has it in `settings.json`. [load] decides what it means.
-     *
-     * [configured] is the `themes` setting, verbatim. Entries are guest paths, so
-     * they are mapped onto the host tree with [hostPathOf]; a path that cannot be
-     * mapped is skipped here and reported by [load] when it is the active theme.
+     * Discover all selectable themes in official Pi order:
+     * `system`, `dark`, `light` first, followed by custom/project/configured/package themes
+     * sorted alphabetically.
      */
     fun discover(
         agentDir: File,
         workspace: File,
         configured: List<String> = emptyList(),
+        extraThemes: List<PiThemeEntry> = emptyList(),
     ): List<PiThemeEntry> {
         val found = LinkedHashMap<String, PiThemeEntry>()
-        for (name in listOf("dark", "light", "system")) {
+        for (name in listOf(SYSTEM_THEME_NAME, "dark", "light")) {
             found.putIfAbsent(name, PiThemeEntry(name, null, PiThemeScope.Builtin))
         }
         scanDirectory(File(agentDir, "themes"), PiThemeScope.AgentDir, found)
@@ -194,59 +204,46 @@ object PiThemeLoader {
             val file = hostPathOf(entry, agentDir, workspace) ?: continue
             if (file.isDirectory) {
                 scanDirectory(file, PiThemeScope.Configured, found)
-            } else if (file.isFile && file.name.endsWith(".json")) {
+            } else if (file.isFile && file.name.endsWith(".json", ignoreCase = true)) {
                 readEntry(file, PiThemeScope.Configured)?.let { found.putIfAbsent(it.name, it) }
             }
         }
-        return found.values.sortedBy { it.name }
+        for (extra in extraThemes) {
+            if (extra.name.isNotBlank() && !extra.name.contains('/')) {
+                found.putIfAbsent(extra.name, extra)
+            }
+        }
+        val builtinOrder = mapOf(SYSTEM_THEME_NAME to 0, "dark" to 1, "light" to 2)
+        return found.values.sortedWith(
+            compareBy<PiThemeEntry> { builtinOrder[it.name] ?: 3 }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name },
+        )
     }
 
     private fun scanDirectory(dir: File, scope: PiThemeScope, into: MutableMap<String, PiThemeEntry>) {
         val files = dir.listFiles() ?: return
-        for (file in files.sortedBy { it.name }) {
-            if (!file.isFile || !file.name.endsWith(".json")) continue
+        for (file in files.sortedBy { it.name.lowercase() }) {
+            if (!file.isFile || !file.name.endsWith(".json", ignoreCase = true)) continue
             val entry = readEntry(file, scope) ?: continue
             into.putIfAbsent(entry.name, entry)
         }
     }
 
-    /**
-     * pi takes a theme's name from its document (`name` is required by the schema,
-     * `theme-json.ts:20`; `getCustomThemeInfos`, `theme.ts:500-519`); falling back
-     * to the file name is this app's own tolerance, for a document that names
-     * nothing. `theme.ts:525-531` rejects a name containing `/` because the slash
-     * belongs to the automatic pair syntax.
-     */
     private fun readEntry(file: File, scope: PiThemeScope): PiThemeEntry? {
         val json = readJson(file) ?: return null
         val declared = json.str("name")?.trim()
         val name = declared?.takeIf { it.isNotEmpty() && !it.contains('/') }
             ?: file.nameWithoutExtension
-        if (name.contains('/')) return null
+        if (name.isBlank() || name.contains('/')) return null
         return PiThemeEntry(name, file.absolutePath, scope)
     }
 
     // ---------------------------------------------------------------- loading
 
-    /** The resolution used when the setting is absent: pi's own default. */
-    /**
-     * 没写过 `theme` 时用哪一个：`system`（用户裁定：要 pi 的"从底色推导全部 token"）。
-     *
-     * 中间退回过一次官方 dark/light，原因是推导把**页面底色**也染蓝了 —— 那其实是
-     * `canvasSurfaces` 的 bug（拿 `userMessageBg` 缩放），不是推导本身的问题；修掉之后
-     * 恢复了默认 `system`：底色（配色方案里选）一变，56 个 token 整套重算。
-     *
-     * `systemDark` 仍用于 `dark` / `light` 自动对（`light/dark`）的判据。
-     */
     fun defaultSetting(@Suppress("UNUSED_PARAMETER") systemDark: Boolean): String = SYSTEM_THEME_NAME
 
     /**
-     * Resolve the `theme` setting into a palette.
-     *
-     * The automatic form `lightTheme/darkTheme` is one literal string in pi
-     * (`parseAutoThemeSetting`, `theme.ts:652-667`); the slash selects which half
-     * applies, exactly as `resolveThemeSetting` (`theme.ts:669-680`) does for the
-     * terminal's detected background.
+     * Resolve the `theme` setting (single name or `"lightTheme/darkTheme"` pair) into a palette.
      */
     fun load(
         agentDir: File,
@@ -254,6 +251,7 @@ object PiThemeLoader {
         configured: List<String>,
         setting: String?,
         systemDark: Boolean,
+        extraThemes: List<PiThemeEntry> = emptyList(),
     ): PiResolvedTheme {
         val raw = setting?.trim().orEmpty().ifEmpty { defaultSetting(systemDark) }
         val slash = raw.indexOf('/')
@@ -267,22 +265,6 @@ object PiThemeLoader {
         }
 
         if (name == SYSTEM_THEME_NAME) {
-            // `system` is the one name pi answers without a theme file: pi generates the
-            // palette from the terminal's reported colours (`createSystemTheme`,
-            // `theme.ts:633`; the name is registered at `:480-483`). Those colours belong
-            // to the terminal the TUI runs in, and the app's own surfaces are Compose, so
-            // the input comes from `PiSystemPaletteSource` — today pi's default ANSI 16 on
-            // pi's default background, later whatever the 「配色方案」 page puts there.
-            // This branch only reads it; every colour still comes from the derivation
-            // (`PiSystemTheme.kt`), so no token is invented here.
-            //
-            // The polarity therefore follows the **input palette's background**, not
-            // `systemDark` (see `resolveSystemTheme`): `defaultAnsiPalette()` is `#1E1E1E`,
-            // so `system` resolves dark on a light phone as well. That is pi's own rule —
-            // the terminal decides (`terminalAppearance`, `system-theme.ts:271-290`) — and
-            // it is also what keeps the system bars honest: `theme.dark` is the polarity
-            // the palette's lightness curves were solved for, and pairing them with a light
-            // bar is the white-strip defect `MainActivity.kt` documents.
             val derived = resolveSystemTheme()
             return PiResolvedTheme(
                 setting = raw,
@@ -290,14 +272,7 @@ object PiThemeLoader {
                 palette = derived.palette,
                 dark = derived.dark,
                 source = PiThemeEntry(name, null, PiThemeScope.Builtin),
-                notes = listOf(
-                    tr(
-                        "「system」主题由 pi 从终端调色板推导；App 没有终端，改用「外观 → 配色方案」" +
-                            "选定的调色板（ANSI 16 色 + 底色）推导。深浅由那个底色决定，" +
-                            "不跟随系统的深浅色设置；换调色板后颜色与深浅都会跟着变。",
-                        "The \"system\" theme is derived from a terminal palette. Since this app has no terminal, it uses the palette selected under Appearance → System Theme (ANSI 16 + background). Light/dark polarity follows that background rather than system dark mode.",
-                    ),
-                ),
+                notes = emptyList(),
             )
         }
 
@@ -313,37 +288,19 @@ object PiThemeLoader {
             )
         }
 
-        val entry = discover(agentDir, workspace, configured).firstOrNull { it.name == name }
+        val entry = discover(agentDir, workspace, configured, extraThemes).firstOrNull { it.name == name }
         val file = entry?.path?.let(::File)
         if (file == null || !file.isFile) {
             return PiResolvedTheme.fallback(systemDark).copy(
                 setting = raw,
-                error = if (entry != null) {
-                    tr("主题「$name」的文件不存在。", "Theme file for \"$name\" does not exist.")
-                } else {
-                    tr(
-                        "找不到主题「$name」。可以在设置里检查主题名，或直接填写主题文件的路径。",
-                        "Theme \"$name\" not found. Check the theme name in settings or enter a theme file path directly.",
-                    )
-                },
+                error = tr("找不到主题「$name」", "Theme \"$name\" not found"),
             )
         }
         val parsed = runCatching { parseTheme(file, systemDark) }.getOrElse { error ->
-            // Every user-visible word here is written by this file, never taken
-            // from an exception. Two earlier shapes were wrong:
-            // `error::class.java.simpleName` printed `FileNotFoundException` to
-            // the user, and `error.message` would print whatever a JVM or library
-            // exception happens to carry — a path, a token key, a parser's own
-            // wording. Only [ThemeParseException] speaks the user's language, so
-            // it is the only one whose text is allowed on screen; anything else
-            // gets a fixed sentence and keeps its cause in the stack trace.
             return PiResolvedTheme.fallback(systemDark).copy(
                 setting = raw,
                 error = (error as? ThemeParseException)?.message
-                    ?: tr(
-                        "主题「$name」读取失败。可以换一个主题，或检查该主题文件的内容。",
-                        "Failed to read theme \"$name\". Choose another theme or check the theme file contents.",
-                    ),
+                    ?: tr("主题「$name」读取失败", "Failed to load theme \"$name\""),
             )
         }
         return PiResolvedTheme(
@@ -352,8 +309,136 @@ object PiThemeLoader {
             palette = parsed.palette,
             dark = parsed.dark,
             source = entry,
-            notes = parsed.notes,
+            notes = emptyList(),
         )
+    }
+
+    /** Fast, exception-safe preview palette for rendering a theme swatch card. */
+    fun previewPalette(entry: PiThemeEntry, systemDark: Boolean): Pair<PiPalette, Boolean> = when (entry.name) {
+        SYSTEM_THEME_NAME -> resolveSystemTheme().let { it.palette to it.dark }
+        "dark" -> PiPalette.Dark to true
+        "light" -> PiPalette.Light to false
+        else -> {
+            val file = entry.path?.let(::File)
+            val parsed = if (file != null && file.isFile) {
+                runCatching { parseTheme(file, systemDark) }.getOrNull()
+            } else {
+                null
+            }
+            if (parsed != null) {
+                parsed.palette to parsed.dark
+            } else {
+                (if (systemDark) PiPalette.Dark else PiPalette.Light) to systemDark
+            }
+        }
+    }
+
+    /** Parse raw theme JSON text for live import preview without touching disk. */
+    fun previewThemeJson(
+        rawText: String,
+        fallbackName: String? = null,
+        systemDark: Boolean = true,
+    ): Result<PiThemeImportPreview> = runCatching {
+        val json = parseJsonObject(rawText)
+            ?: throw ThemeParseException(tr("不是有效的 JSON 对象", "Not a valid JSON object"))
+        val parsed = parseThemeJson(json, systemDark)
+        val rawName = json.str("name")?.trim().orEmpty()
+            .ifEmpty { fallbackName?.trim().orEmpty() }
+            .ifEmpty { "custom-theme" }
+        val safeName = sanitizeThemeName(rawName)
+        PiThemeImportPreview(name = safeName, palette = parsed.palette, dark = parsed.dark)
+    }
+
+    /**
+     * Import a theme JSON into `~/.pi/agent/themes/<slug>.json`, normalizing it into
+     * 100% official Pi 1.6.0 `theme-schema.json`-compliant format so both Android UI and
+     * Pi Node SDK accept it cleanly with zero schema errors or warning walls.
+     */
+    fun importThemeJson(
+        rawText: String,
+        agentDir: File,
+        overrideName: String? = null,
+        systemDark: Boolean = true,
+    ): Result<PiImportedTheme> = runCatching {
+        val json = parseJsonObject(rawText)
+            ?: throw ThemeParseException(tr("不是有效的 JSON 对象", "Not a valid JSON object"))
+        val parsed = parseThemeJson(json, systemDark)
+        val chosenRaw = overrideName?.trim().orEmpty()
+            .ifEmpty { json.str("name")?.trim().orEmpty() }
+            .ifEmpty { "custom-theme" }
+        val safeName = sanitizeThemeName(chosenRaw)
+        if (safeName == SYSTEM_THEME_NAME || safeName == "dark" || safeName == "light") {
+            throw ThemeParseException(
+                tr("主题名不能与内置主题（system / dark / light）重复", "Theme name cannot conflict with built-in themes (system / dark / light)"),
+            )
+        }
+        val themesDir = File(agentDir, "themes").apply { mkdirs() }
+        val slug = slugifyFileName(safeName)
+        val outFile = File(themesDir, "$slug.json")
+        val normalized = buildOfficialThemeJson(
+            name = safeName,
+            dark = parsed.dark,
+            palette = parsed.palette,
+        )
+        outFile.writeText(normalized + "\n", Charsets.UTF_8)
+        PiImportedTheme(
+            name = safeName,
+            file = outFile,
+            palette = parsed.palette,
+            dark = parsed.dark,
+        )
+    }
+
+    /** Delete a user/project custom theme file (never touches built-in or package themes). */
+    fun deleteCustomTheme(entry: PiThemeEntry): Boolean {
+        if (entry.scope != PiThemeScope.AgentDir && entry.scope != PiThemeScope.Project) return false
+        val file = entry.path?.let(::File) ?: return false
+        return runCatching { file.isFile && file.delete() }.getOrDefault(false)
+    }
+
+    private fun sanitizeThemeName(raw: String): String =
+        raw.replace('/', '-')
+            .replace('\\', '-')
+            .trim()
+            .ifEmpty { "custom-theme" }
+
+    private fun slugifyFileName(name: String): String {
+        val cleaned = name.lowercase()
+            .replace(Regex("[^a-z0-9._-]+"), "-")
+            .trim('-', '.')
+        return cleaned.ifEmpty { "custom-theme" }
+    }
+
+    private fun Color.toHexRgb(): String {
+        val r = Math.round(red * 255f).coerceIn(0, 255)
+        val g = Math.round(green * 255f).coerceIn(0, 255)
+        val b = Math.round(blue * 255f).coerceIn(0, 255)
+        return "#%02x%02x%02x".format(r, g, b)
+    }
+
+    /** Emit a strict Pi 1.6.0 `theme-schema.json`-valid theme document. */
+    private fun buildOfficialThemeJson(name: String, dark: Boolean, palette: PiPalette): String {
+        val allTokens = palette.tokens()
+        val orderedColorKeys = REQUIRED_TOKENS + OPTIONAL_FALLBACKS.keys
+        val sb = StringBuilder(2048)
+        sb.append("{\n")
+        sb.append("  \"\$schema\": \"$OFFICIAL_SCHEMA_URL\",\n")
+        sb.append("  \"name\": ${JsonPrimitive(name)},\n")
+        sb.append("  \"appearance\": \"${if (dark) "dark" else "light"}\",\n")
+        sb.append("  \"colors\": {\n")
+        orderedColorKeys.forEachIndexed { idx, key ->
+            val hex = allTokens.getValue(key).toHexRgb()
+            val comma = if (idx < orderedColorKeys.lastIndex) "," else ""
+            sb.append("    \"$key\": \"$hex\"$comma\n")
+        }
+        sb.append("  },\n")
+        sb.append("  \"export\": {\n")
+        sb.append("    \"pageBg\": \"${palette.pageBg.toHexRgb()}\",\n")
+        sb.append("    \"cardBg\": \"${palette.cardBg.toHexRgb()}\",\n")
+        sb.append("    \"infoBg\": \"${palette.infoBg.toHexRgb()}\"\n")
+        sb.append("  }\n")
+        sb.append("}")
+        return sb.toString()
     }
 
     // ---------------------------------------------------------------- parsing
@@ -361,206 +446,109 @@ object PiThemeLoader {
     private class ParsedTheme(
         val palette: PiPalette,
         val dark: Boolean,
-        val notes: List<String>,
     )
 
     private fun parseTheme(file: File, systemDark: Boolean): ParsedTheme {
         val json = readJson(file)
-            ?: throw ThemeParseException(
-                tr(
-                    "这个主题文件不是合法的 JSON 对象。可以检查文件内容，或换一个主题。",
-                    "This theme file is not a valid JSON object. Check the file or choose another theme.",
-                ),
-            )
+            ?: throw ThemeParseException(tr("主题文件不是有效的 JSON 对象", "Theme file is not a valid JSON object"))
         return parseThemeJson(json, systemDark)
     }
 
     private fun parseThemeJson(json: JsonObject, systemDark: Boolean): ParsedTheme {
         val colors = json["colors"] as? JsonObject
-            ?: throw ThemeParseException(
-                tr(
-                    "这个主题文件里没有 colors 一栏。可以检查文件内容，或换一个主题。",
-                    "This theme file is missing a \"colors\" section. Check the file or choose another theme.",
-                ),
-            )
+            ?: throw ThemeParseException(tr("主题文件缺少 colors 字段", "Theme file is missing \"colors\""))
         val vars = json["vars"] as? JsonObject ?: JsonObject(emptyMap())
+        val export = json["export"] as? JsonObject
 
-        // Which built-in palette supplies the values the file cannot express.
-        //
-        // `appearance` is the file's own answer and wins: pi reads it first and only
-        // detects when it is absent (`options.appearance ?? detectAppearance(...)`,
-        // `theme.ts:306`; the field is `theme-json.ts:22`). pi's detection weighs every
-        // colour the file declares (`detectAppearance`, `theme.ts:229-235`); this app has
-        // always used `userMessageBg` alone — the token pi's HTML exporter keys on
-        // (`export-html/index.ts:81-105`) — and that stays.
-        //
-        // What must not stay is `?: true`. "The probe did not resolve" is not evidence
-        // that the theme is light: 0.99.2's own `dark.json` spells `userMessageBg` as
-        // `blueBg` → `okhsl(233 41% 24%)`, and while the app could not read `okhsl()` the
-        // failed probe silently selected `PiPalette.Light` for a dark theme, repainting
-        // every falling-back token with the opposite polarity. Now a failed probe falls
-        // back to the device's polarity — a value the app actually has — and says so.
+        // Pass 1: resolve all declared tokens & detect appearance using official Pi algorithm (`theme.js:89-107`).
+        val allKnownKeys = REQUIRED_TOKENS + OPTIONAL_FALLBACKS.keys
+        val rawResolved = HashMap<String, Resolved?>(allKnownKeys.size)
+        val concreteFg = ArrayList<Color>(48)
+        val concreteBg = ArrayList<Color>(8)
+        for (token in allKnownKeys) {
+            val value = resolveRaw(colors[token], vars)
+            rawResolved[token] = value
+            val colorForPolarity = when (value) {
+                is RgbColor -> value.color
+                // Match official `averageLightness`: ignore ANSI 0-15 because they depend on terminal palette.
+                is IndexedColor -> if (value.index >= 16) xterm256(value.index) else null
+                else -> null
+            }
+            if (colorForPolarity != null) {
+                if (token in BACKGROUND_TOKENS) concreteBg += colorForPolarity else concreteFg += colorForPolarity
+            }
+        }
+
+        val exportPageBg = export?.get("pageBg")?.let { resolveRaw(it, vars) }
         val declared = json.str("appearance")?.trim()?.lowercase()
-        val declaredDark = when (declared) {
+        val detectedDark: Boolean = when (declared) {
             "dark" -> true
             "light" -> false
-            else -> null
+            else -> detectOfficialAppearanceDark(concreteFg, concreteBg)
+                ?: (exportPageBg as? RgbColor)?.color?.isDarkSurface()
+                ?: systemDark
         }
-        val probe = resolveRaw(colors["userMessageBg"], vars)
-        val probedDark = (probe as? RgbColor)?.let { it.color.isDarkSurface() }
-        val isLight = declaredDark?.let { !it } ?: probedDark?.let { !it } ?: !systemDark
-        val base = if (isLight) PiPalette.Light else PiPalette.Dark
-        val polarityNote = if (declaredDark == null && probedDark == null) {
-            tr(
-                "这个主题既没有 appearance 字段，也无法从 userMessageBg 判断深浅；" +
-                    "已按系统的深浅色设置选择内置的回退配色。",
-                "This theme has no appearance field and polarity could not be detected from userMessageBg; falling back to the built-in palette matching system appearance.",
-            )
-        } else {
-            null
-        }
+        val base = if (detectedDark) PiPalette.Dark else PiPalette.Light
 
-        val notes = mutableListOf<String>()
-        if (polarityNote != null) notes += polarityNote
-        val emptyTokens = mutableListOf<String>()
-        val indexedTokens = mutableListOf<String>()
-        val missingTokens = mutableListOf<String>()
-        val brokenTokens = mutableListOf<String>()
-
-        val resolved = HashMap<String, Color>()
+        // Pass 2: materialize all 56 tokens + 3 export surfaces (silently falling back missing/empty tokens).
+        val resolved = HashMap<String, Color>(64)
         for (token in REQUIRED_TOKENS) {
-            val element = colors[token]
-            if (element == null) {
-                missingTokens += token
-                resolved[token] = base.token(token)
-                continue
-            }
-            when (val value = resolveRaw(element, vars)) {
-                is RgbColor -> resolved[token] = value.color
-                is EmptyColor -> {
-                    emptyTokens += token
-                    resolved[token] = base.token(token)
-                }
-                is IndexedColor -> {
-                    indexedTokens += token
-                    resolved[token] = xterm256(value.index)
-                }
-                else -> {
-                    brokenTokens += token
-                    resolved[token] = base.token(token)
-                }
+            resolved[token] = when (val value = rawResolved[token]) {
+                is RgbColor -> value.color
+                is IndexedColor -> xterm256(value.index)
+                else -> base.token(token)
             }
         }
-        // Optional tokens: take the file's value when it has one, otherwise pi's
-        // documented fallback token (`theme.ts:164-179`).
         for ((token, fallback) in OPTIONAL_FALLBACKS) {
-            val element = colors[token]
-            val value = if (element == null) null else resolveRaw(element, vars)
-            resolved[token] = when (value) {
+            resolved[token] = when (val value = rawResolved[token]) {
                 is RgbColor -> value.color
-                is IndexedColor -> {
-                    indexedTokens += token
-                    xterm256(value.index)
-                }
-                is EmptyColor -> {
-                    emptyTokens += token
-                    resolved[fallback] ?: base.token(fallback)
-                }
+                is IndexedColor -> xterm256(value.index)
                 else -> resolved[fallback] ?: base.token(fallback)
             }
         }
 
-        // The `export` section's three surfaces. It is optional; when it is
-        // absent pi derives them from `userMessageBg`
-        // (`export-html/index.ts:81-105`), which is reproduced here.
-        val export = json["export"] as? JsonObject
-        for ((token, derived) in deriveExportSurfaces(resolved.getValue("userMessageBg"))) {
-            val element = export?.get(token)
-            val value = if (element == null) null else resolveRaw(element, vars)
+        // Export canvas surfaces: explicit export values win; else derive from concrete userMessageBg,
+        // or cleanly inherit built-in canvas surfaces if userMessageBg was empty/omitted.
+        val hasConcreteUserMsgBg = rawResolved["userMessageBg"] is RgbColor || rawResolved["userMessageBg"] is IndexedColor
+        val derivedSurfaces = if (hasConcreteUserMsgBg) {
+            deriveExportSurfaces(resolved.getValue("userMessageBg"))
+        } else {
+            mapOf("pageBg" to base.pageBg, "cardBg" to base.cardBg, "infoBg" to base.infoBg)
+        }
+        for ((token, derived) in derivedSurfaces) {
+            val value = export?.get(token)?.let { resolveRaw(it, vars) }
             resolved[token] = when (value) {
                 is RgbColor -> value.color
                 is IndexedColor -> xterm256(value.index)
-                is EmptyColor -> derived
                 else -> derived
             }
         }
 
-        if (missingTokens.isNotEmpty()) {
-            notes += tr(
-                "缺少这些颜色定义：${missingTokens.joinToString("、")}；这些颜色用内置主题的值代替。",
-                "Missing color tokens: ${missingTokens.joinToString(", ")}; using built-in theme values.",
-            )
-        }
-        if (brokenTokens.isNotEmpty()) {
-            notes += tr(
-                "无法解析的颜色：${brokenTokens.joinToString("、")}；已用内置主题的值代替。",
-                "Unparseable colors: ${brokenTokens.joinToString(", ")}; using built-in theme values.",
-            )
-        }
-        if (emptyTokens.isNotEmpty()) {
-            notes += tr(
-                "这些颜色留空：${emptyTokens.joinToString("、")}；已用内置主题的颜色代替。",
-                "Empty color values: ${emptyTokens.joinToString(", ")}; using built-in theme values.",
-            )
-        }
-        if (indexedTokens.isNotEmpty()) {
-            notes += tr(
-                "256 色索引颜色：${indexedTokens.joinToString("、")}；已换算成最接近的真彩色。",
-                "256-color indexed tokens: ${indexedTokens.joinToString(", ")}; mapped to nearest true-color RGB.",
-            )
-        }
+        return ParsedTheme(palette = base.withTokens(resolved), dark = detectedDark)
+    }
 
-        // pi 1.2.0 起，用户主题在**所有模式**下都会被严格校验，包括 App 启动引擎用的
-        // `--mode rpc`：校验器从 `interactive-mode.ts` 搬进了 `main()`（在主题加载之前安装），
-        // 而且它在三处显式 `additionalProperties: false`——整份文档、`colors`、`export`
-        // （`theme-schema.js:61` / `:35` / `:56`，1.1.0 的 `theme-json.js` 没有这三处，
-        // 所以那时多余的键一律放行）。多一个顶层字段、多一个自定义颜色名、或者 `export` 里
-        // 多一个键，pi 就把**整份文件**判为无效并静默回落到内置主题——于是这个界面画出来的
-        // 主题不是 pi 那一侧真正在用的主题。
-        //
-        // 这里只记一条 note，不把文件判为无效：那会变成一套比 pi 更严的策略，而 1.1.0 的
-        // rpc 模式**什么都不校验**，用户手上已有的文件完全可能带着多余的键。
-        //
-        // 1.3.0 的判据**逐字节未变**（整个 `dist/modes/interactive/theme/` 目录与 1.2.0 相同，
-        // `theme-schema.js` 的三处 `additionalProperties: false` 一字未改），所以下面三条 note
-        // 刻意不写引擎版本号：它们说的是「pin 住的这个引擎怎么判」，不是「哪个版本引入的」；
-        // 写死 `pi 1.3.0` 只会让下一次升级再多一处要改的文字，而改漏了就是给用户看一个假版本。
-        val allowedTopLevel = setOf("\$schema", "name", "appearance", "vars", "colors", "export")
-        val unknownTopLevel = json.keys.filterNot { it in allowedTopLevel }
-        if (unknownTopLevel.isNotEmpty()) {
-            notes += tr(
-                "pi 不认这些顶层字段：${unknownTopLevel.joinToString("、")}；" +
-                    "它会把整份主题判为无效并改用内置主题，所以这里的颜色在 pi 那一侧不会生效。" +
-                    "要保留可复用的颜色，请放进 vars。",
-                "pi does not recognize top-level fields: ${unknownTopLevel.joinToString(", ")}; " +
-                    "pi will reject the theme and fall back to built-in colors. Move reusable colors into \"vars\".",
-            )
+    /**
+     * Port of official Pi 1.6.0 `detectAppearance(foregrounds, backgrounds)` (`theme.js:89-107`):
+     * compares average OKLab lightness of concrete foreground and background colors.
+     */
+    private fun detectOfficialAppearanceDark(foregrounds: List<Color>, backgrounds: List<Color>): Boolean? {
+        fun avgOklabL(list: List<Color>): Double? {
+            if (list.isEmpty()) return null
+            var sum = 0.0
+            for (c in list) {
+                val r = Math.round(c.red * 255f).coerceIn(0, 255)
+                val g = Math.round(c.green * 255f).coerceIn(0, 255)
+                val b = Math.round(c.blue * 255f).coerceIn(0, 255)
+                sum += rgbToOklab(Rgb(r, g, b)).l
+            }
+            return sum / list.size
         }
-        val knownColorTokens = REQUIRED_TOKENS.toSet() + OPTIONAL_FALLBACKS.keys
-        val unknownColorTokens = colors.keys.filterNot { it in knownColorTokens }
-        if (unknownColorTokens.isNotEmpty()) {
-            notes += tr(
-                "pi 不认 colors 里这些颜色名：${unknownColorTokens.joinToString("、")}；" +
-                    "同样会让整份主题被判为无效，这些颜色在 pi 那一侧不会生效。" +
-                    "要保留可复用的颜色，请放进 vars。",
-                "pi does not recognize color tokens in \"colors\": ${unknownColorTokens.joinToString(", ")}; " +
-                    "pi will reject the theme. Move reusable colors into \"vars\".",
-            )
-        }
-        // `export` 的三个键从 `deriveExportSurfaces` 取，不另抄一份名单——抄一份就是又一处会漂的拷贝。
-        val unknownExportKeys = export?.keys?.filterNot {
-            it in deriveExportSurfaces(resolved.getValue("userMessageBg")).keys
-        } ?: emptyList()
-        if (unknownExportKeys.isNotEmpty()) {
-            notes += tr(
-                "pi 不认 export 里这些字段：${unknownExportKeys.joinToString("、")}；" +
-                    "同样会让整份主题被判为无效。HTML 导出只认 pageBg / cardBg / infoBg。",
-                "pi does not recognize fields in \"export\": ${unknownExportKeys.joinToString(", ")}; " +
-                    "pi will reject the theme. HTML export only allows pageBg / cardBg / infoBg.",
-            )
-        }
-
-        return ParsedTheme(palette = base.withTokens(resolved), dark = !isLight, notes = notes)
+        val fg = avgOklabL(foregrounds)
+        val bg = avgOklabL(backgrounds)
+        if (fg != null && bg != null) return bg < fg
+        if (bg != null) return bg < 0.5
+        if (fg != null) return fg > 0.5
+        return null
     }
 
     /** The result of resolving one theme colour value. */
@@ -573,65 +561,111 @@ object PiThemeLoader {
     private data class IndexedColor(val index: Int) : Resolved
 
     /**
-     * pi's value grammar — `resolveVarRefs` (`theme.ts:135-151`), whose literal branch
-     * is line **140**:
-     *
-     * ```ts
-     * if (typeof value === "number" || value === "" || value.startsWith("#") || /^ok(lch|hsl)\(/i.test(value)) {
-     * ```
-     *
-     * So a value is a literal when it is a number (a 256-colour index), the empty
-     * string (the terminal's default), a `#` string (`#rgb` or `#rrggbb`, see
-     * [parseHex]), **or** an `oklch(...)`/`okhsl(...)` colour function (see
-     * [parseOkColor]); anything else names a `vars` entry, and a `vars` entry may
-     * itself be any of those, so resolution recurses and refuses a cycle.
-     *
-     * The `/^ok(lch|hsl)\(/i` clause is what 0.99.0 added, and it is a **literal**
-     * clause on purpose: without it every colour the 0.99.2 built-in themes are
-     * written in (`okhsl(233 41% 24%)`) is looked up as a key in `vars`, is not
-     * found, and the token is dropped. That was this app's bug, not the file's.
+     * Resolve a Pi theme color value:
+     * Official grammar: 0-255 integer, `""`, `#RGB`, `#RRGGBB`, `oklch(...)`, `okhsl(...)`, or `vars` ref.
+     * Enhanced community compatibility: `#RGBA`, `#RRGGBBAA`, `rgb(...)`/`rgba(...)`, `hsl(...)`/`hsla(...)`,
+     * trimmed whitespace, and numeric string 256-color index fallback.
      */
     private fun resolveRaw(element: JsonElement?, vars: JsonObject, seen: Set<String> = emptySet()): Resolved? {
         val primitive = element as? JsonPrimitive ?: return null
         if (primitive.isString) {
-            val text = primitive.content
+            val text = primitive.content.trim()
             if (text.isEmpty()) return EmptyColor
             if (text.startsWith("#")) return parseHex(text)?.let(::RgbColor)
             if (isOkColorFunction(text)) return parseOkColor(text)?.let(::RgbColor)
+            if (isRgbColorFunction(text)) return parseCssRgb(text)?.let(::RgbColor)
+            if (isHslColorFunction(text)) return parseCssHsl(text)?.let(::RgbColor)
             if (text in seen) return null
-            return resolveRaw(vars[text], vars, seen + text)
+            val varTarget = vars[text]
+            if (varTarget != null) return resolveRaw(varTarget, vars, seen + text)
+            val numericIndex = text.toIntOrNull()
+            if (numericIndex != null && numericIndex in 0..255) return IndexedColor(numericIndex)
+            return null
         }
-        // `JsonPrimitive` has no `intOrNull`; its content is the numeric text.
         val index = primitive.content.toIntOrNull() ?: return null
         return if (index in 0..255) IndexedColor(index) else null
     }
 
-    /** `theme.ts:140`'s `/^ok(lch|hsl)\(/i`, spelled out. */
     private fun isOkColorFunction(text: String): Boolean =
         text.startsWith(prefix = "oklch(", ignoreCase = true) ||
             text.startsWith(prefix = "okhsl(", ignoreCase = true)
 
+    private fun isRgbColorFunction(text: String): Boolean =
+        text.startsWith(prefix = "rgb(", ignoreCase = true) ||
+            text.startsWith(prefix = "rgba(", ignoreCase = true)
+
+    private fun isHslColorFunction(text: String): Boolean =
+        text.startsWith(prefix = "hsl(", ignoreCase = true) ||
+            text.startsWith(prefix = "hsla(", ignoreCase = true)
+
     /**
-     * `parseColor`'s hex branch (`packages/tui/src/colors.ts:124`):
-     * `#rgb` or `#rrggbb`, case-insensitively, and nothing else. A three-digit value is
-     * expanded **digit by digit** (`#0af` → `#00aaff`), not shifted — `#0af` is
-     * `#00aaff`, not `#0000af`. 0.99.0 added the short form along with the colour
-     * functions; before that this function insisted on six digits and dropped the
-     * token instead.
+     * Parse `#RGB`, `#RRGGBB` (official Pi) as well as `#RGBA` and `#RRGGBBAA` (community themes).
      */
     private fun parseHex(text: String): Color? {
         val cleaned = text.removePrefix("#")
-        if (cleaned.length != 3 && cleaned.length != 6) return null
-        val digits = StringBuilder()
-        if (cleaned.length == 3) {
-            for (digit in cleaned) {
-                digits.append(digit).append(digit)
+        val rgbHex = when (cleaned.length) {
+            3, 4 -> buildString(6) {
+                for (i in 0 until 3) {
+                    val d = cleaned[i]
+                    append(d).append(d)
+                }
             }
-        } else {
-            digits.append(cleaned)
+            6, 8 -> cleaned.substring(0, 6)
+            else -> return null
         }
-        val value = digits.toString().toLongOrNull(16) ?: return null
+        val value = rgbHex.toLongOrNull(16) ?: return null
         return Color(0xFF000000L or value)
+    }
+
+    private val CSS_RGB_PATTERN = Regex(
+        "^rgba?\\(\\s*([0-9.]+)(%?)\\s*[,\\s]\\s*([0-9.]+)(%?)\\s*[,\\s]\\s*([0-9.]+)(%?)(?:\\s*[,/]\\s*[0-9.%]+)?\\s*\\)$",
+        RegexOption.IGNORE_CASE,
+    )
+
+    private fun parseCssRgb(text: String): Color? {
+        val m = CSS_RGB_PATTERN.matchEntire(text) ?: return null
+        fun ch(numStr: String, pct: String): Int? {
+            val v = numStr.toDoubleOrNull() ?: return null
+            val scaled = if (pct == "%") v * 2.55 else v
+            return Math.round(scaled).toInt().coerceIn(0, 255)
+        }
+        val r = ch(m.groupValues[1], m.groupValues[2]) ?: return null
+        val g = ch(m.groupValues[3], m.groupValues[4]) ?: return null
+        val b = ch(m.groupValues[5], m.groupValues[6]) ?: return null
+        return okChannelsToColor(intArrayOf(r, g, b))
+    }
+
+    private val CSS_HSL_PATTERN = Regex(
+        "^hsla?\\(\\s*([+-]?[0-9.]+)(?:deg)?\\s*[,\\s]\\s*([0-9.]+)%?\\s*[,\\s]\\s*([0-9.]+)%?(?:\\s*[,/]\\s*[0-9.%]+)?\\s*\\)$",
+        RegexOption.IGNORE_CASE,
+    )
+
+    private fun parseCssHsl(text: String): Color? {
+        val m = CSS_HSL_PATTERN.matchEntire(text) ?: return null
+        val hRaw = m.groupValues[1].toDoubleOrNull() ?: return null
+        val sRaw = m.groupValues[2].toDoubleOrNull() ?: return null
+        val lRaw = m.groupValues[3].toDoubleOrNull() ?: return null
+        val h = ((hRaw % 360.0) + 360.0) % 360.0
+        val s = (if (sRaw > 1.0) sRaw / 100.0 else sRaw).coerceIn(0.0, 1.0)
+        val l = (if (lRaw > 1.0) lRaw / 100.0 else lRaw).coerceIn(0.0, 1.0)
+        val c = (1.0 - Math.abs(2.0 * l - 1.0)) * s
+        val x = c * (1.0 - Math.abs((h / 60.0) % 2.0 - 1.0))
+        val m0 = l - c / 2.0
+        val (r1, g1, b1) = when {
+            h < 60.0 -> Triple(c, x, 0.0)
+            h < 120.0 -> Triple(x, c, 0.0)
+            h < 180.0 -> Triple(0.0, c, x)
+            h < 240.0 -> Triple(0.0, x, c)
+            h < 300.0 -> Triple(x, 0.0, c)
+            else -> Triple(c, 0.0, x)
+        }
+        return okChannelsToColor(
+            intArrayOf(
+                Math.round((r1 + m0) * 255.0).toInt().coerceIn(0, 255),
+                Math.round((g1 + m0) * 255.0).toInt().coerceIn(0, 255),
+                Math.round((b1 + m0) * 255.0).toInt().coerceIn(0, 255),
+            ),
+        )
     }
 
     // ------------------------------------------------- OKLCH / OKHSL -> sRGB
@@ -1107,8 +1141,14 @@ object PiThemeLoader {
         return File(workspace, path.removePrefix("./"))
     }
 
+    private fun parseJsonObject(rawText: String): JsonObject? {
+        val cleaned = rawText.removePrefix("\uFEFF").trim()
+        if (cleaned.isEmpty()) return null
+        return runCatching { PiJson.parseObjectOrNull(cleaned) }.getOrNull()
+    }
+
     private fun readJson(file: File): JsonObject? =
-        runCatching { PiJson.parseObjectOrNull(file.readText()) }.getOrNull()
+        runCatching { parseJsonObject(file.readText(Charsets.UTF_8)) }.getOrNull()
 
     private fun JsonObject.str(key: String): String? =
         (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content

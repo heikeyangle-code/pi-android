@@ -23,6 +23,8 @@ fun PiPalette.toExtensionPalette(): Map<String, String> {
         "mdCode" to mdCode.hex(), "mdCodeBlock" to mdCodeBlock.hex(), "mdCodeBlockBorder" to mdCodeBlockBorder.hex(),
         "mdQuote" to mdQuote.hex(), "mdQuoteBorder" to mdQuoteBorder.hex(), "mdHr" to mdHr.hex(),
         "mdListBullet" to mdListBullet.hex(),
+        "scrollbarTrack" to scrollbarTrack.hex(), "scrollbarThumb" to scrollbarThumb.hex(),
+        "searchMatchBg" to searchMatchBg.hex(), "searchMatchText" to searchMatchText.hex(),
         "toolDiffAdded" to toolDiffAdded.hex(), "toolDiffRemoved" to toolDiffRemoved.hex(), "toolDiffContext" to toolDiffContext.hex(),
         "diffAdded" to toolDiffAdded.hex(), "diffRemoved" to toolDiffRemoved.hex(), "diffContext" to toolDiffContext.hex(),
         "selectedBg" to selectedBg.hex(), "userMessageBg" to userMessageBg.hex(),
@@ -31,11 +33,12 @@ fun PiPalette.toExtensionPalette(): Map<String, String> {
         "bashMode" to bashMode.hex(),
         "thinkingOff" to thinkingOff.hex(), "thinkingMinimal" to thinkingMinimal.hex(),
         "thinkingLow" to thinkingLow.hex(), "thinkingMedium" to thinkingMedium.hex(),
-        "thinkingHigh" to thinkingHigh.hex(), "thinkingXhigh" to thinkingXhigh.hex(),
+        "thinkingHigh" to thinkingHigh.hex(), "thinkingXhigh" to thinkingXhigh.hex(), "thinkingMax" to thinkingMax.hex(),
         "syntaxComment" to syntaxComment.hex(), "syntaxKeyword" to syntaxKeyword.hex(),
         "syntaxFunction" to syntaxFunction.hex(), "syntaxVariable" to syntaxVariable.hex(),
         "syntaxString" to syntaxString.hex(), "syntaxNumber" to syntaxNumber.hex(),
         "syntaxType" to syntaxType.hex(), "syntaxOperator" to syntaxOperator.hex(),
         "syntaxPunctuation" to syntaxPunctuation.hex(),
+        "pageBg" to pageBg.hex(), "cardBg" to cardBg.hex(), "infoBg" to infoBg.hex(),
     )
 }

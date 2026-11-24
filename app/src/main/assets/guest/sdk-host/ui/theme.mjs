@@ -18,16 +18,19 @@ export const DEFAULT_PALETTE = Object.freeze({
   mdLink: "#7dd3fc", mdLinkUrl: "#71717a", mdCode: "#fda4af", mdCodeBlock: "#a1a1aa",
   mdCodeBlockBorder: "#3f3f46", mdQuote: "#a1a1aa", mdQuoteBorder: "#3f3f46", mdHr: "#3f3f46",
   mdListBullet: "#7dd3fc",
+  scrollbarTrack: "#27272a", scrollbarThumb: "#71717a",
+  searchMatchBg: "#422f1a", searchMatchText: "#fde68a",
   toolDiffAdded: "#86efac", toolDiffRemoved: "#fca5a5", toolDiffContext: "#71717a",
   diffAdded: "#86efac", diffRemoved: "#fca5a5", diffContext: "#71717a",
   selectedBg: "#27272a", userMessageBg: "#18181b", customMessageBg: "#18181b", toolPendingBg: "#18181b",
   toolSuccessBg: "#14231a", toolErrorBg: "#2a1717",
   bashMode: "#86efac",
   thinkingOff: "#52525b", thinkingMinimal: "#71717a", thinkingLow: "#7dd3fc",
-  thinkingMedium: "#93c5fd", thinkingHigh: "#c4b5fd", thinkingXhigh: "#f0abfc",
+  thinkingMedium: "#93c5fd", thinkingHigh: "#c4b5fd", thinkingXhigh: "#f0abfc", thinkingMax: "#fb7185",
   syntaxComment: "#71717a", syntaxKeyword: "#c4b5fd", syntaxFunction: "#7dd3fc",
   syntaxVariable: "#e4e4e7", syntaxString: "#86efac", syntaxNumber: "#fde68a",
   syntaxType: "#93c5fd", syntaxOperator: "#a1a1aa", syntaxPunctuation: "#a1a1aa",
+  pageBg: "#0e1015", cardBg: "#151820", infoBg: "#262017",
 });
 
 const RESET_FG = "\x1b[39m";
@@ -40,6 +43,7 @@ const THINKING_BORDER_TOKENS = {
   medium: "thinkingMedium",
   high: "thinkingHigh",
   xhigh: "thinkingXhigh",
+  max: "thinkingMax",
 };
 
 function rgb(hex) {
@@ -86,7 +90,7 @@ export function createTheme(initial = DEFAULT_PALETTE) {
   const real = {
     name: "app",
     get appearance() {
-      return isLightHex(palette.userMessageBg ?? palette.selectedBg) ? "light" : "dark";
+      return isLightHex(palette.pageBg ?? palette.userMessageBg ?? palette.selectedBg) ? "light" : "dark";
     },
     get colors() {
       return { ...palette };

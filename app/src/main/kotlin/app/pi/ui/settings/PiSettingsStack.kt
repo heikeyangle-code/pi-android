@@ -418,6 +418,7 @@ fun PiSettingsStack(
         other -> "other" to 1
         currentGroup == "tools" -> "tools" to 1
         currentGroup == "prompts" -> "prompts" to 1
+        currentGroup == "appearance" -> "appearance" to 1
         currentGroup != null -> "group:$currentGroup" to (if (resources || other) 2 else 1)
         resources -> "resources" to 1
         else -> "home" to 0
@@ -530,6 +531,20 @@ fun PiSettingsStack(
                     contentPadding = contentPadding,
                     access = extensionsAccess,
                     store = activeStore,
+                    onSettingWritten = handleSettingWritten,
+                    onBack = {
+                        groupId = null
+                        highlightKey = null
+                    },
+                )
+
+                route == "appearance" -> AppearanceScreen(
+                    store = activeStore,
+                    agentDir = paths.agentDir,
+                    freshness = rowsEpoch,
+                    contentPadding = contentPadding,
+                    knownThemes = knownThemes,
+                    themeError = themeError,
                     onSettingWritten = handleSettingWritten,
                     onBack = {
                         groupId = null
