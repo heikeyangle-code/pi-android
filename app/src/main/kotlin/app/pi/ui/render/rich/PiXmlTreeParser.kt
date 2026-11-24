@@ -62,7 +62,7 @@ internal object PiXmlTreeParser {
                 val wrapped = "<fragment>\n$stripped\n</fragment>"
                 if (wrapped.length <= limits.maxChars) {
                     val frag = parseDocument(wrapped, limits)
-                    if (frag is XmlTreeResult.Tree && frag.root.children.count { it is XmlElementNode } >= 2) {
+                    if (frag is XmlTreeResult.Tree && frag.root.children.size >= 2) {
                         return frag
                     }
                 }
