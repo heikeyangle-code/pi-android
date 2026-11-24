@@ -185,10 +185,18 @@ class HostEngineApi(private val commands: HostCommands) {
     /** 中止当前这一轮。 */
     suspend fun abort() { write("session.abort") }
 
-    /** @return 导出文件的路径（宿主按 `outputPath` 或默认命名）。 */
-    suspend fun exportHtml(outputPath: String? = null): String =
-        PiResponses.exportResult(read("session.export", obj { outputPath?.let { put("outputPath", JsonPrimitive(it)) } }, HostCommands.LONG_TIMEOUT_MS))
-            ?.path ?: throw HostCommandException("session.export", app.pi.i18n.tr("宿主没有返回导出路径", "Host did not return an export path"))
+    /** @return 导出文件的路径（宿主按 `outputPath` 或默认命名，并遵循当前激活主题）。 */
+    suspend fun exportHtml(outputPath: String? = null, themeName: String? = null): String =
+        PiResponses.exportResult(
+            read(
+                "session.export",
+                obj {
+                    outputPath?.let { put("outputPath", JsonPrimitive(it)) }
+                    themeName?.takeIf { it.isNotBlank() }?.let { put("themeName", JsonPrimitive(it)) }
+                },
+                HostCommands.LONG_TIMEOUT_MS,
+            ),
+        )?.path ?: throw HostCommandException("session.export", app.pi.i18n.tr("宿主没有返回导出路径", "Host did not return an export path"))
 
     // ---- 会话 ----
 

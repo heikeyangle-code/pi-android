@@ -71,6 +71,9 @@ export function register(reg, { controller, hub, surfaces, ui, themeHandle }) {
     return { expanded: ui.state.toolsExpanded };
   });
 
+  // 按需把扩展注册的自定义编辑器（`setEditorComponent`）以交互表面打开，关闭/提交时把草稿同步回原生输入框。
+  reg.add("ui.openCustomEditor", () => ui.openCustomEditor());
+
   // App 主题换了：整体换色板，同步官方组件明暗主题，已挂载的表面全部重绘。
   reg.add("ui.palette", (args) => {
     if (typeof args.palette !== "object" || args.palette === null) throw new HostError(ERR.BAD_ARGS, "palette 必须是对象");

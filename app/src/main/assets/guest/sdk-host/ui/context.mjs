@@ -423,6 +423,67 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
     return { lines: nextLines, cursorLine: safeLine, cursorCol: replacedBefore.length };
   }
 
+  /** 按需挂载扩展注册的 `setEditorComponent`（保留手机原生输入法为默认，同时给 VimEditor 等扩展提供完整可交互表面）。 */
+  async function openCustomEditor() {
+    if (typeof state.customEditorFactory !== "function") {
+      return { opened: false, reason: "当前没有扩展注册自定义编辑器" };
+    }
+    await Promise.resolve(lazyLoaders.ensureKeybindings?.());
+    const editorTheme = {
+      borderColor: (s) => theme.fg("border", s),
+      selectList: {
+        selectedPrefix: (s) => theme.fg("accent", s),
+        selectedText: (s) => theme.fg("accent", s),
+        description: (s) => theme.fg("muted", s),
+        scrollInfo: (s) => theme.fg("dim", s),
+        noMatch: (s) => theme.fg("muted", s),
+      },
+    };
+    let compRef = null;
+    const syncBack = (explicitText) => {
+      try {
+        const next =
+          typeof explicitText === "string"
+            ? explicitText
+            : typeof compRef?.getText === "function"
+              ? String(compRef.getText())
+              : null;
+        if (next !== null && next !== state.editorText) {
+          state.editorText = next;
+          hub.emit("ui.editorText", { text: state.editorText });
+        }
+      } catch {
+        // ignore getter failure on dispose
+      }
+    };
+    const surface = await surfaces.mount({
+      mode: "custom",
+      overlay: false,
+      onClose: () => syncBack(null),
+      build: (tui, surf) => {
+        const comp = state.customEditorFactory(tui, editorTheme, keybindings);
+        compRef = comp;
+        if (comp && typeof comp.setText === "function" && state.editorText) {
+          try {
+            comp.setText(state.editorText);
+          } catch {
+            // ignore initial text failure
+          }
+        }
+        if (comp && typeof comp === "object") {
+          const prevSubmit = typeof comp.onSubmit === "function" ? comp.onSubmit.bind(comp) : null;
+          comp.onSubmit = (value) => {
+            syncBack(typeof value === "string" ? value : null);
+            prevSubmit?.(value);
+            surfaces.close(surf.id);
+          };
+        }
+        return comp;
+      },
+    });
+    return { opened: true, surfaceId: surface.id };
+  }
+
   return {
     context,
     state,
@@ -430,6 +491,7 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
     dispatchTerminalInput,
     queryAutocomplete,
     applyAutocomplete,
+    openCustomEditor,
     setLazyLoaders(loaders) {
       lazyLoaders = loaders ?? {};
     },

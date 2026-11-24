@@ -194,6 +194,7 @@ fun SessionStatsSheet(
                     ContextBlock(
                         stats = stats,
                         autoCompaction = state.meta.autoCompaction,
+                        autoRetry = state.meta.autoRetry,
                         modelContextWindow = state.meta.model?.contextWindow,
                     )
                     UsageBlock(
@@ -222,6 +223,19 @@ fun SessionStatsSheet(
                             StatLine(tr("会话 ID", "Session ID"), stats.sessionId ?: state.meta.sessionId ?: "—", mono = true)
                             HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
                             StatLine(tr("会话文件", "Session File"), stats.sessionFile ?: state.meta.sessionFile ?: tr("（尚未落盘）", "(not saved yet)"), mono = true)
+                            val primaryModel = state.meta.model?.let { "${it.provider}/${it.id}" }
+                            val routed = state.meta.routedModel?.takeIf { it.isNotBlank() && it != primaryModel }
+                            if (routed != null) {
+                                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                                StatLine(tr("路由模型", "Routed Model"), routed, mono = true)
+                            }
+                            if (state.meta.scopedModelCount > 0) {
+                                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                                StatLine(
+                                    tr("模型范围", "Scoped Models"),
+                                    tr("${state.meta.scopedModelCount} 个已选模型", "${state.meta.scopedModelCount} scoped models"),
+                                )
+                            }
                             HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
                             StatLine(
                                 tr("消息统计", "Messages"),
@@ -252,6 +266,7 @@ private fun ContextBlock(
     stats: PiResponses.SessionStats,
     autoCompaction: Boolean,
     modelContextWindow: Long?,
+    autoRetry: Boolean? = null,
 ) {
     val palette = PiTheme.palette
     val usage = stats.contextUsage
@@ -262,7 +277,7 @@ private fun ContextBlock(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(1.dp, ringColor.copy(alpha = 0.30f)),
+        border = BorderStroke(PiSpacing.hairlineThin, ringColor.copy(alpha = 0.32f)),
     ) {
         Row(
             modifier = Modifier
@@ -277,20 +292,26 @@ private fun ContextBlock(
                 stroke = SHEET_RING_STROKE,
                 placeholderStyle = PiTheme.text.monoSmall,
             )
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(
+                    text = percent?.let { String.format(Locale.US, "%.1f", it) + "%" } ?: "—",
+                    style = PiTheme.text.mono.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold),
+                    color = ringColor,
+                )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Text(
-                        text = percent?.let { String.format(Locale.US, "%.1f", it) + "%" } ?: "—",
-                        style = PiTheme.text.mono.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold),
-                        color = ringColor,
-                    )
                     MiniBadge(
                         text = if (autoCompaction) tr("自动压缩开", "Auto-compact ON") else tr("自动压缩关", "Auto-compact OFF"),
                         tone = if (autoCompaction) palette.success else palette.muted,
                     )
+                    if (autoRetry != null) {
+                        MiniBadge(
+                            text = if (autoRetry) tr("自动重试开", "Auto-retry ON") else tr("自动重试关", "Auto-retry OFF"),
+                            tone = if (autoRetry) palette.accent else palette.muted,
+                        )
+                    }
                 }
                 Text(
                     text = contextWindowLine(usage, modelContextWindow),

@@ -75,6 +75,18 @@ internal fun ChatDockStatusAndWidgets(
             )
         }
         androidx.compose.animation.AnimatedVisibility(
+            visible = state.meta.retrying,
+            enter = androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(170)) + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(150)),
+            exit = androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(140)) + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)),
+        ) {
+            val attempt = state.meta.retryAttempt.coerceAtLeast(1)
+            StatusActionRow(
+                text = tr("正在自动重试（第 $attempt 次）…", "Auto-retrying (attempt $attempt)…"),
+                actionLabel = tr("中止", "Abort"),
+                onAction = { session.abortRetry() },
+            )
+        }
+        androidx.compose.animation.AnimatedVisibility(
             visible = state.queueSteering > 0 || state.queueFollowUp > 0,
             enter = androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(170)) + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(150)),
             exit = androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(140)) + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)),
@@ -195,7 +207,9 @@ internal fun ChatTransientPalettes(
     state: PiSessionViewModel.UiState,
     session: PiSessionViewModel,
     draft: String,
+    cursorOffset: Int,
     onDraft: (String) -> Unit,
+    onDraftWithCursor: (String, Int) -> Unit,
     mentionPrefix: String?,
     onPickCommand: (PiSlashCommand, String) -> Unit,
     argContext: ArgumentContext?,
@@ -248,20 +262,28 @@ internal fun ChatTransientPalettes(
         val mentions = state.mentions
         if (mentionPrefix != null && mentions != null && mentions.query == mentionPrefix && mentions.items.isNotEmpty()) {
             val prefix = mentionPrefix
+            val caret = cursorOffset.coerceIn(0, draft.length)
             MentionPalette(
                 candidates = mentions.items,
-                onPick = { item -> onDraft(PiFileMentions.apply(draft, prefix, item)) },
+                onPick = { item ->
+                    val before = draft.substring(0, caret)
+                    val after = draft.substring(caret)
+                    val replacedBefore = PiFileMentions.apply(before, prefix, item)
+                    onDraftWithCursor(replacedBefore + after, replacedBefore.length)
+                },
                 modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
             )
         }
 
         val extComp = state.extCompletions
+        val caret = cursorOffset.coerceIn(0, draft.length)
         if (
             paletteQuery == null &&
             argContext == null &&
             mentionPrefix == null &&
             extComp != null &&
             extComp.draft == draft &&
+            extComp.cursorOffset == caret &&
             extComp.items.isNotEmpty()
         ) {
             ExtensionAutocompletePalette(
@@ -271,7 +293,8 @@ internal fun ChatTransientPalettes(
                         draft = draft,
                         item = item,
                         prefix = extComp.prefix,
-                        onApplied = onDraft,
+                        cursorOffset = caret,
+                        onApplied = onDraftWithCursor,
                     )
                 },
                 modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),

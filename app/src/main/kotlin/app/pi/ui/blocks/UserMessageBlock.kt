@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -131,8 +132,12 @@ fun UserMessageBlock(
                 verticalArrangement = Arrangement.spacedBy(PiSpacing.blockGap),
             ) {
                 if (item.text.isNotEmpty()) {
+                    val transform = app.pi.ui.extension.LocalMarkdownTransform.current
+                    val shownText by androidx.compose.runtime.produceState(item.text, item.key, item.text, transform) {
+                        value = if (transform == null) item.text else transform.transform(item.text, "user", item.key)
+                    }
                     PiMarkdownText(
-                        markdown = item.text,
+                        markdown = shownText,
                         modifier = Modifier,
                         textColor = palette.userMessageText,
                         // 用户自己消息里 markdown 写的图：与同一个气泡里那张附件网格走同一个

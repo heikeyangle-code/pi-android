@@ -175,6 +175,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** 扩展 `addAutocompleteProvider` 补全链的一次应答。 */
     data class ExtensionCompletions(
         val draft: String,
+        val cursorOffset: Int,
         val prefix: String,
         val items: List<app.pi.host.HostCommands.ExtensionCompletion>,
     )
@@ -229,6 +230,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          * B6): a missed `compaction_end` would otherwise leave this true forever.
          */
         val compacting: Boolean = false,
+        /** pi 正在执行自动退避重试（`state.isRetrying`）。 */
+        val retrying: Boolean = false,
+        /** 当前重试次数（`state.retryAttempt`）。 */
+        val retryAttempt: Int = 0,
+        /** 宿主当前是否有 `!` bash 命令在跑（`state.isBashRunning`）。 */
+        val bashRunning: Boolean = false,
+        /** 已配置的模型轮换范围数量（`state.scopedModelCount`）。 */
+        val scopedModelCount: Int = 0,
+        /** 自动路由命中的实际模型（`provider/id`），未触发路由或与主模型一致时为空。 */
+        val routedModel: String? = null,
     )
 
     data class UiState(
@@ -1741,7 +1752,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     _state.update { s -> s.copy(stats = next) }
                 }
                 hostState.toSessionState()?.let { remote ->
-                    applySessionState(remote, hostState.availableThinkingLevels)
+                    applySessionState(remote, hostState.availableThinkingLevels, hostState)
                 }
             }
         }
@@ -3238,7 +3249,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { loadState(api) }
     }
 
-    private fun applySessionState(remote: PiResponses.SessionState, levels: List<String>? = null) {
+    private fun applySessionState(
+        remote: PiResponses.SessionState,
+        levels: List<String>? = null,
+        hostState: app.pi.host.HostState? = null,
+    ) {
+        val routed = hostState?.let { hs ->
+            val p = hs.routedModelProvider
+            val id = hs.routedModelId
+            when {
+                !p.isNullOrBlank() && !id.isNullOrBlank() -> "$p/$id"
+                !id.isNullOrBlank() -> id
+                else -> null
+            }
+        }
         _state.update { s ->
             val current = s.meta
             val level = remote.thinkingLevel?.takeIf { it.isNotBlank() } ?: current.thinkingLevel
@@ -3250,14 +3274,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     steeringMode = queueModeOf(remote.steeringMode) ?: current.steeringMode,
                     followUpMode = queueModeOf(remote.followUpMode) ?: current.followUpMode,
                     autoCompaction = remote.autoCompactionEnabled,
+                    autoRetry = hostState?.autoRetryEnabled ?: current.autoRetry,
                     sessionName = remote.sessionName?.takeIf { it.isNotBlank() },
                     sessionId = remote.sessionId,
                     sessionFile = remote.sessionFile,
                     messageCount = remote.messageCount,
-                    // `get_state` is the reconciliation for the event-tracked flag:
-                    // if `compaction_end` was dropped, the next attach/settle puts
-                    // this back to pi's own answer.
                     compacting = remote.isCompacting,
+                    retrying = hostState?.isRetrying ?: current.retrying,
+                    retryAttempt = hostState?.retryAttempt ?: current.retryAttempt,
+                    bashRunning = hostState?.isBashRunning ?: current.bashRunning,
+                    scopedModelCount = hostState?.scopedModelCount ?: current.scopedModelCount,
+                    routedModel = if (hostState != null) routed else current.routedModel,
                 ),
             )
         }
@@ -3265,9 +3292,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun loadState(api: HostEngineApi) {
         val remote = api.getState()
-        val cachedLevels = session?.commands?.stateStore?.state?.value?.availableThinkingLevels
-        applySessionState(remote, cachedLevels)
-        if (cachedLevels == null) {
+        val cached = session?.commands?.stateStore?.state?.value
+        applySessionState(remote, cached?.availableThinkingLevels, cached)
+        if (cached?.availableThinkingLevels == null) {
             refreshThinkingLevels()
         }
     }
@@ -3753,10 +3780,33 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         call(tr("执行快捷键", "Trigger shortcut")) { api -> api.triggerShortcut(shortcut) }
     }
 
-    /** 将终端按键序列送过扩展 `ctx.ui.onTerminalInput` 监听器链。 */
-    fun sendTerminalInput(data: String) {
+    /** 将终端按键或已提交输入送过扩展 `ctx.ui.onTerminalInput` 监听器链，并把 `{ consume, data }` 回传给输入框。 */
+    fun dispatchTerminalInput(
+        data: String,
+        onResult: ((consumed: Boolean, rewritten: String) -> Unit)? = null,
+    ) {
         val commands = session?.commands ?: return
-        viewModelScope.launch { runCatching { commands.uiTerminalInput(data) } }
+        viewModelScope.launch {
+            val res = runCatching { commands.uiTerminalInput(data) }.getOrNull() ?: return@launch
+            onResult?.invoke(res.first, res.second)
+        }
+    }
+
+    /** 兼容旧签名：单向送出硬件键序列。 */
+    fun sendTerminalInput(data: String) = dispatchTerminalInput(data, null)
+
+    /** 按需把扩展注册的自定义编辑器（`setEditorComponent`）以 TUI 交互表面打开。 */
+    fun openCustomEditor() {
+        val commands = session?.commands ?: return
+        viewModelScope.launch {
+            val opened = runCatching { commands.uiOpenCustomEditor() }.getOrDefault(false)
+            if (!opened) {
+                pushNotice(
+                    tr("当前没有扩展注册自定义编辑器。", "No extension has registered a custom editor."),
+                    Notice.Tone.Info,
+                )
+            }
+        }
     }
 
     /** 用户点 ✕：先 Esc（组件自己收尾、自己 `done()`），它不理就强关；强关会让扩展的 await 以 undefined 返回。 */
@@ -4472,13 +4522,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun requestExtensionAutocomplete(draft: String, cursorOffset: Int = draft.length) {
         val id = ++extCompletionId
         val commands = session?.commands ?: return
+        val clamped = cursorOffset.coerceIn(0, draft.length)
         viewModelScope.launch {
-            val (lines, cursorLine, cursorCol) = lineColOf(draft, cursorOffset)
+            val (lines, cursorLine, cursorCol) = lineColOf(draft, clamped)
             val reply = runCatching { commands.uiAutocomplete(lines, cursorLine, cursorCol) }.getOrNull() ?: return@launch
             if (id != extCompletionId) return@launch
             _state.update { s -> s.copy(
                 extCompletions = if (reply.items.isNotEmpty()) {
-                    ExtensionCompletions(draft = draft, prefix = reply.prefix, items = reply.items)
+                    ExtensionCompletions(draft = draft, cursorOffset = clamped, prefix = reply.prefix, items = reply.items)
                 } else {
                     null
                 },
@@ -4486,37 +4537,45 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 调官方 `AutocompleteProvider.applyCompletion` 精确应用补全，失败时安全回退前缀替换。 */
+    /** 调官方 `AutocompleteProvider.applyCompletion` 精确应用补全并回传新光标位置，失败时在光标处安全回退前缀替换。 */
     fun applyExtensionCompletion(
         draft: String,
         item: app.pi.host.HostCommands.ExtensionCompletion,
         prefix: String,
         cursorOffset: Int = draft.length,
-        onApplied: (String) -> Unit,
+        onApplied: (nextDraft: String, nextCursor: Int) -> Unit,
     ) {
         val commands = session?.commands
+        val clamped = cursorOffset.coerceIn(0, draft.length)
         dismissExtensionAutocomplete()
-        if (commands == null) {
-            val fallback = if (prefix.isNotEmpty() && draft.endsWith(prefix)) {
-                draft.removeSuffix(prefix) + item.value
+        fun fallbackApply(): Pair<String, Int> {
+            val before = draft.substring(0, clamped)
+            val after = draft.substring(clamped)
+            val replacedBefore = if (prefix.isNotEmpty() && before.endsWith(prefix)) {
+                before.removeSuffix(prefix) + item.value
             } else {
-                draft + item.value
+                before + item.value
             }
-            onApplied(fallback)
+            return (replacedBefore + after) to replacedBefore.length
+        }
+        if (commands == null) {
+            val (text, nextCursor) = fallbackApply()
+            onApplied(text, nextCursor)
             return
         }
         viewModelScope.launch {
-            val (lines, cursorLine, cursorCol) = lineColOf(draft, cursorOffset)
+            val (lines, cursorLine, cursorCol) = lineColOf(draft, clamped)
             val applied = runCatching {
                 commands.uiAutocompleteApply(lines, cursorLine, cursorCol, item, prefix)
             }.getOrNull()
-            val nextDraft = applied?.lines?.joinToString("\n")
-                ?: if (prefix.isNotEmpty() && draft.endsWith(prefix)) {
-                    draft.removeSuffix(prefix) + item.value
-                } else {
-                    draft + item.value
-                }
-            onApplied(nextDraft)
+            if (applied != null) {
+                val nextText = applied.lines.joinToString("\n")
+                val nextCursor = offsetOfLineCol(applied.lines, applied.cursorLine, applied.cursorCol)
+                onApplied(nextText, nextCursor)
+            } else {
+                val (text, nextCursor) = fallbackApply()
+                onApplied(text, nextCursor)
+            }
         }
     }
 
@@ -4531,6 +4590,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
         val last = (lines.size - 1).coerceAtLeast(0)
         return Triple(lines, last, lines.getOrNull(last)?.length ?: 0)
+    }
+
+    private fun offsetOfLineCol(lines: List<String>, line: Int, col: Int): Int {
+        if (lines.isEmpty()) return 0
+        val targetLine = line.coerceIn(0, lines.lastIndex)
+        var acc = 0
+        for (i in 0 until targetLine) {
+            acc += lines[i].length + 1
+        }
+        return acc + col.coerceIn(0, lines[targetLine].length)
     }
 
     fun dismissExtensionAutocomplete() {

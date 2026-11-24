@@ -36,17 +36,21 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
@@ -54,6 +58,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -73,12 +78,16 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
+import app.pi.ui.components.PiSheet
+import app.pi.ui.components.PiType
 import app.pi.protocol.AssistantText
 import app.pi.protocol.DateSeparator
 import app.pi.protocol.ErrorText
@@ -248,6 +257,31 @@ internal fun ChatBody(
     // revision that merely gets aligned (the startup reconcile) does not.
     var draft by session.composerDraft.text
     var attachments by session.composerDraft.attachments
+    var draftSelection by remember(state.workspace.revision) { mutableStateOf(TextRange(draft.length)) }
+    var selectionRev by remember(state.workspace.revision) { mutableIntStateOf(0) }
+    var historyIndex by remember(state.workspace.revision) { mutableIntStateOf(-1) }
+    var promptHistoryOpen by remember { mutableStateOf(false) }
+
+    fun setDraftWithCursor(text: String, cursor: Int = text.length) {
+        val clamped = cursor.coerceIn(0, text.length)
+        draft = text
+        draftSelection = TextRange(clamped)
+        selectionRev += 1
+    }
+
+    val recentPrompts = remember(state.transcript) {
+        val seen = LinkedHashSet<String>()
+        val out = ArrayList<String>(20)
+        for (i in state.transcript.lastIndex downTo 0) {
+            val msg = state.transcript[i] as? UserMessage ?: continue
+            val text = msg.text.trim()
+            if (text.isNotEmpty() && seen.add(text)) {
+                out += text
+                if (out.size >= 20) break
+            }
+        }
+        out
+    }
 
     // 悬浮底部工作台与软键盘感知：
     // 软键盘升降由根 Column 的 imePadding() 同步承担（零 1 帧滞后）；键盘收起时聊天列表
@@ -402,7 +436,8 @@ internal fun ChatBody(
             var workingAttachments = attachments
 
             suspend fun appendPath(relativePath: String) {
-                draft = if (draft.isBlank()) relativePath else "$draft $relativePath"
+                historyIndex = -1
+                setDraftWithCursor(if (draft.isBlank()) relativePath else "$draft $relativePath")
             }
 
             suspend fun reportCopyFailure(failure: WorkspaceCopy) {
@@ -1332,7 +1367,15 @@ internal fun ChatBody(
     LaunchedEffect(fill?.seq) {
         if (fill != null) {
             if (!(fill.onlyIfEmpty && draft.isNotBlank())) {
-                draft = if (fill.append) draft + fill.text else fill.text
+                if (fill.append) {
+                    val start = draftSelection.min.coerceIn(0, draft.length)
+                    val end = draftSelection.max.coerceIn(start, draft.length)
+                    val next = draft.substring(0, start) + fill.text + draft.substring(end)
+                    setDraftWithCursor(next, start + fill.text.length)
+                } else {
+                    setDraftWithCursor(fill.text, fill.text.length)
+                }
+                historyIndex = -1
             }
             session.consumeComposerFill(fill.seq)
         }
@@ -1347,7 +1390,8 @@ internal fun ChatBody(
     // debounce is deliberately longer. That delays the list, it does not change what
     // the list contains: the query that runs is the one whose result is still wanted,
     // because `session.requestMentions` drops every superseded answer.
-    val mentionPrefix = PiFileMentions.prefixOf(draft)
+    val caret = draftSelection.end.coerceIn(0, draft.length)
+    val mentionPrefix = PiFileMentions.prefixOf(draft.substring(0, caret))
     // 命令名写完（出现空格）之后：给用法提示，扩展声明了补全的就去要候选。
     val argContext = remember(draft, state.commands) { argumentContextOf(draft, state.commands) }
     LaunchedEffect(argContext?.command?.name, argContext?.prefix) {
@@ -1367,18 +1411,18 @@ internal fun ChatBody(
             session.requestMentions(mentionPrefix)
         }
     }
-    // 扩展通过 `ctx.ui.addAutocompleteProvider` 注册的自动补全：在 `/` 命令、`@` 提及未占屏时自动防抖查询。
+    // 扩展通过 `ctx.ui.addAutocompleteProvider` 注册的自动补全：在 `/` 命令、`@` 提及未占屏时按真实光标防抖查询。
     val extAutocompleteEligible = state.ext.autocompleteCount > 0 &&
         draft.isNotEmpty() &&
         paletteQueryOf(draft) == null &&
         argContext == null &&
         mentionPrefix == null
-    LaunchedEffect(draft, extAutocompleteEligible) {
+    LaunchedEffect(draft, caret, extAutocompleteEligible) {
         if (!extAutocompleteEligible) {
             session.dismissExtensionAutocomplete()
         } else {
             delay(ARG_COMPLETION_DEBOUNCE_MS)
-            session.requestExtensionAutocomplete(draft)
+            session.requestExtensionAutocomplete(draft, caret)
         }
     }
 
@@ -1986,7 +2030,15 @@ internal fun ChatBody(
                 state = state,
                 session = session,
                 draft = draft,
-                onDraft = { draft = it },
+                cursorOffset = caret,
+                onDraft = {
+                    historyIndex = -1
+                    setDraftWithCursor(it)
+                },
+                onDraftWithCursor = { text, cursor ->
+                    historyIndex = -1
+                    setDraftWithCursor(text, cursor)
+                },
                 mentionPrefix = mentionPrefix,
                 onPickCommand = { command, args ->
                     dismissKeys()
@@ -2074,7 +2126,10 @@ internal fun ChatBody(
                     state = state,
                     session = session,
                     draft = draft,
-                    onDraft = { draft = it },
+                    onDraft = {
+                        historyIndex = -1
+                        setDraftWithCursor(it)
+                    },
                     attachments = attachments,
                     onAttachments = { attachments = it },
                     imeVisible = imeVisible,
@@ -2095,6 +2150,15 @@ internal fun ChatBody(
                         if (state.commandsLoaded || state.commands.isNotEmpty()) state.commands
                         else app.pi.ui.chat.builtinRows(emptyList())
                     }
+                    val insertMentionAtCursor: () -> Unit = {
+                        if (mentionPrefix == null) {
+                            val start = draftSelection.min.coerceIn(0, draft.length)
+                            val end = draftSelection.max.coerceIn(start, draft.length)
+                            val next = draft.substring(0, start) + "@" + draft.substring(end)
+                            historyIndex = -1
+                            setDraftWithCursor(next, start + 1)
+                        }
+                    }
                     Composer(
                         draft = draft,
                         onPickAttachment = { attachmentSheetOpen = true },
@@ -2103,7 +2167,13 @@ internal fun ChatBody(
                         modelLabel = modelLabel,
                         onOpenModel = { perform(ChatAction.PickModel) },
                         onCycleModel = { perform(ChatAction.CycleModel) },
-                        onDraftChange = { draft = it },
+                        onDraftChange = {
+                            historyIndex = -1
+                            draft = it
+                        },
+                        selection = draftSelection,
+                        selectionRevision = selectionRev,
+                        onSelectionChange = { draftSelection = it },
                         thinkingLevel = state.meta.thinkingLevel,
                         streaming = state.streaming,
                         canFollowUp = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
@@ -2111,31 +2181,41 @@ internal fun ChatBody(
                         onCycleThinking = { session.cycleThinkingLevel() },
                         onPickThinking = { sheet = ChatSheet.Thinking },
                         onOpenPalette = {
-                            draft = when (draft.trim()) {
-                                "" -> "/"
-                                "/" -> ""
-                                else -> if (draft.trimStart().startsWith("/")) draft else "/$draft"
-                            }
+                            historyIndex = -1
+                            setDraftWithCursor(
+                                when (draft.trim()) {
+                                    "" -> "/"
+                                    "/" -> ""
+                                    else -> if (draft.trimStart().startsWith("/")) draft else "/$draft"
+                                },
+                            )
                         },
                         onOpenBash = {
-                            draft = when (draft.trim()) {
-                                "" -> "!"
-                                "!" -> "!!"
-                                "!!" -> ""
-                                else -> if (draft.trimStart().startsWith("!")) draft else "!$draft"
-                            }
+                            historyIndex = -1
+                            setDraftWithCursor(
+                                when (draft.trim()) {
+                                    "" -> "!"
+                                    "!" -> "!!"
+                                    "!!" -> ""
+                                    else -> if (draft.trimStart().startsWith("!")) draft else "!$draft"
+                                },
+                            )
                         },
                         onOpenBashExcluded = {
-                            draft = when (draft.trim()) {
-                                "" -> "!!"
-                                "!!" -> ""
-                                else -> if (draft.trimStart().startsWith("!!")) draft else "!!${draft.trimStart().removePrefix("!")}"
-                            }
+                            historyIndex = -1
+                            setDraftWithCursor(
+                                when (draft.trim()) {
+                                    "" -> "!!"
+                                    "!!" -> ""
+                                    else -> if (draft.trimStart().startsWith("!!")) draft else "!!${draft.trimStart().removePrefix("!")}"
+                                },
+                            )
                         },
-                        onOpenMention = { if (PiFileMentions.prefixOf(draft) == null) draft += "@" },
+                        onOpenMention = insertMentionAtCursor,
                         onSteer = {
                             session.send(draft, attachments)
-                            draft = ""
+                            historyIndex = -1
+                            setDraftWithCursor("")
                             attachments = emptyList()
                             reArmTail()
                             dismissKeys()
@@ -2150,18 +2230,21 @@ internal fun ChatBody(
                                 }
                                 is ComposerRoute.Message -> {
                                     session.send(route.text, attachments)
-                                    draft = ""
+                                    historyIndex = -1
+                                    setDraftWithCursor("")
                                     attachments = emptyList()
                                     reArmTail()
                                     dismissKeys()
                                 }
                                 is ComposerRoute.Bash -> {
                                     session.runBash(route.command, route.excludeFromContext)
-                                    draft = ""
+                                    historyIndex = -1
+                                    setDraftWithCursor("")
                                     dismissKeys()
                                 }
                                 is ComposerRoute.Command -> {
-                                    draft = ""
+                                    historyIndex = -1
+                                    setDraftWithCursor("")
                                     dismissKeys()
                                     pick(route.command, route.args)
                                 }
@@ -2170,18 +2253,23 @@ internal fun ChatBody(
                         },
                         canClear = draft.isNotBlank() || attachments.isNotEmpty(),
                         onClear = {
-                            draft = ""
+                            historyIndex = -1
+                            setDraftWithCursor("")
                             attachments = emptyList()
                         },
                         onFollowUp = {
                             session.sendFollowUp(draft, attachments)
-                            draft = ""
+                            historyIndex = -1
+                            setDraftWithCursor("")
                             attachments = emptyList()
                             reArmTail()
                             dismissKeys()
                         },
                         onStop = {
-                            session.stop { restored -> draft = mergeRestoredQueue(restored, draft) }
+                            session.stop { restored ->
+                                historyIndex = -1
+                                setDraftWithCursor(mergeRestoredQueue(restored, draft))
+                            }
                         },
                         extensionChip = extensionChip,
                         onOpenExtensions = { widgetsInspectorOpen = true },
@@ -2190,6 +2278,44 @@ internal fun ChatBody(
                         },
                         onTerminalInputKey = if (state.ext.terminalInputCount > 0) {
                             session::sendTerminalInput
+                        } else {
+                            null
+                        },
+                        onTerminalInputText = if (state.ext.terminalInputCount > 0) {
+                            { data, onResult -> session.dispatchTerminalInput(data, onResult) }
+                        } else {
+                            null
+                        },
+                        hasPromptHistory = recentPrompts.isNotEmpty(),
+                        historyActive = historyIndex >= 0,
+                        onRecallLastPrompt = {
+                            val first = recentPrompts.firstOrNull()
+                            if (first != null) {
+                                historyIndex = 0
+                                setDraftWithCursor(first)
+                            }
+                        },
+                        onOpenPromptHistory = { promptHistoryOpen = true },
+                        onHistoryUp = if (recentPrompts.isNotEmpty()) {
+                            {
+                                val nextIdx = (historyIndex + 1).coerceAtMost(recentPrompts.lastIndex)
+                                historyIndex = nextIdx
+                                setDraftWithCursor(recentPrompts[nextIdx])
+                            }
+                        } else {
+                            null
+                        },
+                        onHistoryDown = if (historyIndex >= 0) {
+                            {
+                                val nextIdx = historyIndex - 1
+                                if (nextIdx < 0) {
+                                    historyIndex = -1
+                                    setDraftWithCursor("")
+                                } else {
+                                    historyIndex = nextIdx
+                                    setDraftWithCursor(recentPrompts[nextIdx])
+                                }
+                            }
                         } else {
                             null
                         },
@@ -2241,9 +2367,27 @@ internal fun ChatBody(
                 }
             },
             onInsertMention = {
-                if (PiFileMentions.prefixOf(draft) == null) draft += "@"
+                if (mentionPrefix == null) {
+                    val start = draftSelection.min.coerceIn(0, draft.length)
+                    val end = draftSelection.max.coerceIn(start, draft.length)
+                    val next = draft.substring(0, start) + "@" + draft.substring(end)
+                    historyIndex = -1
+                    setDraftWithCursor(next, start + 1)
+                }
             },
             onDismiss = { attachmentSheetOpen = false },
+        )
+    }
+
+    if (promptHistoryOpen && recentPrompts.isNotEmpty()) {
+        PromptHistorySheet(
+            prompts = recentPrompts,
+            onPick = { picked ->
+                historyIndex = recentPrompts.indexOf(picked)
+                setDraftWithCursor(picked)
+                promptHistoryOpen = false
+            },
+            onDismiss = { promptHistoryOpen = false },
         )
     }
 
@@ -2265,6 +2409,10 @@ internal fun ChatBody(
             statuses = state.ext.statuses,
             widgets = state.ext.widgets,
             editorTakeover = state.ext.editorTakeover,
+            onOpenCustomEditor = {
+                widgetsInspectorOpen = false
+                session.openCustomEditor()
+            },
             onInteract = { panel -> interactingWidgetKey = panel.key },
             onDismiss = { widgetsInspectorOpen = false },
             shortcuts = hubShortcuts,
@@ -2310,5 +2458,67 @@ internal fun ChatBody(
             // 与这个屏里其它 UI 层的失败（例如选择器什么都没返回）同一条路。
             onMessage = { session.notifyUser(it) },
         )
+    }
+}
+
+@Composable
+private fun PromptHistorySheet(
+    prompts: List<String>,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    PiSheet(onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSpacing.pageHorizontal)
+                .padding(bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = tr("历史消息", "Prompt History"),
+                    modifier = Modifier.weight(1f),
+                    style = PiType.title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = tr("最近 ${prompts.size} 条", "Last ${prompts.size}"),
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
+                )
+            }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 380.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(prompts) { text ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(PiShapes.cardInner)
+                            .background(MaterialTheme.colorScheme.surfaceContainer)
+                            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.5f), PiShapes.cardInner)
+                            .clickable(onClickLabel = tr("填入输入框", "Fill composer")) { onPick(text) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                    ) {
+                        Text(
+                            text = text,
+                            style = PiTheme.text.prose,
+                            color = palette.text,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
     }
 }

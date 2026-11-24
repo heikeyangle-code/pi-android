@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -59,9 +60,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,6 +76,7 @@ import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -152,7 +157,17 @@ internal fun Composer(
     extensionChip: ComposerExtensionChipState? = null,
     onOpenExtensions: (() -> Unit)? = null,
     onQuickInteractExtension: (() -> Unit)? = null,
+    selection: TextRange = TextRange(draft.length),
+    selectionRevision: Int = 0,
+    onSelectionChange: (TextRange) -> Unit = {},
     onTerminalInputKey: ((String) -> Unit)? = null,
+    onTerminalInputText: ((data: String, onResult: (consumed: Boolean, rewritten: String) -> Unit) -> Unit)? = null,
+    hasPromptHistory: Boolean = false,
+    historyActive: Boolean = false,
+    onRecallLastPrompt: (() -> Unit)? = null,
+    onOpenPromptHistory: (() -> Unit)? = null,
+    onHistoryUp: (() -> Unit)? = null,
+    onHistoryDown: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     val haptic = LocalHapticFeedback.current
@@ -306,15 +321,36 @@ internal fun Composer(
         }
 
         // 3) 文本输入区 + 右侧快捷清空
-        // 不在组合期间直接写 MutableState（旧代码每次外部修改 draft 都会同步写 field.value，引发额外重组帧与光标闪烁）。
+        // 严格保护中文/日文 IME 组合态（composition）：用户正常输入期间绝不覆盖 fieldState；
+        // 仅在外部程序修改 draft 或显式推进 selectionRevision（如 pasteToEditor / @ 提及 / 自动补全 / 历史召回）时同步光标。
+        val clampedExternalSel = TextRange(
+            selection.start.coerceIn(0, draft.length),
+            selection.end.coerceIn(0, draft.length),
+        )
         var fieldState by remember {
-            mutableStateOf(TextFieldValue(text = draft, selection = TextRange(draft.length)))
+            mutableStateOf(TextFieldValue(text = draft, selection = clampedExternalSel))
         }
-        val activeValue = if (fieldState.text == draft) {
+        var syncedRevision by remember { mutableIntStateOf(selectionRevision) }
+        LaunchedEffect(draft, selectionRevision) {
+            if (fieldState.text != draft || syncedRevision != selectionRevision) {
+                syncedRevision = selectionRevision
+                fieldState = TextFieldValue(
+                    text = draft,
+                    selection = TextRange(
+                        selection.start.coerceIn(0, draft.length),
+                        selection.end.coerceIn(0, draft.length),
+                    ),
+                )
+            }
+        }
+        val activeValue = if (fieldState.text == draft && syncedRevision == selectionRevision) {
             fieldState
         } else {
-            TextFieldValue(text = draft, selection = TextRange(draft.length))
+            TextFieldValue(text = draft, selection = clampedExternalSel)
         }
+        val latestDraft by rememberUpdatedState(draft)
+        val latestOnDraftChange by rememberUpdatedState(onDraftChange)
+        val latestOnSelectionChange by rememberUpdatedState(onSelectionChange)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -324,25 +360,95 @@ internal fun Composer(
             BasicTextField(
                 value = activeValue,
                 onValueChange = { updated ->
-                    val textChanged = updated.text != activeValue.text
+                    val prev = activeValue
+                    val textChanged = updated.text != prev.text
+                    val selectionChanged = updated.selection != prev.selection
                     fieldState = updated
+                    if (selectionChanged) onSelectionChange(updated.selection)
                     if (textChanged) onDraftChange(updated.text)
+                    // 软键盘输入法桥接扩展 `ctx.ui.onTerminalInput`：仅在非 IME 拼音组合态且发生单步文本变更时派发，
+                    // 若扩展拦截（consume）或重写（data），在草稿未被后续输入覆盖的前提下回滚或原地替换。
+                    if (
+                        textChanged &&
+                        onTerminalInputText != null &&
+                        prev.composition == null &&
+                        updated.composition == null
+                    ) {
+                        val edit = detectSingleTextEdit(prev.text, updated.text)
+                        if (edit != null) {
+                            val expectedText = updated.text
+                            val prevText = prev.text
+                            val prevSel = prev.selection
+                            onTerminalInputText(edit.sequence) { consumed, rewritten ->
+                                if (latestDraft != expectedText) return@onTerminalInputText
+                                if (consumed) {
+                                    val restoredSel = TextRange(
+                                        prevSel.start.coerceIn(0, prevText.length),
+                                        prevSel.end.coerceIn(0, prevText.length),
+                                    )
+                                    fieldState = TextFieldValue(text = prevText, selection = restoredSel)
+                                    latestOnSelectionChange(restoredSel)
+                                    latestOnDraftChange(prevText)
+                                } else if (rewritten != edit.sequence) {
+                                    val prefix = expectedText.substring(0, edit.prefixLen)
+                                    val suffix = expectedText.substring(expectedText.length - edit.suffixLen)
+                                    val nextText = prefix + rewritten + suffix
+                                    val nextCursor = (edit.prefixLen + rewritten.length).coerceIn(0, nextText.length)
+                                    val nextSel = TextRange(nextCursor, nextCursor)
+                                    fieldState = TextFieldValue(text = nextText, selection = nextSel)
+                                    latestOnSelectionChange(nextSel)
+                                    latestOnDraftChange(nextText)
+                                }
+                            }
+                        }
+                    }
                 },
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = lineHeightDp, max = fieldMaxHeight)
                     .onFocusChanged { focused = it.isFocused }
-                    .then(
-                        if (onTerminalInputKey != null) {
-                            Modifier.onPreviewKeyEvent { event ->
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown) {
+                            when {
+                                // 官方 Pi 快捷键：流式输出时 Esc 立即中止
+                                event.key == Key.Escape && streaming -> {
+                                    onStop()
+                                    return@onPreviewKeyEvent true
+                                }
+                                // 官方 Pi 快捷键：Shift+Tab 轮换思考等级
+                                event.key == Key.Tab && event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed -> {
+                                    onCycleThinking()
+                                    return@onPreviewKeyEvent true
+                                }
+                                // 外接键盘 Ctrl+Enter 直接发送（流式时优先引导）
+                                event.key == Key.Enter && event.isCtrlPressed && !event.isAltPressed -> {
+                                    if (streaming && canSteer) {
+                                        onSteer()
+                                        return@onPreviewKeyEvent true
+                                    } else if (!streaming) {
+                                        onSend()
+                                        return@onPreviewKeyEvent true
+                                    }
+                                }
+                                // 官方 Pi 输入历史：空草稿或浏览历史时 ↑ / ↓ 翻阅上一条/下一条消息
+                                event.key == Key.DirectionUp && !event.isCtrlPressed && !event.isAltPressed && !event.isShiftPressed &&
+                                    onHistoryUp != null && (draft.isEmpty() || historyActive) -> {
+                                    onHistoryUp()
+                                    return@onPreviewKeyEvent true
+                                }
+                                event.key == Key.DirectionDown && !event.isCtrlPressed && !event.isAltPressed && !event.isShiftPressed &&
+                                    onHistoryDown != null && historyActive -> {
+                                    onHistoryDown()
+                                    return@onPreviewKeyEvent true
+                                }
+                            }
+                            if (onTerminalInputKey != null) {
                                 val seq = terminalSequenceOf(event)
                                 if (seq != null) onTerminalInputKey(seq)
-                                false
                             }
-                        } else {
-                            Modifier
-                        },
-                    ),
+                        }
+                        false
+                    },
                 textStyle = composerTextStyle.copy(color = MaterialTheme.colorScheme.onSurface),
                 maxLines = COMPOSER_MAX_LINES,
                 cursorBrush = SolidColor(if (isBash) palette.bashMode else palette.accent),
@@ -381,8 +487,9 @@ internal fun Composer(
             }
         }
 
-        // 4) 底部操作工具栏：左侧高频直达键（/、@、!、📎），右侧流式控制或主发送按钮
+        // 4) 底部操作工具栏：左侧高频直达键（/、@、!、📎、历史召回），右侧流式控制或主发送按钮
         val showDeliveryPills = streaming && (canSteer || canFollowUp)
+        val activeCaret = activeValue.selection.end.coerceIn(0, draft.length)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -402,7 +509,7 @@ internal fun Composer(
                 ComposerQuickKey(
                     label = "@",
                     contentDescription = tr("提及工作区文件", "Mention workspace file"),
-                    active = app.pi.ui.chat.PiFileMentions.prefixOf(draft) != null,
+                    active = app.pi.ui.chat.PiFileMentions.prefixOf(draft.substring(0, activeCaret)) != null,
                     activeColor = palette.accent,
                     onClick = onOpenMention,
                 )
@@ -427,6 +534,35 @@ internal fun Composer(
                         modifier = Modifier.size(19.dp),
                         tint = palette.muted,
                     )
+                }
+                if (draft.isEmpty() && !streaming && hasPromptHistory && onRecallLastPrompt != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .combinedClickable(
+                                onClickLabel = tr("召回上一条消息（长按查看历史）", "Recall last prompt (long-press for history)"),
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onRecallLastPrompt()
+                                },
+                                onLongClickLabel = if (onOpenPromptHistory != null) tr("打开历史消息", "Open prompt history") else null,
+                                onLongClick = onOpenPromptHistory?.let { open ->
+                                    {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        open()
+                                    }
+                                },
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.History,
+                            contentDescription = tr("历史消息", "Prompt history"),
+                            modifier = Modifier.size(19.dp),
+                            tint = palette.muted,
+                        )
+                    }
                 }
             }
 
@@ -783,6 +919,45 @@ private fun terminalSequenceOf(event: KeyEvent): String? {
         return "\u001b" + cp.toChar()
     }
     return null
+}
+
+private data class SingleTextEdit(
+    val prefixLen: Int,
+    val suffixLen: Int,
+    val sequence: String,
+)
+
+/**
+ * 识别软键盘提交的单步纯插入（≤16 字符）或单字符退格，映射为 `ctx.ui.onTerminalInput` 序列。
+ * 整段粘贴或大范围替换返回 null，避免误拦剪贴板粘贴。
+ */
+private fun detectSingleTextEdit(oldText: String, newText: String): SingleTextEdit? {
+    if (oldText == newText) return null
+    val minLen = minOf(oldText.length, newText.length)
+    var prefix = 0
+    while (prefix < minLen && oldText[prefix] == newText[prefix]) prefix++
+    var suffix = 0
+    while (
+        suffix < minLen - prefix &&
+        oldText[oldText.length - 1 - suffix] == newText[newText.length - 1 - suffix]
+    ) {
+        suffix++
+    }
+    val deletedLen = oldText.length - prefix - suffix
+    val insertedLen = newText.length - prefix - suffix
+    return when {
+        deletedLen == 0 && insertedLen in 1..16 -> SingleTextEdit(
+            prefixLen = prefix,
+            suffixLen = suffix,
+            sequence = newText.substring(prefix, newText.length - suffix),
+        )
+        insertedLen == 0 && deletedLen == 1 -> SingleTextEdit(
+            prefixLen = prefix,
+            suffixLen = suffix,
+            sequence = "\u007f",
+        )
+        else -> null
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)

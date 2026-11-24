@@ -986,8 +986,9 @@ private fun PiSessionViewModel.sanitizeExportFileName(raw: String): String? {
 
 /** `/export <path>` 的 HTML 分支（pi 的分派）。 */
 private fun PiSessionViewModel.exportHtmlOnly(htmlName: String) {
+    val activeTheme = _theme.value.name.takeIf { it.isNotBlank() }
     call(tr("导出会话", "Export session")) { api ->
-        api.exportHtml("${guestWorkspace()}/$htmlName")
+        api.exportHtml("${guestWorkspace()}/$htmlName", themeName = activeTheme)
         publish(listOfNotNull(exportedHtml(htmlName)))
     }
 }
@@ -1002,8 +1003,9 @@ private fun PiSessionViewModel.exportJsonlOnly(jsonlName: String) {
 /** 普通导出：HTML（默认名）与会话文件（原名）各一份。 */
 private fun PiSessionViewModel.exportBoth() {
     val htmlName = SessionExportNaming.defaultHtmlName(_state.value.meta.sessionFile, System.currentTimeMillis())
+    val activeTheme = _theme.value.name.takeIf { it.isNotBlank() }
     call(tr("导出会话", "Export session")) { api ->
-        api.exportHtml("${guestWorkspace()}/$htmlName")
+        api.exportHtml("${guestWorkspace()}/$htmlName", themeName = activeTheme)
         publish(listOfNotNull(exportedHtml(htmlName), exportedSessionFile()))
     }
 }

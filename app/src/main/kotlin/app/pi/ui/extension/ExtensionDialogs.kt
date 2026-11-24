@@ -16,16 +16,23 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -40,6 +47,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -201,7 +210,8 @@ private fun SelectBody(
             .fillMaxWidth()
             .heightIn(max = DialogListMaxHeight)
             .clip(shape)
-            .border(PiSpacing.hairline, palette.borderMuted, shape),
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), shape),
     ) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
             SelectOptionRows(dialog, onAnswer)
@@ -210,12 +220,7 @@ private fun SelectBody(
 }
 
 /**
- * 长/宽 select 的 sheet 外壳 —— 与 [SelectBody] 共用选项行本体，只换容器。
- *
- * **协议一条不变**：`id` 仍按 `dialog.id` 一 id 一回包（VM 的 `answerDialog` 对不上头就
- * 丢弃）；`value` 点选项仍回原始 `ExtensionAnswer.Value(option)`（颜色只画不回，
- * `buildAnswer` 会剥转义）；`cancelled` back/scrim/取消钮都回 `Cancelled`；`timeout` 的
- * 倒计时与 VM 到点取消不经过这里，原样生效；`input`/`confirm`/`editor` 根本不进这个分支。
+ * 长/宽 select 的 sheet 外壳 —— 与 [SelectBody] 共用选项行本体，只换容器（使用 LazyColumn 保持长列表 60fps）。
  */
 @Composable
 private fun SelectSheetBody(
@@ -256,7 +261,8 @@ private fun SelectSheetBody(
                     .fillMaxWidth()
                     .heightIn(max = PiSettingsMetrics.sheetBodyMax)
                     .clip(shape)
-                    .border(PiSpacing.hairline, palette.borderMuted, shape),
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), shape),
             ) {
                 if (filtered.isEmpty()) {
                     Text(
@@ -266,8 +272,18 @@ private fun SelectSheetBody(
                         modifier = Modifier.padding(PiSpacing.cardPadding),
                     )
                 } else {
-                    Column(Modifier.verticalScroll(rememberScrollState())) {
-                        SelectOptionRows(dialog.id, filtered, onAnswer)
+                    LazyColumn(Modifier.fillMaxWidth()) {
+                        itemsIndexed(filtered, key = { index, opt -> "$index:$opt" }) { index, option ->
+                            if (index > 0) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(PiSpacing.hairlineThin)
+                                        .background(palette.borderMuted.copy(alpha = 0.45f)),
+                                )
+                            }
+                            SelectOptionRow(dialog.id, option, onAnswer)
+                        }
                     }
                 }
             }
@@ -288,6 +304,7 @@ private fun EditorSheetBody(
 ) {
     val lines = remember(draft) { if (draft.isEmpty()) 0 else draft.count { it == '\n' } + 1 }
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val haptic = LocalHapticFeedback.current
     PiSettingsSheet(onDismiss = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) }) {
         Column(
             Modifier
@@ -322,30 +339,58 @@ private fun EditorSheetBody(
                     color = PiTheme.palette.dim,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        tr("粘贴", "Paste"),
+                    Row(
                         modifier = Modifier
+                            .heightIn(min = 32.dp)
                             .clip(CircleShape)
                             .background(PiTheme.palette.accent.copy(alpha = 0.12f))
                             .clickable(role = Role.Button) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 val clip = clipboard.getText()?.text
                                 if (!clip.isNullOrEmpty()) onDraftChange(if (draft.isEmpty()) clip else draft + clip)
                             }
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                        color = PiTheme.palette.accent,
-                    )
-                    if (draft.isNotEmpty()) {
+                            .padding(horizontal = 11.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.ContentPaste,
+                            contentDescription = null,
+                            tint = PiTheme.palette.accent,
+                            modifier = Modifier.size(13.dp),
+                        )
                         Text(
-                            tr("清空", "Clear"),
+                            tr("粘贴", "Paste"),
+                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                            color = PiTheme.palette.accent,
+                        )
+                    }
+                    if (draft.isNotEmpty()) {
+                        Row(
                             modifier = Modifier
+                                .heightIn(min = 32.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                                .clickable(role = Role.Button) { onDraftChange("") }
-                                .padding(horizontal = 10.dp, vertical = 4.dp),
-                            style = PiTheme.text.meta,
-                            color = PiTheme.palette.muted,
-                        )
+                                .clickable(role = Role.Button) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onDraftChange("")
+                                }
+                                .padding(horizontal = 11.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = null,
+                                tint = PiTheme.palette.muted,
+                                modifier = Modifier.size(13.dp),
+                            )
+                            Text(
+                                tr("清空", "Clear"),
+                                style = PiTheme.text.meta,
+                                color = PiTheme.palette.muted,
+                            )
+                        }
                     }
                 }
             }
@@ -355,61 +400,61 @@ private fun EditorSheetBody(
     }
 }
 
-/** 两个外壳共用的选项行本体：`○` + 扩展自己着色的标签，一点即答（无确认钮）。 */
+/** 两个外壳共用的选项行本体：扩展着色标签 + 触觉反馈，一点即答（无确认钮）。 */
 @Composable
 private fun SelectOptionRows(
     dialog: ExtensionDialog,
     onAnswer: (String, ExtensionAnswer) -> Unit,
-) = SelectOptionRows(dialog.id, dialog.options, onAnswer)
-
-@Composable
-private fun SelectOptionRows(
-    dialogId: String,
-    options: List<String>,
-    onAnswer: (String, ExtensionAnswer) -> Unit,
 ) {
-    options.forEachIndexed { index, option ->
+    dialog.options.forEachIndexed { index, option ->
         if (index > 0) {
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(PiSpacing.hairline)
-                    .background(PiTheme.palette.borderMuted),
+                    .height(PiSpacing.hairlineThin)
+                    .background(PiTheme.palette.borderMuted.copy(alpha = 0.45f)),
             )
         }
-        Row(
+        SelectOptionRow(dialog.id, option, onAnswer)
+    }
+}
+
+@Composable
+private fun SelectOptionRow(
+    dialogId: String,
+    option: String,
+    onAnswer: (String, ExtensionAnswer) -> Unit,
+) {
+    val haptic = LocalHapticFeedback.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onAnswer(dialogId, ExtensionAnswer.Value(option))
+            }
+            .padding(horizontal = 14.dp, vertical = 13.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .clickable(role = Role.Button) {
-                    // The label is *painted* with the extension's colour but *answered*
-                    // plain: `buildAnswer` strips escapes from a select answer, so a colour
-                    // the extension wrapped its own option in cannot come back as the
-                    // user's choice.
-                    onAnswer(dialogId, ExtensionAnswer.Value(option))
-                }
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(16.dp)
-                    .border(1.5.dp, PiTheme.palette.accent.copy(alpha = 0.55f), CircleShape),
-            )
-            ExtensionSpans(
-                spans = remember(option) { chromeSpans(option) },
-                defaultColor = PiTheme.palette.text,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-                richStyle = true,
-            )
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = PiTheme.palette.dim,
-                modifier = Modifier.size(16.dp),
-            )
-        }
+                .size(14.dp)
+                .border(1.5.dp, PiTheme.palette.accent.copy(alpha = 0.55f), CircleShape),
+        )
+        ExtensionSpans(
+            spans = remember(option) { chromeSpans(option) },
+            defaultColor = PiTheme.palette.text,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+            richStyle = true,
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = PiTheme.palette.dim,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 
@@ -479,11 +524,11 @@ private fun EditorBody(
 @Composable
 private fun DialogHeading(dialog: ExtensionDialog) {
     val palette = PiTheme.palette
-    val (glyph, badgeTint) = when (dialog.method) {
-        ExtensionDialogMethod.Confirm -> "!" to palette.warning
-        ExtensionDialogMethod.Select -> "☰" to palette.accent
-        ExtensionDialogMethod.Input -> "✎" to palette.accent
-        ExtensionDialogMethod.Editor -> "✎" to palette.accent
+    val (icon, badgeTint) = when (dialog.method) {
+        ExtensionDialogMethod.Confirm -> Icons.Filled.Warning to palette.warning
+        ExtensionDialogMethod.Select -> Icons.AutoMirrored.Filled.List to palette.accent
+        ExtensionDialogMethod.Input -> Icons.Filled.Edit to palette.accent
+        ExtensionDialogMethod.Editor -> Icons.Filled.Edit to palette.accent
     }
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -494,13 +539,14 @@ private fun DialogHeading(dialog: ExtensionDialog) {
             modifier = Modifier
                 .size(28.dp)
                 .clip(CircleShape)
-                .background(badgeTint.copy(alpha = 0.16f)),
+                .background(badgeTint.copy(alpha = 0.14f)),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = glyph,
-                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-                color = badgeTint,
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = badgeTint,
+                modifier = Modifier.size(16.dp),
             )
         }
         val titleText = dialog.title.ifBlank { dialog.method.fallbackTitle }
@@ -555,15 +601,22 @@ private fun CountdownRow(dialog: ExtensionDialog) {
 private fun DialogMessage(message: String?) {
     if (message.isNullOrBlank()) return
     Spacer(Modifier.height(DialogControlGap))
-    // `palette.text` when the extension coloured nothing. Note the guard above
-    // tests the *raw* string, so a message that is only colour escapes is not
-    // blank here and reserves its gap — which is what pi draws for it too.
-    ExtensionSpans(
-        spans = remember(message) { chromeSpans(message) },
-        defaultColor = PiTheme.palette.text,
-        style = MaterialTheme.typography.bodyMedium,
-        richStyle = true,
-    )
+    // 限制消息区最大高度并支持内部滚动与划词复制，防止扩展传入几十行预览/命令把「拒绝/允许」按钮顶出屏幕。
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 260.dp)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        SelectionContainer {
+            ExtensionSpans(
+                spans = remember(message) { chromeSpans(message) },
+                defaultColor = PiTheme.palette.text,
+                style = MaterialTheme.typography.bodyMedium,
+                richStyle = true,
+            )
+        }
+    }
 }
 
 /**

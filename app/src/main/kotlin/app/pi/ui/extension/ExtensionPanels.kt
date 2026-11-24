@@ -23,8 +23,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -39,9 +42,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,7 +64,6 @@ import app.pi.ui.blocks.ExpandLabel
 import app.pi.ui.blocks.toggleContent
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
-import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
@@ -126,108 +132,6 @@ fun ExtensionWidgetStack(
     }
 }
 
-/**
- * 紧凑单行扩展收起条：
- *  - 当软键盘弹出时自动折叠所有大块扩展面板（above/below widgets、footer），绝不遮挡消息或挤爆输入区；
- *  - 当用户手动折叠扩展区时，用这一行保留实时状态预览、计数、一键展开和直接「操控」入口。
- */
-@Composable
-fun ExtensionDockSummaryBar(
-    working: ExtWorking,
-    streaming: Boolean,
-    statusCount: Int,
-    widgetCount: Int,
-    hasChrome: Boolean,
-    interactivePanel: ExtPanel?,
-    collapsedByUser: Boolean,
-    imeVisible: Boolean,
-    onToggleCollapse: () -> Unit,
-    onOpenInspector: () -> Unit,
-    onInteract: ((ExtPanel) -> Unit)? = null,
-    modifier: Modifier = Modifier,
-) {
-    val palette = PiTheme.palette
-    val totalItems = widgetCount + (if (hasChrome) 1 else 0) + (if (statusCount > 0) 1 else 0)
-    val workingMessage = if (streaming && working.visible) working.message?.takeIf { it.isNotBlank() } else null
-    if (totalItems == 0 && workingMessage == null) return
-
-    val shape = RoundedCornerShape(12.dp)
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp)
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainer)
-            .border(1.dp, palette.borderMuted.copy(alpha = 0.55f), shape)
-            .clickable(
-                onClickLabel = if (imeVisible) {
-                    tr("查看全部扩展面板", "View all extension panels")
-                } else if (collapsedByUser) {
-                    tr("展开扩展面板", "Expand extension panels")
-                } else {
-                    tr("收起扩展面板", "Collapse extension panels")
-                },
-                onClick = if (imeVisible) onOpenInspector else onToggleCollapse,
-            )
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(7.dp)
-                .clip(CircleShape)
-                .background(if (workingMessage != null) palette.warning else palette.accent),
-        )
-        if (workingMessage != null) {
-            ExtensionSpans(
-                spans = remember(workingMessage) { chromeSpans(workingMessage) },
-                defaultColor = palette.text,
-                style = PiTheme.text.meta,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                richStyle = true,
-            )
-        } else {
-            val summary = buildString {
-                append(tr("扩展面板", "Extensions"))
-                val parts = buildList {
-                    if (widgetCount > 0) add(tr("$widgetCount 组件", "$widgetCount widget(s)"))
-                    if (statusCount > 0) add(tr("$statusCount 状态", "$statusCount status"))
-                    if (hasChrome) add(tr("顶/底栏", "header/footer"))
-                }
-                if (parts.isNotEmpty()) append(" · ").append(parts.joinToString(" · "))
-            }
-            Text(
-                text = summary,
-                modifier = Modifier.weight(1f),
-                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                color = palette.text,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (interactivePanel != null && onInteract != null) {
-            InteractPill(onClick = { onInteract(interactivePanel) })
-        }
-        if (imeVisible) {
-            Text(
-                text = tr("查看", "View"),
-                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                color = palette.accent,
-            )
-        } else {
-            Icon(
-                imageVector = if (collapsedByUser) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                contentDescription = if (collapsedByUser) tr("展开", "Expand") else tr("收起", "Collapse"),
-                modifier = Modifier.size(16.dp),
-                tint = palette.muted,
-            )
-        }
-    }
-}
-
 /** 扩展中心内展示的一键扩展快捷键条目（来自 `pi.registerShortcut`）。 */
 data class ExtensionHubShortcut(
     val key: String,
@@ -237,8 +141,8 @@ data class ExtensionHubShortcut(
 
 /**
  * 扩展中心（Extension Hub）：
- *  - 收纳实时状态（`setStatus`，完整多行不截断）、扩展面板（`setHeader`/`setWidget`/`setFooter`，
- *    支持一键「置顶」常驻输入框上方或「操控」打开交互表面）以及扩展快捷键（`registerShortcut`）。
+ *  - 收纳实时状态（`setStatus`，完整多行不截断，支持一键复制）、扩展面板（`setHeader`/`setWidget`/`setFooter`，
+ *    支持一键「收纳/恢复」或「操控」打开交互表面）以及扩展快捷键（`registerShortcut`）。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -254,8 +158,11 @@ fun ExtensionWidgetsSheet(
     hiddenWidgetKeys: Set<String> = emptySet(),
     onToggleHideWidget: ((String) -> Unit)? = null,
     onTriggerShortcut: ((String) -> Unit)? = null,
+    onOpenCustomEditor: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
+    val clipboard = LocalClipboardManager.current
+    val haptic = LocalHapticFeedback.current
     val statusEntries = remember(statuses) { statusRows(statuses.map { it.key to it.text }) }
     val panelCount = widgets.size + (if (header != null) 1 else 0) + (if (footer != null) 1 else 0)
     val subtitle = buildList {
@@ -296,7 +203,7 @@ fun ExtensionWidgetsSheet(
                 val closeLabel = tr("关闭", "Close")
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(34.dp)
                         .clip(CircleShape)
                         .clickable(onClickLabel = closeLabel, onClick = onDismiss),
                     contentAlignment = Alignment.Center,
@@ -324,7 +231,7 @@ fun ExtensionWidgetsSheet(
                             .fillMaxWidth()
                             .clip(noticeShape)
                             .background(palette.infoBg)
-                            .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.5f), noticeShape)
+                            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.5f), noticeShape)
                             .padding(horizontal = 10.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -337,9 +244,19 @@ fun ExtensionWidgetsSheet(
                         )
                         Text(
                             text = tr("扩展编辑器已由原生输入框接管", "Extension editor is handled by the native composer"),
+                            modifier = Modifier.weight(1f),
                             style = PiTheme.text.meta,
                             color = palette.muted,
                         )
+                        if (onOpenCustomEditor != null) {
+                            InteractPill(
+                                label = tr("打开", "Open"),
+                                onClick = {
+                                    onDismiss()
+                                    onOpenCustomEditor()
+                                },
+                            )
+                        }
                     }
                 }
 
@@ -350,33 +267,51 @@ fun ExtensionWidgetsSheet(
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         statusEntries.forEach { entry ->
-                            val rowShape = RoundedCornerShape(11.dp)
+                            val rowShape = RoundedCornerShape(12.dp)
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(rowShape)
                                     .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                                    .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.45f), rowShape)
-                                    .padding(horizontal = 11.dp, vertical = 8.dp),
-                                verticalArrangement = Arrangement.spacedBy(3.dp),
+                                    .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.45f), rowShape)
+                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
-                                if (entry.key.isNotEmpty()) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(palette.accent),
+                                    )
+                                    Text(
+                                        text = entry.key.ifEmpty { tr("状态", "Status") },
+                                        modifier = Modifier.weight(1f),
+                                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+                                        color = palette.dim,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    val copyLabel = tr("复制状态", "Copy status")
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(CircleShape)
+                                            .clickable(role = Role.Button, onClickLabel = copyLabel) {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                clipboard.setText(AnnotatedString(chromeText(entry.text)))
+                                            },
+                                        contentAlignment = Alignment.Center,
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(palette.accent),
-                                        )
-                                        Text(
-                                            text = entry.key,
-                                            style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
-                                            color = palette.dim,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
+                                        Icon(
+                                            imageVector = Icons.Filled.ContentCopy,
+                                            contentDescription = copyLabel,
+                                            modifier = Modifier.size(14.dp),
+                                            tint = palette.dim,
                                         )
                                     }
                                 }
@@ -574,11 +509,6 @@ fun ExtensionWorkingStrip(
     }
 
     val palette = PiTheme.palette
-    val glyph: String? = when {
-        frames.isNotEmpty() -> frames[frameIndex % frames.size]
-        explicitEmptyFrames -> null
-        else -> "◌"
-    }
     val pillShape = RoundedCornerShape(10.dp)
     Row(
         modifier = modifier
@@ -586,19 +516,30 @@ fun ExtensionWorkingStrip(
             .padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp)
             .clip(pillShape)
             .background(palette.infoBg)
-            .border(PiSpacing.hairline, palette.warning.copy(alpha = 0.28f), pillShape)
+            .border(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.28f), pillShape)
             .padding(horizontal = 10.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (glyph != null) {
-            ExtensionSpans(
-                spans = remember(glyph) { chromeSpans(glyph) },
-                defaultColor = palette.accent,
-                style = PiTheme.text.monoSmall,
-                maxLines = 1,
-                richStyle = true,
-            )
+        when {
+            frames.isNotEmpty() -> {
+                val glyph = frames[frameIndex % frames.size]
+                ExtensionSpans(
+                    spans = remember(glyph) { chromeSpans(glyph) },
+                    defaultColor = palette.accent,
+                    style = PiTheme.text.monoSmall,
+                    maxLines = 1,
+                    richStyle = true,
+                )
+            }
+            !explicitEmptyFrames -> {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(13.dp),
+                    strokeWidth = 1.8.dp,
+                    color = palette.accent,
+                    trackColor = palette.accent.copy(alpha = 0.16f),
+                )
+            }
         }
         if (message != null) {
             ExtensionSpans(
@@ -610,148 +551,6 @@ fun ExtensionWorkingStrip(
                 overflow = TextOverflow.Ellipsis,
                 richStyle = true,
             )
-        }
-    }
-}
-
-/**
- * 扩展状态（`ctx.ui.setStatus`）：单行紧凑可横滑徽章胶囊，点击展开自动换行。
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun ExtensionStatusStrip(
-    statuses: List<ExtStatus>,
-    editorTakeover: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    val rows = remember(statuses) { statusRows(statuses.map { it.key to it.text }) }
-    if (rows.isEmpty() && !editorTakeover) return
-    var expanded by remember { mutableStateOf(false) }
-    val palette = PiTheme.palette
-    val chipShape = RoundedCornerShape(9.dp)
-
-    val pill: @Composable (String, String?, Boolean) -> Unit = { keyText, valueText, isNotice ->
-        Row(
-            modifier = Modifier
-                .clip(chipShape)
-                .background(if (isNotice) palette.infoBg else MaterialTheme.colorScheme.surfaceContainer)
-                .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.5f), chipShape)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            if (keyText.isNotEmpty()) {
-                Text(
-                    text = keyText,
-                    style = PiTheme.text.monoSmall,
-                    color = palette.dim,
-                    maxLines = 1,
-                )
-            }
-            if (valueText != null) {
-                ExtensionSpans(
-                    spans = remember(valueText) { chromeSpans(valueText) },
-                    defaultColor = if (isNotice) palette.muted else palette.text,
-                    style = PiTheme.text.monoSmall,
-                    maxLines = if (expanded) Int.MAX_VALUE else 1,
-                    overflow = TextOverflow.Ellipsis,
-                    richStyle = true,
-                )
-            }
-        }
-    }
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp)
-            .toggleContent(expanded, { expanded = !expanded }),
-    ) {
-        if (expanded) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                rows.forEach { pill(it.key, it.text, false) }
-                if (editorTakeover) {
-                    pill("", tr("扩展编辑器已由原生输入框接管", "Extension editor handled by native composer"), true)
-                }
-            }
-        } else {
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                rows.forEach { pill(it.key, it.text, false) }
-                if (editorTakeover) {
-                    pill("", tr("扩展编辑器已由原生输入框接管", "Extension editor handled by native composer"), true)
-                }
-            }
-        }
-    }
-}
-
-/**
- * 扩展顶栏/底栏（`ctx.ui.setHeader` / `ctx.ui.setFooter`）轻量横幅。
- */
-@Composable
-internal fun ExtensionChromeBanner(
-    lines: List<String>,
-    collapsedRows: Int,
-    modifier: Modifier = Modifier,
-    onInteract: (() -> Unit)? = null,
-) {
-    val palette = PiTheme.palette
-    var expanded by remember { mutableStateOf(false) }
-    val rows = remember(lines) { trimEmptyEdgeLines(panelRows(lines)) }
-    if (rows.isEmpty()) return
-    val canExpand = rows.size > collapsedRows
-    val shown = if (expanded) rows else rows.take(collapsedRows)
-    val wide = remember(rows) { rows.any { isPreformatted(it) } }
-    val shape = RoundedCornerShape(10.dp)
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.45f), shape)
-            .then(if (canExpand) Modifier.toggleContent(expanded, { expanded = !expanded }) else Modifier)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .then(if (expanded) Modifier.heightIn(max = EXPANDED_MAX_HEIGHT).verticalScroll(rememberScrollState()) else Modifier),
-            ) {
-                Column(modifier = if (expanded && wide) Modifier.horizontalScroll(rememberScrollState()) else Modifier) {
-                    shown.forEach { line -> PanelLine(line, wrap = expanded && !isPreformatted(line)) }
-                }
-            }
-            if (canExpand || onInteract != null) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (canExpand) {
-                        ExpandLabel(
-                            expanded = expanded,
-                            expandText = tr("展开 ${rows.size} 行", "Show ${rows.size} lines"),
-                            collapseText = tr("收起", "Collapse"),
-                        )
-                    }
-                    if (onInteract != null) {
-                        InteractPill(onClick = onInteract)
-                    }
-                }
-            }
         }
     }
 }
@@ -768,12 +567,15 @@ internal fun ExtensionPanelCard(
     onInteract: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
+    val clipboard = LocalClipboardManager.current
+    val haptic = LocalHapticFeedback.current
     var expanded by remember { mutableStateOf(false) }
     val rows = remember(lines) { trimEmptyEdgeLines(panelRows(lines)) }
     if (rows.isEmpty()) return
     val canExpand = rows.size > collapsedRows
     val shown = if (expanded) rows else rows.take(collapsedRows)
-    val wide = remember(rows) { rows.any { isPreformatted(it) } }
+    val geometric = remember(shown) { hasGeometricBoxChars(shown) }
+    val wide = remember(shown) { shown.any { isPreformatted(it) } }
 
     BlockCard(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -785,11 +587,11 @@ internal fun ExtensionPanelCard(
                     else -> Modifier
                 },
             ),
-        borderColor = if (onInteract != null) palette.borderAccent.copy(alpha = 0.28f) else null,
+        borderColor = if (onInteract != null) palette.borderAccent.copy(alpha = 0.30f) else palette.borderMuted.copy(alpha = 0.45f),
         padding = BlockCardRowPadding,
         shape = RoundedCornerShape(12.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
             if (caption != null || canExpand || onInteract != null || onToggleHide != null || onHide != null) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -810,6 +612,26 @@ internal fun ExtensionPanelCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (expanded) {
+                        val copyLabel = tr("复制内容", "Copy content")
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .clickable(role = Role.Button, onClickLabel = copyLabel) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    clipboard.setText(AnnotatedString(rows.joinToString("\n") { chromeText(it) }))
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ContentCopy,
+                                contentDescription = copyLabel,
+                                tint = palette.muted,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
                     if (onToggleHide != null) {
                         VisibilityTogglePill(hidden = hiddenInChat, onClick = onToggleHide)
                     } else if (onHide != null) {
@@ -831,7 +653,13 @@ internal fun ExtensionPanelCard(
                 .fillMaxWidth()
                 .then(if (expanded) Modifier.heightIn(max = EXPANDED_MAX_HEIGHT) else Modifier)
             Column(modifier = if (expanded) body.verticalScroll(rememberScrollState()) else body) {
-                Column(modifier = if (expanded && wide) Modifier.horizontalScroll(rememberScrollState()) else Modifier) {
+                if (geometric) {
+                    GeometricAnsiLines(lines = shown, modifier = Modifier.fillMaxWidth())
+                } else if (expanded && wide) {
+                    Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        shown.forEach { line -> PanelLine(line, wrap = false, clipOverflow = true) }
+                    }
+                } else {
                     shown.forEach { line -> PanelLine(line, wrap = expanded && !isPreformatted(line)) }
                 }
             }
@@ -839,6 +667,13 @@ internal fun ExtensionPanelCard(
     }
 }
 
+/**
+ * 渲染扩展输出的 ANSI 文本块（自定义工具 `renderCall`/`renderResult`、自定义消息、自定义条目）：
+ *  - 当输出包含 Box Drawing / Block Elements（表格、边框、进度条、终端图表）时，自动切至像素级
+ *    [TerminalGridRow] 几何网格渲染，杜绝手机字体回退造成的断线与列错位；
+ *  - 普通文本与宽预格式化文本走 [ExtensionSpans]（完整保留 24-bit 色、样式与 OSC 8 可点链接），
+ *    并在横向滚动容器里取消强制省略号，避免宽行尾端被无故截断。
+ */
 @Composable
 internal fun RenderedAnsiBlock(
     lines: List<String>,
@@ -851,19 +686,26 @@ internal fun RenderedAnsiBlock(
     if (cleaned.isEmpty()) return
     val visible = if (expanded || cleaned.size <= collapsedLimit) cleaned else cleaned.take(collapsedLimit)
     val hidden = cleaned.size - visible.size
-    val hasWide = remember(visible) { visible.any { isPreformatted(it) } }
+    val hasGeometric = remember(visible) { hasGeometricBoxChars(visible) }
+    val hasWide = remember(visible) { !hasGeometric && visible.any { isPreformatted(it) } }
     val palette = PiTheme.palette
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-        if (hasWide) {
-            Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                visible.forEach { line ->
-                    PanelLine(line, wrap = false)
+        when {
+            hasGeometric -> {
+                GeometricAnsiLines(lines = visible, modifier = Modifier.fillMaxWidth())
+            }
+            hasWide -> {
+                Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    visible.forEach { line ->
+                        PanelLine(line, wrap = false, clipOverflow = true)
+                    }
                 }
             }
-        } else {
-            visible.forEach { line ->
-                PanelLine(line, wrap = true)
+            else -> {
+                visible.forEach { line ->
+                    PanelLine(line, wrap = true)
+                }
             }
         }
         if (hidden > 0 && expandHint != null) {
@@ -877,20 +719,80 @@ internal fun RenderedAnsiBlock(
     }
 }
 
+/**
+ * 像素级终端几何网格行组：不依赖 `BoxWithConstraints`（聊天 `LazyColumn` 行内 100% 安全），
+ * 通过 `rememberTextMeasurer` 计算单格宽高并支持横向滑动，保证扩展输出的框线、表格与进度条笔直无缝。
+ */
 @Composable
-private fun InteractPill(onClick: () -> Unit) {
+private fun GeometricAnsiLines(
+    lines: List<String>,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    val monoStyle = PiTheme.text.monoSmall
+    val fontSizePx = with(density) { monoStyle.fontSize.toPx() }
+    val cellMetrics = remember(measurer, monoStyle, fontSizePx) {
+        val cw = (measurer.measure("0123456789", monoStyle).size.width / 10f).coerceAtLeast(1f)
+        val ch = (cw * 2.0f).coerceIn(fontSizePx * 1.14f, fontSizePx * 1.32f).coerceAtLeast(1f)
+        cw to ch
+    }
+    val maxCols = remember(lines) { lines.maxOfOrNull { visibleColumns(it) }?.coerceAtLeast(1) ?: 1 }
+    Column(modifier = modifier.horizontalScroll(rememberScrollState())) {
+        lines.forEach { line ->
+            TerminalGridRow(
+                line = line,
+                cellWidthPx = cellMetrics.first,
+                cellHeightPx = cellMetrics.second,
+                monoStyle = monoStyle,
+                minCols = maxCols,
+            )
+        }
+    }
+}
+
+internal fun hasGeometricBoxChars(lines: List<String>): Boolean {
+    for (line in lines) {
+        var i = 0
+        while (i < line.length) {
+            val cp = Character.codePointAt(line, i)
+            if (isGeometricTerminalGlyph(cp)) return true
+            i += Character.charCount(cp)
+        }
+    }
+    return false
+}
+
+@Composable
+private fun InteractPill(
+    onClick: () -> Unit,
+    label: String = tr("操控", "Interact"),
+) {
     val palette = PiTheme.palette
+    val haptic = LocalHapticFeedback.current
     val shape = RoundedCornerShape(999.dp)
-    Box(
+    Row(
         modifier = Modifier
+            .heightIn(min = 28.dp)
             .clip(shape)
-            .background(palette.accent.copy(alpha = 0.16f))
-            .border(PiSpacing.hairline, palette.accent.copy(alpha = 0.45f), shape)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 9.dp, vertical = 3.dp),
+            .background(palette.accent.copy(alpha = 0.14f))
+            .border(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.38f), shape)
+            .clickable(role = Role.Button) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
+            .padding(horizontal = 9.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        Icon(
+            imageVector = Icons.Filled.TouchApp,
+            contentDescription = null,
+            tint = palette.accent,
+            modifier = Modifier.size(13.dp),
+        )
         Text(
-            text = tr("操控", "Interact"),
+            text = label,
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
             color = palette.accent,
             maxLines = 1,
@@ -901,19 +803,32 @@ private fun InteractPill(onClick: () -> Unit) {
 @Composable
 private fun VisibilityTogglePill(hidden: Boolean, onClick: () -> Unit) {
     val palette = PiTheme.palette
+    val haptic = LocalHapticFeedback.current
     val shape = RoundedCornerShape(999.dp)
-    Box(
+    Row(
         modifier = Modifier
+            .heightIn(min = 28.dp)
             .clip(shape)
             .background(if (!hidden) palette.accent.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceContainerHigh)
             .border(
-                PiSpacing.hairline,
-                if (!hidden) palette.accent.copy(alpha = 0.38f) else palette.borderMuted.copy(alpha = 0.55f),
+                PiSpacing.hairlineThin,
+                if (!hidden) palette.accent.copy(alpha = 0.34f) else palette.borderMuted.copy(alpha = 0.5f),
                 shape,
             )
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+            .clickable(role = Role.Button) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
+            .padding(horizontal = 9.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        Icon(
+            imageVector = if (hidden) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+            contentDescription = null,
+            tint = if (!hidden) palette.accent else palette.muted,
+            modifier = Modifier.size(13.dp),
+        )
         Text(
             text = if (hidden) tr("已收纳 · 恢复", "Hidden · Show") else tr("显示中 · 收纳", "Shown · Hide"),
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
@@ -926,15 +841,28 @@ private fun VisibilityTogglePill(hidden: Boolean, onClick: () -> Unit) {
 @Composable
 private fun HideWidgetPill(onClick: () -> Unit) {
     val palette = PiTheme.palette
+    val haptic = LocalHapticFeedback.current
     val shape = RoundedCornerShape(999.dp)
-    Box(
+    Row(
         modifier = Modifier
+            .heightIn(min = 28.dp)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.8f))
-            .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.5f), shape)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f))
+            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.45f), shape)
+            .clickable(role = Role.Button) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
+        Icon(
+            imageVector = Icons.Filled.VisibilityOff,
+            contentDescription = null,
+            tint = palette.muted,
+            modifier = Modifier.size(12.dp),
+        )
         Text(
             text = tr("收纳", "Hide"),
             style = PiTheme.text.meta,
@@ -945,14 +873,14 @@ private fun HideWidgetPill(onClick: () -> Unit) {
 }
 
 @Composable
-internal fun PanelLine(raw: String, wrap: Boolean) {
+internal fun PanelLine(raw: String, wrap: Boolean, clipOverflow: Boolean = false) {
     val spans = remember(raw) { chromeSpans(raw) }
     ExtensionSpans(
         spans = if (spans.all { it.text.isEmpty() }) listOf(app.pi.protocol.Ansi.Span(" ")) else spans,
         defaultColor = PiTheme.palette.muted,
         style = PiTheme.text.monoSmall,
         maxLines = if (wrap) Int.MAX_VALUE else 1,
-        overflow = TextOverflow.Ellipsis,
+        overflow = if (clipOverflow) TextOverflow.Clip else TextOverflow.Ellipsis,
         richStyle = true,
     )
 }
@@ -965,5 +893,5 @@ internal fun trimEmptyEdgeLines(rows: List<String>): List<String> {
 }
 
 private val CARD_SIDE_PADDING = 10.dp
-private val EXPANDED_MAX_HEIGHT = 200.dp
+private val EXPANDED_MAX_HEIGHT = 220.dp
 private val DEFAULT_STACK_MAX_HEIGHT = 136.dp

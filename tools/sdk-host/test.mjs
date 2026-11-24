@@ -859,6 +859,10 @@ try {
     const teRes = await h.call("ui.setToolsExpanded", { expanded: true });
     expect("ui.setToolsExpanded 同步工具展开状态并广播事件", teRes.ok && teRes.data.expanded === true && !!(await teEv.catch(() => null)));
 
+    // ui.openCustomEditor 无自定义编辑器工厂时安全返回 opened: false
+    const ceEmpty = await h.call("ui.openCustomEditor", {});
+    expect("ui.openCustomEditor 未注册自定义编辑器时返回 opened: false", ceEmpty.ok && ceEmpty.data?.opened === false, JSON.stringify(ceEmpty));
+
     // 扩展看到的 ctx.mode 必须是 "tui"（官方 interactive-mode 的取值）。未传 mode 时 SDK 回落到 "print"，
     // 所有按 `ctx.mode !== "tui"` 守卫的扩展（官方示例里的游戏等）会提示 "requires interactive mode" 而拒绝运行。
     const mCtx = h.frames.length;

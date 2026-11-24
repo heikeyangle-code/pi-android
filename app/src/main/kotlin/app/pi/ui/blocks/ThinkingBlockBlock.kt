@@ -128,7 +128,15 @@ fun ThinkingBlockBlock(
                 // 避免 150ms shrinkVertically 与收起锚点（TranscriptRowAnchor.onCollapse）及
                 // 触底跟随（TailFollow）互相拉扯，确保展开/收起与流式增长同时进行时零跳动、零闪烁。
                 if (expanded) {
-                    val bodyText = item.text.ifEmpty {
+                    val transform = app.pi.ui.extension.LocalMarkdownTransform.current
+                    val transformed by androidx.compose.runtime.produceState(item.text, item.key, item.text, item.streaming, transform) {
+                        value = if (item.streaming || item.text.isEmpty() || transform == null) {
+                            item.text
+                        } else {
+                            transform.transform(item.text, "thinking", item.key)
+                        }
+                    }
+                    val bodyText = transformed.ifEmpty {
                         if (item.streaming) tr("正在思考…", "Thinking…") else tr("（无思考内容）", "(No thinking content)")
                     }
                     val bodyContent: @Composable () -> Unit = {

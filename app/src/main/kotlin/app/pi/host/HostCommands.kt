@@ -494,6 +494,12 @@ class HostCommands(
         return consumed to next
     }
 
+    /** 按需把扩展注册的自定义编辑器（`setEditorComponent`）作为交互表面打开。 */
+    suspend fun uiOpenCustomEditor(): Boolean {
+        val res = client.callObject("ui.openCustomEditor")
+        return (res["opened"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
+    }
+
     // ---- 内部 ----
 
     private suspend fun reply(cmd: String, args: JsonObject = JsonObject(emptyMap()), timeoutMs: Long? = null): HostReply {
