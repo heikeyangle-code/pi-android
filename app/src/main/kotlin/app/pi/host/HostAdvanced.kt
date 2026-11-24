@@ -108,12 +108,35 @@ class HostAdvanced(private val commands: HostCommands) {
         return ModelsConfig(str(d["path"]).orEmpty(), bool(d["exists"]), providers, str(d["error"]))
     }
 
+    /** 保存完整 `models.json`（用于批量导入自定义供应商或修复损坏的 `models.json`），由宿主调官方 schema 校验落盘。 */
+    suspend fun setModelsConfig(config: JsonObject) {
+        commands.call("models.config.set", JsonObject(mapOf("config" to config)))
+    }
+
     /** 保存一个自定义供应商。校验失败 → [HostException]，`message` 是 SDK 的原话；磁盘上仍是上一份配置。 */
     suspend fun setProvider(id: String, provider: JsonObject) {
         commands.call("models.config.setProvider", JsonObject(mapOf("id" to JsonPrimitive(id), "provider" to provider)))
     }
 
     suspend fun removeProvider(id: String) { commands.call("models.config.removeProvider", JsonObject(mapOf("id" to JsonPrimitive(id)))) }
+
+    // ---- 命令与快捷键冲突诊断（catalog.diagnostics） ----
+    data class CatalogDiagnostic(val kind: String, val message: String, val path: String?)
+
+    suspend fun catalogDiagnostics(): List<CatalogDiagnostic> {
+        val d = commands.call("catalog.diagnostics").data
+        val out = ArrayList<CatalogDiagnostic>()
+        fun collect(key: String, kind: String) {
+            rows(d[key]).forEach { row ->
+                val msg = str(row["message"]) ?: str(row["warning"]) ?: str(row["error"]) ?: return@forEach
+                out += CatalogDiagnostic(kind = kind, message = msg, path = str(row["path"]) ?: str(row["extensionPath"]))
+            }
+        }
+        collect("commands", "command")
+        collect("shortcuts", "shortcut")
+        collect("extensions", "extension")
+        return out
+    }
 
     // ---- 内部 ----
     private fun cacheOf(d: JsonObject): CacheStatus {

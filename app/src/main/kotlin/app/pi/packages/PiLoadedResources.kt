@@ -54,9 +54,17 @@ object PiLoadedResources {
         val flags: List<Flag>,
         val shortcuts: List<Shortcut>,
         val events: List<String>,
+        val replaceable: Boolean = false,
+        val toolRenderers: List<String> = emptyList(),
+        val messageRenderers: List<String> = emptyList(),
+        val entryRenderers: List<String> = emptyList(),
+        val hasMarkdownTransformer: Boolean = false,
     ) {
-        /** 一个扩展注册的「东西」总数（命令 + 工具 + 参数 + 快捷键）。0 = 只监听事件。 */
-        val registered: Int get() = commands.size + tools.size + flags.size + shortcuts.size
+        /** 一个扩展注册的「东西」总数（命令 + 工具 + 参数 + 快捷键 + 渲染器 + Markdown 变换器）。 */
+        val registered: Int
+            get() = commands.size + tools.size + flags.size + shortcuts.size +
+                toolRenderers.size + messageRenderers.size + entryRenderers.size +
+                (if (hasMarkdownTransformer) 1 else 0)
     }
 
     data class Skill(
@@ -179,6 +187,11 @@ object PiLoadedResources {
         flags = rows(o["flags"]).map { Flag(str(it["name"]).orEmpty(), str(it["description"]), str(it["type"]) == "boolean") },
         shortcuts = rows(o["shortcuts"]).map { Shortcut(str(it["shortcut"]).orEmpty(), str(it["description"])) },
         events = (o["events"] as? JsonArray).orEmpty().mapNotNull { str(it) },
+        replaceable = bool(o["replaceable"]),
+        toolRenderers = (o["toolRenderers"] as? JsonArray).orEmpty().mapNotNull { str(it) },
+        messageRenderers = (o["messageRenderers"] as? JsonArray).orEmpty().mapNotNull { str(it) },
+        entryRenderers = (o["entryRenderers"] as? JsonArray).orEmpty().mapNotNull { str(it) },
+        hasMarkdownTransformer = bool(o["hasMarkdownTransformer"]),
     )
 
     private fun diagnostic(o: JsonObject): Diagnostic {

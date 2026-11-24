@@ -1793,8 +1793,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     val first = (obj?.get("first") as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
                     val boundId = (obj?.get("sessionId") as? JsonPrimitive)?.takeIf { it.isString }?.content
                     val curId = _state.value.meta.sessionId
-                    if (!first && boundId != null && boundId != curId) {
-                        // 扩展通过 ctx.newSession / ctx.switchSession / ctx.fork 切换了会话：同步刷新转写与元数据。
+                    if (!first && internalSessionTransitions.get() == 0 && boundId != null && boundId != curId) {
+                        // 仅在扩展主动通过 ctx.newSession / ctx.switchSession / ctx.fork 切换会话时同步刷新；
+                        // App 自身发起的切换由 afterSessionReplaced() 统一完成，避免重复回放与高亮跳闪。
                         viewModelScope.launch {
                             if (session !== engine) return@launch
                             refreshStateNow(engine.api)
@@ -3249,7 +3250,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { loadState(api) }
     }
 
-    private fun applySessionState(
+    internal fun applySessionState(
         remote: PiResponses.SessionState,
         levels: List<String>? = null,
         hostState: app.pi.host.HostState? = null,
@@ -3316,6 +3317,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** `get_available_models`, for the model picker. */
     fun refreshModels() {
         call(tr("读取模型列表", "Load models")) { api ->
+            val models = api.getAvailableModels()
+            _state.update { s -> s.copy(models = models) }
+        }
+    }
+
+    /** 对齐官方 ModelSelectorComponent：主动从各已连接供应商拉取最新模型目录并刷新列表。 */
+    fun refreshModelsCatalog() {
+        call(tr("刷新模型目录", "Refresh models")) { api ->
+            session?.auth?.let { auth -> runCatching { auth.refreshModels() } }
             val models = api.getAvailableModels()
             _state.update { s -> s.copy(models = models) }
         }
@@ -4960,6 +4970,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * path it will fail to open.
      */
     @Volatile internal var sessionOpenGeneration = 0L
+    internal val internalSessionTransitions = java.util.concurrent.atomic.AtomicInteger(0)
+
+    internal inline fun <T> withInternalSessionTransition(block: () -> T): T {
+        internalSessionTransitions.incrementAndGet()
+        return try {
+            block()
+        } finally {
+            internalSessionTransitions.decrementAndGet()
+        }
+    }
 
     internal fun guestSessionPath(file: File): String? {
         val sessionsRoot = runCatching { File(host.paths().agentDir, "sessions").canonicalPath }.getOrNull() ?: return null

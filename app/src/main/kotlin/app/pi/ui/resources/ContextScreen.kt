@@ -509,7 +509,7 @@ internal fun ContextScreen(
                 }
             }
 
-            // 2. 上下文说明文件（AGENTS.md + CLAUDE.md）
+            // 2. 上下文说明文件（对齐官方互斥优先级：每层目录仅加载首个命中的 AGENTS.override.md > AGENTS.md > CLAUDE.md）
             item(key = "context-card") {
                 val agentsEntry = if (isProject) projectAgentsEntry else globalAgentsEntry
                 val claudeEntry = if (isProject) projectClaudeEntry else globalClaudeEntry
@@ -519,11 +519,12 @@ internal fun ContextScreen(
                 val claudeGuest = if (isProject) "$guestCwd/CLAUDE.md" else "$guestAgentDir/CLAUDE.md"
                 val agentsDisplay = if (isProject) "AGENTS.md" else "~/.pi/agent/AGENTS.md"
                 val claudeDisplay = if (isProject) "CLAUDE.md" else "~/.pi/agent/CLAUDE.md"
+                val showClaude = claudeEntry != null || claudeSnap.bytes > 0L
 
                 Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                     ModelsSectionLabel(
-                        if (isProject) tr("项目上下文文件（与全局上下文共同加载）", "Project Context Files (Combined with Global)")
-                        else tr("全局上下文文件（所有项目共同加载）", "Global Context Files (Loaded in All Projects)"),
+                        if (isProject) tr("项目上下文文件（与全局上下文共同加载）", "Project Context File (Combined with Global)")
+                        else tr("全局上下文文件（所有项目共同加载）", "Global Context File (Loaded in All Projects)"),
                     )
                     ModelsCard {
                         Column {
@@ -542,21 +543,28 @@ internal fun ContextScreen(
                                 isActive = agentsEntry != null,
                                 onClick = { onEdit(agentsGuest) },
                             )
-                            ModelsDivider()
-                            PromptSlotRow(
-                                icon = Icons.AutoMirrored.Filled.Article,
-                                iconTint = palette.borderAccent,
-                                title = "CLAUDE.md",
-                                roleBadge = tr("兼容 Claude", "Claude Compat"),
-                                roleBadgeTone = palette.muted,
-                                path = claudeDisplay,
-                                hint = claudeSnap.preview.ifEmpty {
-                                    tr("兼容 Claude Code 的说明文件，与 AGENTS.md 同级拼入", "Claude Code compatible instructions, loaded alongside AGENTS.md")
-                                },
-                                fileBytes = claudeSnap.bytes,
-                                isActive = claudeEntry != null,
-                                onClick = { onEdit(claudeGuest) },
-                            )
+                            if (showClaude) {
+                                ModelsDivider()
+                                PromptSlotRow(
+                                    icon = Icons.AutoMirrored.Filled.Article,
+                                    iconTint = palette.borderAccent,
+                                    title = "CLAUDE.md",
+                                    roleBadge = tr("兼容", "Compat"),
+                                    roleBadgeTone = palette.muted,
+                                    path = claudeDisplay,
+                                    hint = claudeSnap.preview.ifEmpty {
+                                        tr("仅在同目录不存在 AGENTS.md 时加载（优先级：AGENTS.override.md > AGENTS.md > CLAUDE.md）", "Loaded only when AGENTS.md is absent in the same directory (priority: AGENTS.override.md > AGENTS.md > CLAUDE.md)")
+                                    },
+                                    relationNote = if (agentsEntry != null) {
+                                        tr("同目录已存在 AGENTS.md，按官方规则本文件当前被跳过", "Skipped by official Pi precedence because AGENTS.md exists in this directory")
+                                    } else {
+                                        null
+                                    },
+                                    fileBytes = claudeSnap.bytes,
+                                    isActive = claudeEntry != null,
+                                    onClick = { onEdit(claudeGuest) },
+                                )
+                            }
                         }
                     }
                 }

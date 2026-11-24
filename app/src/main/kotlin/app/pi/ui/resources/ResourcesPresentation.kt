@@ -34,7 +34,7 @@ fun overview(loaded: PiLoadedResources.Loaded, snapshot: PiResourceCatalog.Snaps
     val groups = snapshot?.layer(layer).orEmpty()
     return Overview(
         loaded = mapOf(
-            Type.Extensions to loaded.visibleExtensions.size,
+            Type.Extensions to loaded.extensions.size,
             Type.Skills to loaded.skills.size,
             Type.Prompts to loaded.prompts.size,
             Type.Themes to loaded.themes.size,

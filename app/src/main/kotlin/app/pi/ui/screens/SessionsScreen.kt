@@ -458,7 +458,7 @@ fun SessionsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            if (!searching && (allGroups.size > 1 || currentProjectOnly)) {
+                            if (allGroups.size > 1 || currentProjectOnly) {
                                 SessionFilterPill(
                                     text = if (currentProjectOnly) tr("当前项目", "Current") else tr("全部项目", "All projects"),
                                     icon = Icons.Filled.FolderOpen,
@@ -500,10 +500,18 @@ fun SessionsScreen(
                             )
                         }
                         Spacer(Modifier.width(8.dp))
+                        val searchFilteredRows = remember(uniqueRows, currentProjectOnly, currentCwds) {
+                            if (!currentProjectOnly) uniqueRows
+                            else uniqueRows.filter { it.cwd.trimEnd('/') in currentCwds }
+                        }
                         Text(
                             text = sessionCountText(
                                 list = list,
-                                visibleCount = if (!searching && currentProjectOnly) visibleRowCount else uniqueRows.size,
+                                visibleCount = when {
+                                    searching -> searchFilteredRows.size
+                                    currentProjectOnly -> visibleRowCount
+                                    else -> uniqueRows.size
+                                },
                             ),
                             style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
                             color = if (list.loading) PiTheme.palette.accent else PiTheme.palette.muted,
@@ -525,12 +533,15 @@ fun SessionsScreen(
                     }
 
                     Box(Modifier.weight(1f).fillMaxWidth()) {
-                        val rows = uniqueRows
+                        val rows = remember(uniqueRows, currentProjectOnly, currentCwds) {
+                            if (!currentProjectOnly) uniqueRows
+                            else uniqueRows.filter { it.cwd.trimEnd('/') in currentCwds }
+                        }
                         val noQuery = list.query.query.isBlank()
                         val searching = !noQuery
                         when {
-                            rows.isEmpty() && list.loading -> SessionsLoading(list.loaded, list.loadTotal)
-                            rows.isEmpty() && list.failed -> SessionsEmpty(
+                            uniqueRows.isEmpty() && list.loading -> SessionsLoading(list.loaded, list.loadTotal)
+                            uniqueRows.isEmpty() && list.failed -> SessionsEmpty(
                                 icon = Icons.Filled.Warning,
                                 title = tr("读不到会话列表", "Failed to load sessions"),
                                 body = tr("这一次读取失败了，不是没有会话。可以再试一次。", "Loading failed this time — it does not mean there are no sessions. Please try again."),
@@ -538,19 +549,22 @@ fun SessionsScreen(
                                 actionIcon = Icons.Filled.Refresh,
                                 onAction = { session.refreshSessions() },
                             )
-                            rows.isEmpty() && list.queryError != null -> SessionsEmpty(
+                            uniqueRows.isEmpty() && list.queryError != null -> SessionsEmpty(
                                 icon = Icons.Filled.Warning,
                                 title = tr("搜索写法有误", "Invalid search syntax"),
-                                body = list.queryError.orEmpty(),
+                                body = tr("请调整上方搜索表达式，或清空搜索查看全部会话。", "Adjust the search pattern above or clear search to view all sessions."),
+                                actionLabel = tr("清空搜索", "Clear search"),
+                                actionIcon = Icons.Filled.Close,
+                                onAction = { session.setSessionQuery("") },
                             )
-                            rows.isEmpty() && noQuery && list.query.namedOnly -> SessionsEmpty(
+                            uniqueRows.isEmpty() && noQuery && list.query.namedOnly -> SessionsEmpty(
                                 icon = Icons.Filled.BookmarkBorder,
                                 title = tr("没有已命名的会话", "No named sessions"),
                                 body = tr("长按任意会话并重命名后，会出现在这里。", "Rename any session to see it under Named."),
                                 actionLabel = tr("显示全部会话", "Show all sessions"),
                                 onAction = { session.setSessionNamedOnly(false) },
                             )
-                            rows.isEmpty() && noQuery -> SessionsEmpty(
+                            uniqueRows.isEmpty() && noQuery -> SessionsEmpty(
                                 icon = Icons.Filled.Forum,
                                 title = tr("还没有会话", "No sessions yet"),
                                 body = tr("发出第一条消息后，会话就会出现在这里。", "Your sessions will appear here after you send your first message."),
@@ -561,10 +575,24 @@ fun SessionsScreen(
                                     onOpenChat()
                                 },
                             )
-                            rows.isEmpty() -> SessionsEmpty(
+                            searching && rows.isEmpty() -> SessionsEmpty(
                                 icon = Icons.Filled.Search,
                                 title = tr("没有匹配的会话", "No matching sessions"),
-                                body = tr("换一个关键词，或关掉「已命名」。", "Try a different keyword or turn off \"Named\"."),
+                                body = if (currentProjectOnly) {
+                                    tr("当前项目下没有匹配项，可切换到「全部项目」或清空筛选。", "No matches in current project. Switch to All projects or clear filters.")
+                                } else {
+                                    tr("换一个关键词，或清空筛选条件。", "Try a different keyword or reset filters.")
+                                },
+                                actionLabel = if (currentProjectOnly) tr("查看全部项目", "Show all projects") else tr("清空筛选", "Clear filters"),
+                                actionIcon = if (currentProjectOnly) Icons.Filled.FolderOpen else Icons.Filled.Close,
+                                onAction = {
+                                    if (currentProjectOnly) {
+                                        currentProjectOnly = false
+                                    } else {
+                                        session.setSessionQuery("")
+                                        if (list.query.namedOnly) session.setSessionNamedOnly(false)
+                                    }
+                                },
                             )
                             noQuery && visibleGroups.isEmpty() -> SessionsEmpty(
                                 icon = Icons.Filled.FolderOpen,
@@ -601,7 +629,8 @@ fun SessionsScreen(
                                             workspaceTag = wsLabel,
                                             onOpen = {
                                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                if (isActive) onOpenChat() else session.switchSession(summary)
+                                                if (!isActive) session.switchSession(summary)
+                                                onOpenChat()
                                             },
                                             onLongPress = {
                                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -665,7 +694,8 @@ fun SessionsScreen(
                                                 forkedFrom = if (tree) null else forkParentNames[summary.file.absolutePath],
                                                 onOpen = {
                                                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    if (isActive) onOpenChat() else session.switchSession(summary)
+                                                    if (!isActive) session.switchSession(summary)
+                                                    onOpenChat()
                                                 },
                                                 onLongPress = {
                                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -766,6 +796,7 @@ fun SessionsScreen(
                     ) {
                         actions = null
                         session.forkSessionToCurrentWorkspace(acting)
+                        onOpenChat()
                     }
                 }
                 HorizontalDivider(
@@ -776,10 +807,10 @@ fun SessionsScreen(
                 SessionActionRow(
                     icon = Icons.Filled.Delete,
                     label = tr("删除会话", "Delete session"),
-                    subtitle = if (actingIsCurrent) tr("当前会话正在写入，切换到其他会话后可删", "Switch away from the active session before deleting") else null,
-                    tone = if (actingIsCurrent) PiTheme.palette.muted else PiTheme.palette.error,
-                    iconTint = if (actingIsCurrent) PiTheme.palette.muted else PiTheme.palette.error,
-                    enabled = !actingIsCurrent,
+                    subtitle = if (actingIsCurrent) tr("将自动新建对话并删除当前会话", "Starts a new chat and deletes this active session") else null,
+                    tone = PiTheme.palette.error,
+                    iconTint = PiTheme.palette.error,
+                    enabled = true,
                 ) {
                     actions = null
                     confirming = acting
@@ -1154,7 +1185,7 @@ private fun SessionListRow(
                 }
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(44.dp)
                         .clip(CircleShape)
                         .clickable(onClickLabel = tr("会话操作", "Session actions"), onClick = onLongPress),
                     contentAlignment = Alignment.Center,

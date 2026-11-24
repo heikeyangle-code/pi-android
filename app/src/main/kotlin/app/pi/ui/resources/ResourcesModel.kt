@@ -55,6 +55,8 @@ internal class ResourcesModel(
         private set
     var pendingReload by mutableStateOf(false)
         private set
+    var catalogDiagnostics by mutableStateOf<List<app.pi.host.HostAdvanced.CatalogDiagnostic>>(emptyList())
+        private set
     var dataVersion by mutableIntStateOf(0)
         private set
 
@@ -89,6 +91,7 @@ internal class ResourcesModel(
             val list = async { access.resources.list() }
             val live = async { access.resources.loaded() }
             val tr = async { access.resources.trustState() }
+            val diag = async { access.resources.catalogDiagnostics() }
             var problem: String? = null
             when (val r = list.await()) {
                 is Parsed.Ok -> snapshot = r.value
@@ -102,6 +105,7 @@ internal class ResourcesModel(
                 is Parsed.Ok -> trust = r.value
                 is Parsed.Error -> problem = problem ?: r.message
             }
+            catalogDiagnostics = diag.await()
             error = problem
             dataVersion++
         }
@@ -139,6 +143,8 @@ internal class ResourcesModel(
 
     suspend fun deleteFile(path: String): Parsed<Unit> =
         access.resources.deleteFile(path).also { if (it is Parsed.Ok) markChanged() }
+
+    suspend fun applyTheme(name: String): Parsed<Unit> = access.resources.setTheme(name)
 
     private suspend fun markChanged() {
         pendingReload = true

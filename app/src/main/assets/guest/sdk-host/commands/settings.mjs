@@ -79,9 +79,12 @@ export function register(reg, { controller, hub }) {
             session.setThinkingLevel?.(nextLevel);
           }
         } else if (method === "setEnabledModels" && typeof session.setScopedModels === "function") {
-          const patterns = Array.isArray(params[0]) ? params[0] : [];
+          const patterns = Array.isArray(params[0]) ? params[0].filter((p) => typeof p === "string" && p.trim()) : [];
           if (patterns.length === 0) {
             session.setScopedModels([]);
+          } else if (typeof controller.sdk?.resolveModelScopeWithDiagnostics === "function" && session.modelRuntime) {
+            const { scopedModels } = await controller.sdk.resolveModelScopeWithDiagnostics(patterns, session.modelRuntime);
+            session.setScopedModels(scopedModels);
           }
         }
       } catch {

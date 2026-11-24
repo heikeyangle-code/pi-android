@@ -35,9 +35,44 @@ class HostResources(private val commands: () -> HostCommands?) {
             )),
         ) { text -> PiResourceCatalog.parseToggle(withOk(text)) }
 
-    /** 官方 `checkForAvailableUpdates()`：只查不装，要联网。 */
-    suspend fun updates(): Parsed<List<PiResourceCatalog.Update>> =
-        run("packages.updates", JsonObject(emptyMap()), PiResourceCatalog::parseUpdates)
+    /** 通过官方 `settings.set("setTheme", [name])` 即时切换主题。 */
+    suspend fun setTheme(name: String): Parsed<Unit> {
+        val c = commands() ?: return Parsed.Error("引擎还没起来。")
+        return try {
+            c.call(
+                "settings.set",
+                JsonObject(
+                    mapOf(
+                        "method" to JsonPrimitive("setTheme"),
+                        "params" to JsonArray(listOf(JsonPrimitive(name))),
+                    ),
+                ),
+            )
+            Parsed.Ok(Unit)
+        } catch (e: HostException) {
+            Parsed.Error(e.message ?: "切换主题失败")
+        }
+    }
+
+    /** 官方命令/快捷键/扩展冲突诊断（`catalog.diagnostics`）。 */
+    suspend fun catalogDiagnostics(): List<HostAdvanced.CatalogDiagnostic> {
+        val c = commands() ?: return emptyList()
+        return runCatching {
+            val d = c.call("catalog.diagnostics").data
+            val out = ArrayList<HostAdvanced.CatalogDiagnostic>()
+            fun collect(key: String, kind: String) {
+                (d[key] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.forEach { row ->
+                    val str: (String) -> String? = { k -> (row[k] as? JsonPrimitive)?.takeIf { it.isString }?.content }
+                    val msg = str("message") ?: str("warning") ?: str("error") ?: return@forEach
+                    out += HostAdvanced.CatalogDiagnostic(kind = kind, message = msg, path = str("path") ?: str("extensionPath"))
+                }
+            }
+            collect("commands", "command")
+            collect("shortcuts", "shortcut")
+            collect("extensions", "extension")
+            out
+        }.getOrDefault(emptyList())
+    }
 
     /** 此刻**实际加载**的资源：扩展（含注册了什么）、技能、提示、主题、上下文文件、系统提示，以及 SDK 的诊断。 */
     suspend fun loaded(): Parsed<PiLoadedResources.Loaded> =

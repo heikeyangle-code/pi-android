@@ -38,7 +38,7 @@ data class SessionSummary(
     val isCurrent: Boolean = false,
 ) {
     /** 官方显示文本：有会话名用会话名，否则第一条消息（控制字符清成空格）；都没有时才用占位。 */
-    val displayName: String get() = displayText(name, firstMessage).ifEmpty { "（空会话）" }
+    val displayName: String get() = displayText(name, firstMessage).ifEmpty { app.pi.i18n.tr("（空会话）", "(Empty session)") }
 }
 
 /** 宿主 `session.list` 的 `scope`：官方选择器的 Current Folder / All。 */

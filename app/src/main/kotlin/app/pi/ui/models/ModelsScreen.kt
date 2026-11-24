@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
@@ -106,6 +107,7 @@ fun ModelsScreen(
     var editingSetting by remember { mutableStateOf<PiSetting?>(null) }
     var pickingScoped by remember { mutableStateOf(false) }
     var pickingModelThinking by remember { mutableStateOf(false) }
+    var modelsJsonOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(reload) {
         val h = host()
@@ -384,10 +386,23 @@ fun ModelsScreen(
                             icon = Icons.Filled.Add,
                             onClick = { form = FormRequest(ProviderForm(api = "openai-completions"), isNew = true) },
                         )
+                        ModelsDivider()
+                        ActionRow(
+                            title = tr("导入 / 编辑 models.json", "Import / Edit models.json"),
+                            detail = tr("选择 .json 文件或粘贴官方 models.json 批量导入端点，也可直接修复格式错误", "Pick a .json file or paste official models.json to bulk-import endpoints or repair errors"),
+                            icon = Icons.Filled.Code,
+                            onClick = { modelsJsonOpen = true },
+                        )
                         d.custom?.error?.let { e ->
                             ModelsDivider()
-                            Column(Modifier.padding(ModelsCardPadding)) {
-                                Text(tr("models.json 有问题", "Invalid models.json"), style = PiTheme.text.prose, color = PiTheme.palette.error)
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { modelsJsonOpen = true }
+                                    .padding(ModelsCardPadding),
+                                verticalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                Text(tr("models.json 有问题（点此修复）", "Invalid models.json (tap to repair)"), style = PiTheme.text.prose, color = PiTheme.palette.error)
                                 Text(e, style = PiTheme.text.meta, color = PiTheme.palette.muted)
                             }
                         }
@@ -633,6 +648,20 @@ fun ModelsScreen(
                 host = host,
                 onDismiss = { form = null },
                 onDone = { form = null; reload++; onLoadAvailableModels() },
+            )
+        }
+
+        if (modelsJsonOpen) {
+            ModelsJsonImportSheet(
+                host = host,
+                existingProviders = d.custom?.providers.orEmpty(),
+                corruptError = d.custom?.error,
+                onDismiss = { modelsJsonOpen = false },
+                onSaved = { msg ->
+                    notice = msg
+                    reload++
+                    onLoadAvailableModels()
+                },
             )
         }
 

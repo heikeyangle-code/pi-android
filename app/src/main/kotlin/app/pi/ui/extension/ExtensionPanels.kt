@@ -68,8 +68,93 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
 
+const val HIDE_KEY_HEADER = "__ext_header__"
+const val HIDE_KEY_FOOTER = "__ext_footer__"
+const val HIDE_KEY_STATUSES = "__ext_statuses__"
+
 /**
- * 扩展面板堆栈：`ctx.ui.setWidget` 的落点。
+ * 官方 footer 状态条（`ctx.ui.setStatus`）：当无自定义 `setFooter` 接管时，默认在输入框最底部
+ * 以紧凑单行展示所有扩展状态，并支持右侧一键收进扩展芯片、随时在扩展中心恢复。
+ */
+@Composable
+fun ExtensionFooterStatusStrip(
+    statuses: List<ExtStatus>,
+    onHide: () -> Unit,
+    onOpenHub: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (statuses.isEmpty()) return
+    val palette = PiTheme.palette
+    val haptic = LocalHapticFeedback.current
+    val pillShape = RoundedCornerShape(8.dp)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSpacing.composerPageMargin)
+            .padding(bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            statuses.forEach { st ->
+                val text = remember(st.text) { chromeSpans(st.text) }
+                Row(
+                    modifier = Modifier
+                        .clip(pillShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                        .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.45f), pillShape)
+                        .clickable(role = Role.Button, onClickLabel = tr("打开扩展中心", "Open extensions"), onClick = onOpenHub)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(palette.accent),
+                    )
+                    ExtensionSpans(
+                        spans = text,
+                        defaultColor = palette.text,
+                        style = PiTheme.text.monoSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        richStyle = true,
+                    )
+                }
+            }
+        }
+        val hideLabel = tr("收起状态栏", "Hide status bar")
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f))
+                .clickable(role = Role.Button, onClickLabel = hideLabel) {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onHide()
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.VisibilityOff,
+                contentDescription = hideLabel,
+                modifier = Modifier.size(13.dp),
+                tint = palette.muted,
+            )
+        }
+    }
+}
+
+/**
+ * 扩展面板堆栈：`ctx.ui.setWidget` / `setHeader` / `setFooter` 的落点。
  *
  * 为彻底杜绝扩展组件堆积后挤占聊天视口与输入区：
  *  - 整摞面板带有严格的 [maxStackHeight] 高度上限并支持内部纵向滚动；
@@ -261,10 +346,24 @@ fun ExtensionWidgetsSheet(
                 }
 
                 if (statusEntries.isNotEmpty()) {
-                    HubSectionHeader(
-                        title = tr("实时状态", "Live Status"),
-                        count = statusEntries.size,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            HubSectionHeader(
+                                title = tr("实时状态", "Live Status"),
+                                count = statusEntries.size,
+                            )
+                        }
+                        if (footer == null && onToggleHideWidget != null) {
+                            VisibilityTogglePill(
+                                hidden = HIDE_KEY_STATUSES in hiddenWidgetKeys,
+                                onClick = { onToggleHideWidget(HIDE_KEY_STATUSES) },
+                            )
+                        }
+                    }
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         statusEntries.forEach { entry ->
                             val rowShape = RoundedCornerShape(12.dp)
@@ -332,8 +431,8 @@ fun ExtensionWidgetsSheet(
                     HubSectionHeader(
                         title = tr("扩展面板", "Panels"),
                         count = panelCount,
-                        hint = if (widgets.isNotEmpty() && onToggleHideWidget != null) {
-                            tr("组件默认直接显示，可按需收纳进芯片", "Widgets show by default; hide any to chip")
+                        hint = if (onToggleHideWidget != null) {
+                            tr("默认显示在官方位置，可按需一键收起进芯片", "Shown in official slots by default; hide any to chip")
                         } else {
                             null
                         },
@@ -344,6 +443,12 @@ fun ExtensionWidgetsSheet(
                                 caption = tr("顶栏", "Header") + " · ${widgetCaption(h.key) ?: h.key}",
                                 lines = h.lines,
                                 collapsedRows = 6,
+                                hiddenInChat = HIDE_KEY_HEADER in hiddenWidgetKeys,
+                                onToggleHide = if (onToggleHideWidget != null) {
+                                    { onToggleHideWidget(HIDE_KEY_HEADER) }
+                                } else {
+                                    null
+                                },
                                 onInteract = if (h.interactive && h.surfaceId != null) {
                                     { onDismiss(); onInteract(h) }
                                 } else {
@@ -379,6 +484,12 @@ fun ExtensionWidgetsSheet(
                                 caption = tr("底栏", "Footer") + " · ${widgetCaption(f.key) ?: f.key}",
                                 lines = f.lines,
                                 collapsedRows = 6,
+                                hiddenInChat = HIDE_KEY_FOOTER in hiddenWidgetKeys,
+                                onToggleHide = if (onToggleHideWidget != null) {
+                                    { onToggleHideWidget(HIDE_KEY_FOOTER) }
+                                } else {
+                                    null
+                                },
                                 onInteract = if (f.interactive && f.surfaceId != null) {
                                     { onDismiss(); onInteract(f) }
                                 } else {

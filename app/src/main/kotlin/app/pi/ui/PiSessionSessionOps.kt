@@ -67,13 +67,15 @@ internal fun PiSessionViewModel.newSessionImpl() {
         return
     }
     call(tr("新建会话", "New session")) { api ->
-        val result = api.newSession()
-        if (result.cancelled) {
-            pushNotice(tr("扩展取消了新建会话", "An extension cancelled creating a new session"), Notice.Tone.Warning)
-            return@call
+        withInternalSessionTransition {
+            val result = api.newSession()
+            if (result.cancelled) {
+                pushNotice(tr("扩展取消了新建会话", "An extension cancelled creating a new session"), Notice.Tone.Warning)
+                return@withInternalSessionTransition
+            }
+            afterSessionReplaced(brandNew = true)
+            requestNav(NavRequest.Chat)
         }
-        afterSessionReplaced(brandNew = true)
-        requestNav(NavRequest.Chat)
     }
 }
 
@@ -82,15 +84,47 @@ internal fun PiSessionViewModel.newSessionImpl() {
  *
  * pi's picker offers delete behind a confirmation (`docs/sessions.md:48`) and
  * its store has no delete command either — the file *is* the session — so this
- * removes the JSONL the same way the desktop UI does. The screen refuses the
- * active session before ever calling this: pi is appending to that file, and
- * unlinking it under the engine would keep it writing to a removed inode.
+ * removes the JSONL the same way the desktop UI does. If the user deletes the
+ * currently active session, we first open a fresh session via official SDK
+ * `newSession()` so pi is no longer writing to the target file before unlinking.
  *
- * 删除走宿主的 `session.delete`（[SessionLibrary.delete]）：宿主只认会话目录之内的路径、
- * 拒绝删当前会话；[SessionSummary] 是数据，数据不能指名任意路径去 unlink。
+ * 删除走宿主的 `session.delete`（[SessionLibrary.delete]）：宿主只认会话目录之内的路径。
  */
 internal fun PiSessionViewModel.deleteSessionImpl(summary: SessionSummary) {
     viewModelScope.launch {
+        val openFile = _state.value.meta.sessionFile?.substringAfterLast('/')
+        val activeId = _state.value.meta.sessionId?.takeIf { it.isNotBlank() }
+        val isCurrent = summary.isCurrent ||
+            (openFile != null && openFile == summary.file.name) ||
+            (activeId != null && summary.id == activeId)
+        if (isCurrent) {
+            val activeApi = api
+            if (activeApi == null) {
+                pushNotice(tr("引擎未就绪，暂时无法删除当前会话", "Engine not ready to delete active session"), Notice.Tone.Warning)
+                return@launch
+            }
+            val switched = runCatching {
+                withInternalSessionTransition {
+                    val created = activeApi.newSession()
+                    if (created.cancelled) {
+                        pushNotice(tr("扩展取消了切换新会话，无法删除当前会话", "Extension cancelled creating a new session; cannot delete active session"), Notice.Tone.Warning)
+                        false
+                    } else {
+                        afterSessionReplaced(brandNew = true)
+                        true
+                    }
+                }
+            }.getOrElse { err ->
+                pushNotice(tr("切换新会话失败：${err.message ?: ""}", "Failed to switch to a new session: ${err.message ?: ""}"), Notice.Tone.Warning)
+                false
+            }
+            if (!switched) return@launch
+            if (!summary.file.isFile) {
+                // 未落盘的 0 消息会话切换后即消失，无需再删文件
+                refreshSessions()
+                return@launch
+            }
+        }
         val outcome = withContext(Dispatchers.IO) { sessionLibrary.delete(summary.file) }
         if (outcome.ok) {
             // 官方两句提示：Session moved to trash / Session deleted（trash 命令可用与否决定）。
@@ -128,31 +162,33 @@ internal fun PiSessionViewModel.switchSessionImpl(summary: SessionSummary) {
     }
     val generation = ++sessionOpenGeneration
     call(tr("切换会话", "Switch session")) { api ->
-        SessionHints.file = summary.file
-        val result = try {
-            api.switchSession(path)
-        } catch (error: HostCommandException) {
-            if (error.code == "cwd_missing") {
-                SessionHints.file = null
-                val issue = ((error.details as? JsonObject)?.get("issue") as? JsonPrimitive)
-                    ?.takeIf { it.isString }?.content
-                _cwdMissing.value = CwdMissingPrompt(
-                    reason = error.reason,
-                    issue = issue,
-                    action = CwdMissingAction.Switch(summary, path),
-                )
-                return@call
+        withInternalSessionTransition {
+            SessionHints.file = summary.file
+            val result = try {
+                api.switchSession(path)
+            } catch (error: HostCommandException) {
+                if (error.code == "cwd_missing") {
+                    SessionHints.file = null
+                    val issue = ((error.details as? JsonObject)?.get("issue") as? JsonPrimitive)
+                        ?.takeIf { it.isString }?.content
+                    _cwdMissing.value = CwdMissingPrompt(
+                        reason = error.reason,
+                        issue = issue,
+                        action = CwdMissingAction.Switch(summary, path),
+                    )
+                    return@withInternalSessionTransition
+                }
+                throw error
             }
-            throw error
+            if (result.cancelled) {
+                SessionHints.file = null
+                pushNotice(tr("扩展取消了切换会话", "An extension cancelled switching sessions"), Notice.Tone.Warning)
+                return@withInternalSessionTransition
+            }
+            afterSessionReplaced()
+            requestNav(NavRequest.Chat)
+            viewModelScope.launch { adoptSessionWorkspace(summary, generation) }
         }
-        if (result.cancelled) {
-            SessionHints.file = null
-            pushNotice(tr("扩展取消了切换会话", "An extension cancelled switching sessions"), Notice.Tone.Warning)
-            return@call
-        }
-        afterSessionReplaced()
-        requestNav(NavRequest.Chat)
-        viewModelScope.launch { adoptSessionWorkspace(summary, generation) }
     }
 }
 
@@ -164,15 +200,17 @@ internal fun PiSessionViewModel.forkSessionToCurrentWorkspaceImpl(summary: Sessi
         return
     }
     call(tr("分支会话", "Branch session")) { api ->
-        val result = api.forkFrom(path, guestWorkspace())
-        if (result.cancelled) {
-            pushNotice(tr("扩展取消了分支会话", "An extension cancelled branching the session"), Notice.Tone.Warning)
-            return@call
+        withInternalSessionTransition {
+            val result = api.forkFrom(path, guestWorkspace())
+            if (result.cancelled) {
+                pushNotice(tr("扩展取消了分支会话", "An extension cancelled branching the session"), Notice.Tone.Warning)
+                return@withInternalSessionTransition
+            }
+            SessionHints.file = hostSessionFile(result.sessionFile)
+            afterSessionReplaced()
+            requestNav(NavRequest.Chat)
+            pushNotice(tr("已分支到当前工作区", "Branched into current workspace"), Notice.Tone.Info)
         }
-        SessionHints.file = hostSessionFile(result.sessionFile)
-        afterSessionReplaced()
-        requestNav(NavRequest.Chat)
-        pushNotice(tr("已分支到当前工作区", "Branched into current workspace"), Notice.Tone.Info)
     }
 }
 
@@ -899,22 +937,25 @@ internal fun PiSessionViewModel.renameSessionImpl(name: String) {
     call(tr("重命名会话", "Rename session")) { api ->
         api.setSessionName(trimmed)
         _state.update { s -> s.copy(
-            meta = s.meta.copy(sessionName = trimmed),
+            meta = s.meta.copy(sessionName = trimmed.takeIf { it.isNotEmpty() }),
         ) }
         applyActiveRow()
         if (sessionListLoadedOnce) refreshSessions()
-        pushNotice(tr("已重命名为「$trimmed」", "Renamed to \"$trimmed\""), Notice.Tone.Info)
+        pushNotice(
+            if (trimmed.isEmpty()) tr("已清除会话名称", "Session name cleared")
+            else tr("已重命名为「$trimmed」", "Renamed to \"$trimmed\""),
+            Notice.Tone.Info,
+        )
     }
 }
 
 /**
  * 会话列表里长按「重命名」：当前正在用的会话（含尚未落盘的 0 消息新会话）统一走 SDK `setSessionName`，
  * 其余会话由宿主用 `SessionManager.open(path).appendSessionInfo(name)` 追加一条 `session_info`（[SessionLibrary.rename]），
- * 并立即乐观更新列表行再静默与磁盘对账。
+ * 并立即乐观更新列表行再静默与磁盘对账；空串代表按官方语义清除会话名。
  */
 internal fun PiSessionViewModel.renameSessionFromListImpl(summary: SessionSummary, name: String) {
     val trimmed = name.trim()
-    if (trimmed.isEmpty()) return
     val open = _state.value.meta.sessionFile?.substringAfterLast('/')
     val activeId = _state.value.meta.sessionId?.takeIf { it.isNotBlank() }
     val isCurrent = summary.isCurrent ||
@@ -927,12 +968,17 @@ internal fun PiSessionViewModel.renameSessionFromListImpl(summary: SessionSummar
     viewModelScope.launch {
         val ok = sessionLibrary.rename(summary.file, trimmed)
         if (ok) {
+            val nextName = trimmed.takeIf { it.isNotEmpty() }
             _sessionList.value = _sessionList.value.copy(
                 rows = _sessionList.value.rows.map { row ->
-                    if (row.file.absolutePath == summary.file.absolutePath) row.copy(name = trimmed) else row
+                    if (row.file.absolutePath == summary.file.absolutePath) row.copy(name = nextName) else row
                 },
             )
-            pushNotice(tr("已重命名为「$trimmed」", "Renamed to \"$trimmed\""), Notice.Tone.Info)
+            pushNotice(
+                if (trimmed.isEmpty()) tr("已清除会话名称", "Session name cleared")
+                else tr("已重命名为「$trimmed」", "Renamed to \"$trimmed\""),
+                Notice.Tone.Info,
+            )
             refreshSessions()
         } else {
             pushNotice(tr("重命名失败：${summary.file.name}", "Rename failed: ${summary.file.name}"), Notice.Tone.Warning)
@@ -1154,13 +1200,22 @@ internal suspend fun PiSessionViewModel.afterSessionReplaced(brandNew: Boolean =
         tree = null,
         transcriptResetSeq = s.transcriptResetSeq + 1L,
     ) }
-    api?.let { refreshStateNow(it) }
+    val cachedState = engine.commands.stateStore.state.value
+    val cachedRemote = cachedState?.toSessionState()
+    if (cachedState != null && cachedRemote != null) {
+        applySessionState(cachedRemote, cachedState.availableThinkingLevels, cachedState)
+    } else {
+        api?.let { refreshStateNow(it) }
+    }
     replayHistory(engine, brandNew)
-    refreshStats()
-    refreshCommands()
     // 立刻把当前新会话/切换后的会话更新到会话列表（哪怕是刚新建的 0 消息会话也马上置顶可见）。
     applyActiveRow()
-    if (sessionListLoadedOnce && !_sessionList.value.loading) refreshSessions()
+    // 统计、命令表与会话列表磁盘刷新放到后台，不阻塞切入对话的流畅度。
+    viewModelScope.launch {
+        refreshStats()
+        refreshCommands()
+        if (sessionListLoadedOnce && !_sessionList.value.loading) refreshSessions()
+    }
     // 会话换了之后的列表更新不在这里调：`watchSessionListChanges` 盯着「当前会话文件 / 工作区 /
     // 消息数（到 2 为止）」，变了就在后台静默重读，不论列表屏开没开。
     //

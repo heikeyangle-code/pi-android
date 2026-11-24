@@ -147,7 +147,7 @@ export function register(reg, { controller }) {
         .map(({ value, label, description }) => ({ value, label, description }));
     }
     if (name === "login") {
-      const providers = typeof session.modelRuntime?.listProviders === "function" ? session.modelRuntime.listProviders() : [];
+      const providers = typeof session.modelRuntime?.getProviders === "function" ? session.modelRuntime.getProviders() : [];
       return providers
         .map((p) => {
           const score = Math.max(fuzzyScore(p.id, needle), fuzzyScore(p.name, needle));

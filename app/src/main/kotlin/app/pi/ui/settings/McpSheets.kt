@@ -1,5 +1,7 @@
 package app.pi.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,10 +20,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,67 +50,6 @@ import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
-/** 添加 MCP 服务器：完全对齐 Pi SDK，仅提供标准接入方式（远程 HTTP / 本地 STDIO / 导入 JSON），不内置第三方预设。 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun McpAddMethodSheet(
-    onDismiss: () -> Unit,
-    onImport: () -> Unit,
-    onPick: (PiMcpConfig.Draft) -> Unit,
-) {
-    PiSettingsSheet(onDismiss = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(top = PiSettingsMetrics.sheetHeadTop, bottom = PiSettingsMetrics.sheetFooterBottom),
-        ) {
-            Text(
-                tr("添加 MCP 服务器", "Add MCP Server"),
-                style = PiType.title,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
-            )
-            Text(
-                tr(
-                    "选择一种标准 MCP 接入方式。远程服务支持 OAuth 或 Bearer 令牌；本地命令将在内置 Linux 环境中启动子进程。",
-                    "Choose a standard MCP transport. Remote servers support OAuth or Bearer tokens; local commands spawn inside the bundled Linux runtime.",
-                ),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(
-                    start = PiSettingsMetrics.pageHorizontal,
-                    end = PiSettingsMetrics.pageHorizontal,
-                    top = PiSpacing.small,
-                    bottom = PiSettingsMetrics.sheetHeadBottom,
-                ),
-            )
-            PiSettingsCard {
-                PiSettingsEntryRow(
-                    title = tr("远程服务（Streamable HTTP）", "Remote Server (Streamable HTTP)"),
-                    supporting = tr("填写 MCP 服务端点（如 https://…/mcp），支持 OAuth 登录与自定义请求头", "Connect to an HTTP MCP endpoint (e.g. https://…/mcp) with OAuth or custom headers"),
-                    leadingIcon = Icons.Filled.Language,
-                    onClick = { onPick(PiMcpConfig.Draft(http = true, url = "https://")) },
-                )
-                PiSettingsHairline()
-                PiSettingsEntryRow(
-                    title = tr("本地命令（STDIO）", "Local Command (STDIO)"),
-                    supporting = tr("通过 npx / uvx / node 等命令启动本地 MCP 进程", "Spawn a local MCP process via npx, uvx, node, or any binary"),
-                    leadingIcon = Icons.Filled.Terminal,
-                    onClick = { onPick(PiMcpConfig.Draft(http = false, command = "npx", args = "-y\n")) },
-                )
-                PiSettingsHairline()
-                PiSettingsEntryRow(
-                    title = tr("导入 JSON 配置", "Import JSON Config"),
-                    supporting = tr("直接粘贴 Claude Desktop / Claude Code / Cursor / VS Code / OpenCode 的 mcpServers 配置", "Paste mcpServers JSON directly from Claude, Cursor, VS Code, or OpenCode"),
-                    leadingIcon = Icons.Filled.Code,
-                    onClick = onImport,
-                )
-            }
-        }
-    }
-}
-
 /** 编辑 / 新增 MCP 服务器表单。字段、校验、写盘形状全在 [PiMcpConfig]；这里只收集输入。 */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -118,6 +58,7 @@ internal fun McpEditSheet(
     state: PiMcpStatus.Server?,
     isNew: Boolean,
     otherNames: List<String>,
+    saveError: String? = null,
     onDismiss: () -> Unit,
     onSave: (PiMcpConfig.Draft) -> Unit,
     onLogin: (() -> Unit)?,
@@ -393,6 +334,9 @@ internal fun McpEditSheet(
             if (showProblem && problem != null) {
                 Text(problem, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.error)
             }
+            saveError?.takeIf { it.isNotBlank() }?.let { err ->
+                Text(err, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.error)
+            }
             HorizontalDivider(
                 thickness = PiSettingsMetrics.hairline,
                 color = MaterialTheme.colorScheme.outlineVariant,
@@ -437,11 +381,12 @@ private fun PiMcpConfig.Draft.hasAdvanced(): Boolean =
         toolExposure.isNotBlank() || hasOauth()
 
 private fun PiMcpConfig.Draft.hasOauth(): Boolean =
-    oauthCimd || listOf(
+    oauthClientRegistration.isNotBlank() || listOf(
         oauthClientId, oauthClientSecret, oauthCallbackPort, oauthCallbackUrl, oauthScope, oauthClientName, oauthAuthServerUrl,
     ).any { it.isNotBlank() }
 
 /** OAuth 高级项：只在服务器不支持动态注册 / 要预注册客户端 / 要指定回调时才需要。 */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun McpOauthFields(draft: PiMcpConfig.Draft, onChange: (PiMcpConfig.Draft) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter)) {
@@ -495,32 +440,67 @@ private fun McpOauthFields(draft: PiMcpConfig.Draft, onChange: (PiMcpConfig.Draf
             label = tr("授权服务器元数据地址（服务器宣告错了才填，https）", "Auth Server Metadata URL (https, only if server advertises wrong URL)"),
             height = PiNumberFieldHeight,
         )
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
-        ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                tr("用 CIMD 登记（不做动态注册，不能与客户端 ID/名称同用）", "Use CIMD Registration (skips dynamic registration; incompatible with Client ID/Name)"),
-                modifier = Modifier.weight(1f),
+                tr("客户端登记方式（clientRegistration）", "Client Registration Mode"),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            PiSettingsSwitch(
-                checked = draft.oauthCimd,
-                onCheckedChange = { onChange(draft.copy(oauthCimd = it)) },
-            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                verticalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+            ) {
+                listOf(
+                    "" to tr("自动 (auto)", "Auto"),
+                    "dcr" to "DCR",
+                    "cimd" to "CIMD",
+                ).forEach { (value, label) ->
+                    PiSettingsChip(
+                        text = label,
+                        active = draft.oauthClientRegistration == value,
+                        onClick = { onChange(draft.copy(oauthClientRegistration = value)) },
+                    )
+                }
+            }
         }
     }
 }
 
-/** 粘贴别的客户端的配置，转成 pi 的写法并入当前这份 mcp.json（同名不覆盖）。 */
-@OptIn(ExperimentalMaterial3Api::class)
+/** 粘贴或选择 `.json` 文件导入别的客户端的配置，实时预览检测到的服务器，转成 pi 的写法并入当前 mcp.json（同名不覆盖）。 */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-internal fun McpImportSheet(onDismiss: () -> Unit, onImport: (String) -> Unit) {
+internal fun McpImportSheet(
+    onDismiss: () -> Unit,
+    onImport: (text: String, fallbackName: String) -> Unit,
+) {
+    val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var text by remember { mutableStateOf("") }
+    var fallbackName by remember { mutableStateOf("imported") }
+    var readError by remember { mutableStateOf<String?>(null) }
     val palette = PiTheme.palette
+
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            val content = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            if (content.isNullOrBlank()) {
+                readError = tr("所选文件为空", "Selected file is empty")
+            } else {
+                readError = null
+                text = content
+                val stem = uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.')
+                    ?.replace(Regex("[^A-Za-z0-9_-]"), "_")
+                    ?.takeIf { it.isNotBlank() && it != "mcp" }
+                if (stem != null) fallbackName = stem
+            }
+        }.onFailure { err ->
+            readError = err.message ?: tr("读取文件失败", "Failed to read file")
+        }
+    }
+
+    val preview = remember(text, fallbackName) { PiMcpConfig.previewImport(text, fallbackName) }
+
     PiSettingsSheet(onDismiss = onDismiss, fullHeight = true) {
         Column(
             Modifier
@@ -533,48 +513,110 @@ internal fun McpImportSheet(onDismiss: () -> Unit, onImport: (String) -> Unit) {
                 ),
             verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
         ) {
+            Text(tr("导入 MCP 配置", "Import MCP Config"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(tr("导入 JSON 配置", "Import JSON Config"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .background(palette.accent.copy(alpha = 0.12f))
+                        .clickable { filePicker.launch(arrayOf("application/json", "text/plain", "*/*")) }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(Icons.Filled.FolderOpen, contentDescription = null, tint = palette.accent, modifier = Modifier.size(14.dp))
+                    Text(tr("选择 .json 文件", "Pick .json file"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = palette.accent)
+                }
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                         .clickable {
                             val pasted = clipboard.getText()?.text.orEmpty()
-                            if (pasted.isNotBlank()) text = pasted
+                            if (pasted.isNotBlank()) {
+                                readError = null
+                                text = pasted
+                            }
                         }
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
-                    Icon(Icons.Filled.ContentPaste, contentDescription = null, tint = palette.accent, modifier = Modifier.size(14.dp))
-                    Text(tr("从剪贴板粘贴", "Paste"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = palette.accent)
+                    Icon(Icons.Filled.ContentPaste, contentDescription = null, tint = palette.text, modifier = Modifier.size(14.dp))
+                    Text(tr("从剪贴板粘贴", "Paste"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = palette.text)
                 }
             }
             Text(
                 tr(
-                    "把别的客户端的 MCP 配置整段贴进来（含 mcpServers 的那一段，或单个服务器）。" +
-                        "同名的不会被覆盖；VS Code 的 \${input:…} 要先改成 \${环境变量名}。",
-                    "Paste an MCP config snippet from another client (either a block containing mcpServers or a single server). " +
-                        "Existing names will not be overwritten; replace VS Code's \${input:…} with \${ENV_VAR} first.",
+                    "支持直接导入 Claude Desktop / Claude Code / Cursor / VS Code / OpenCode 的 mcpServers JSON 或单个服务器对象；同名项不会覆盖。",
+                    "Supports mcpServers JSON from Claude, Cursor, VS Code, or OpenCode, or a single server object. Existing names are not overwritten.",
                 ),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            readError?.let { err ->
+                Text(err, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.error)
+            }
             PiEditorField(
                 value = text,
-                onValueChange = { text = it },
+                onValueChange = {
+                    readError = null
+                    text = it
+                },
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = "{ \"mcpServers\": { … } }",
                 singleLine = false,
-                maxLines = 14,
+                maxLines = 12,
                 minHeight = PiTextFieldMinHeight * 2,
                 contentPadding = PiFieldPaddingBlock,
             )
+            if (preview.isSingleServer) {
+                PiEditorField(
+                    value = fallbackName,
+                    onValueChange = { fallbackName = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = tr("单个服务器名称", "Server Name"),
+                    placeholder = "my-server",
+                    height = PiNumberFieldHeight,
+                )
+            }
+            if (text.isNotBlank()) {
+                if (preview.error != null) {
+                    Text(preview.error, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.error)
+                } else if (preview.entries.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            tr("检测到 ${preview.entries.size} 个服务器：", "Detected ${preview.entries.size} server(s):"),
+                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                            color = palette.success,
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            preview.entries.forEach { entry ->
+                                val tag = if (entry.isHttp) "HTTP" else "STDIO"
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainer,
+                                    border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f)),
+                                ) {
+                                    Text(
+                                        text = "${entry.name} · $tag",
+                                        style = PiTheme.text.monoSmall,
+                                        color = palette.text,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             HorizontalDivider(
                 thickness = PiSettingsMetrics.hairline,
                 color = MaterialTheme.colorScheme.outlineVariant,
@@ -584,7 +626,15 @@ internal fun McpImportSheet(onDismiss: () -> Unit, onImport: (String) -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline, Alignment.End),
             ) {
                 TextButton(onClick = onDismiss) { Text(tr("取消", "Cancel")) }
-                Button(onClick = { onImport(text) }, enabled = text.isNotBlank()) { Text(tr("导入", "Import")) }
+                Button(
+                    onClick = { onImport(text, fallbackName.trim().ifEmpty { "imported" }) },
+                    enabled = text.isNotBlank() && preview.error == null && preview.entries.isNotEmpty(),
+                ) {
+                    Text(
+                        if (preview.entries.size > 1) tr("导入 ${preview.entries.size} 个", "Import ${preview.entries.size}")
+                        else tr("导入", "Import"),
+                    )
+                }
             }
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
         }

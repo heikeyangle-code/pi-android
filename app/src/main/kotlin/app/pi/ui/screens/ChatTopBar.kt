@@ -87,6 +87,7 @@ internal fun ChatTopBar(
     engineLabel: String,
     sessionTitle: String?,
     workspaceName: String? = null,
+    extensionTitle: String? = null,
     searchOpen: Boolean,
     scrolled: Boolean,
     toolsExpanded: Boolean,
@@ -135,7 +136,16 @@ internal fun ChatTopBar(
                 icon = Icons.Filled.Menu,
             )
 
-            // 标题区：呼吸状态点 + 会话名 + 项目名（点击同样平滑滑入会话抽屉，不再误导为下拉菜单）
+            // 标题区：呼吸状态点 + 会话名 + 项目名/扩展标题（点击同样平滑滑入会话抽屉）
+            val subtitleText = remember(workspaceName, extensionTitle, sessionTitle) {
+                val ws = workspaceName?.trim()?.takeIf { it.isNotEmpty() }
+                val ext = extensionTitle?.trim()?.takeIf { it.isNotEmpty() && it != sessionTitle && it != ws }
+                when {
+                    ws != null && ext != null -> "$ws · $ext"
+                    ext != null -> ext
+                    else -> ws
+                }
+            }
             Row(
                 modifier = Modifier
                     .weight(1f)
@@ -154,9 +164,9 @@ internal fun ChatTopBar(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (!workspaceName.isNullOrBlank()) {
+                    if (!subtitleText.isNullOrBlank()) {
                         Text(
-                            text = workspaceName,
+                            text = subtitleText,
                             style = PiTheme.text.monoSmall,
                             color = palette.muted,
                             maxLines = 1,

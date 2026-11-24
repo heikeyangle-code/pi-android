@@ -370,12 +370,12 @@ private fun deleteLabel(d: PiResourceFile.Doc): String =
 @Composable
 internal fun NewResourceDialog(
     model: ResourcesModel,
-    initial: PiResourceFile.Creatable?,
+    initial: PiResourceFile.Creatable,
     onDismiss: () -> Unit,
     onCreated: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var type by remember { mutableStateOf(initial ?: PiResourceFile.Creatable.Skill) }
+    val type = initial
     var project by remember { mutableStateOf(model.effectiveLayer == app.pi.packages.PiResourceCatalog.Layer.Project && model.projectUsable) }
     var name by remember { mutableStateOf("") }
     var failure by remember { mutableStateOf<String?>(null) }
@@ -384,34 +384,40 @@ internal fun NewResourceDialog(
 
     PiSettingsDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = tr("新建", "New"),
+        title = tr("新建${type.label}", "New ${type.label}"),
         content = {
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
-                if (initial == null) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
-                        verticalArrangement = Arrangement.spacedBy(PiSpacing.small),
-                    ) {
-                        PiResourceFile.Creatable.entries.forEach { c ->
-                            PiSettingsChip(text = c.label, active = type == c, onClick = { type = c; failure = null })
-                        }
-                    }
-                }
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                     PiSettingsChip(text = tr("全局", "Global"), active = !project, onClick = { project = false })
                     PiSettingsChip(text = tr("本项目", "Project"), active = project, enabled = model.projectUsable, onClick = { project = true })
                 }
                 if (!model.projectUsable) Text(tr("项目还没被信任，只能建全局的。", "Project is not trusted yet; only global resources can be created."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                 PiEditorField(value = name, onValueChange = { name = it; failure = null }, placeholder = type.nameHint)
+                Text(
+                    tr("将以草稿方式打开编辑器，点击「保存」时才会写入磁盘。", "Opens as an unsaved draft; written to disk only when you tap Save."),
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.muted,
+                )
                 (nameError ?: failure)?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
             }
         },
-        confirmationLabel = if (busy) tr("创建中…", "Creating…") else tr("创建", "Create"),
+        confirmationLabel = if (busy) tr("打开中…", "Opening…") else tr("打开草稿", "Open Draft"),
         confirmationEnabled = !busy && name.isNotEmpty() && nameError == null,
         onConfirm = {
+            val clean = name.trim()
+            val baseDir = if (project) {
+                model.loaded.cwd?.trimEnd('/')?.let { "$it/.pi" }
+            } else {
+                model.loaded.agentDir?.trimEnd('/')
+            }
+            if (type == PiResourceFile.Creatable.Prompt && !baseDir.isNullOrBlank()) {
+                val target = "$baseDir/prompts/$clean.md"
+                onCreated(target)
+                return@PiSettingsDialog
+            }
             busy = true
             scope.launch {
-                when (val r = model.createFile(type.kind, project, name)) {
+                when (val r = model.createFile(type.kind, project, clean)) {
                     is Parsed.Ok -> onCreated(r.value)
                     is Parsed.Error -> { failure = r.message; busy = false }
                 }

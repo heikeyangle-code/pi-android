@@ -45,7 +45,7 @@ class HostExtensions(private val commands: HostCommands) {
         val timeout: Double? = null,
         val toolExposure: JsonObject? = null,
         val oauth: JsonObject? = null,
-        val auth: String? = null,
+        val auth: JsonElement? = null,
         val type: String? = null,
     ) {
         val isProject get() = scope == "project"
@@ -73,7 +73,20 @@ class HostExtensions(private val commands: HostCommands) {
     )
 
     /** `mcp.list` 的一行：真的连过之后的状态。[state]：connected / needs-auth / error / disabled … */
-    data class McpReport(val name: String, val state: String, val tools: List<String>, val error: String?, val resources: Boolean)
+    data class McpReport(
+        val name: String,
+        val state: String,
+        val tools: List<String>,
+        val toolExposure: Map<String, String> = emptyMap(),
+        val error: String?,
+        val resources: Boolean,
+    )
+
+    data class McpCheckReport(
+        val servers: List<McpReport>,
+        val errors: List<String> = emptyList(),
+        val note: String? = null,
+    )
 
     // ---- 扩展包 ----
 
@@ -122,27 +135,24 @@ class HostExtensions(private val commands: HostCommands) {
     }
 
     /** 真的连每个已启用的服务器（可能要几秒到几十秒），只在用户点「检测」时调。 */
-    suspend fun mcpCheck(): List<McpReport> =
-        rows(commands.call("mcp.list", timeoutMs = LONG).data["servers"]).map {
+    suspend fun mcpCheck(): McpCheckReport {
+        val data = commands.call("mcp.list", timeoutMs = LONG).data
+        val servers = rows(data["servers"]).map {
+            val te = (it["toolExposure"] as? JsonObject)?.entries
+                ?.mapNotNull { (k, v) -> str(v)?.let { mode -> k to mode } }
+                ?.toMap()
+                .orEmpty()
             McpReport(
                 name = str(it["name"]).orEmpty(),
                 state = str(it["state"]).orEmpty(),
                 tools = (it["tools"] as? JsonArray).orEmpty().mapNotNull { t -> str(t) },
+                toolExposure = te,
                 error = str(it["error"]),
                 resources = (it["resources"] as? JsonPrimitive)?.content == "true",
             )
         }
-
-    /** 新增。stdio 给 [command]（+[args]），HTTP 给 [url]，二选一（宿主校验）。[project] = 写进本项目。 */
-    suspend fun mcpAdd(name: String, command: String?, args: List<String>, url: String?, project: Boolean, exposure: String?) {
-        commands.call("mcp.add", JsonObject(buildMap {
-            put("name", JsonPrimitive(name))
-            command?.let { put("command", JsonPrimitive(it)) }
-            if (args.isNotEmpty()) put("args", JsonArray(args.map(::JsonPrimitive)))
-            url?.let { put("url", JsonPrimitive(it)) }
-            put("local", JsonPrimitive(project))
-            exposure?.let { put("exposure", JsonPrimitive(it)) }
-        }), LONG)
+        val errors = (data["errors"] as? JsonArray).orEmpty().mapNotNull { str(it) ?: it.toString().takeIf(String::isNotBlank) }
+        return McpCheckReport(servers = servers, errors = errors, note = str(data["note"]))
     }
 
     /** 保存一条服务器（新增 / 改名 / 编辑）：由宿主调官方 `validateMcpServerConfig` + `addMcpServerConfig`。 */
@@ -276,7 +286,7 @@ class HostExtensions(private val commands: HostCommands) {
         timeout = (o["timeout"] as? JsonPrimitive)?.content?.toDoubleOrNull(),
         toolExposure = o["toolExposure"] as? JsonObject,
         oauth = o["oauth"] as? JsonObject,
-        auth = str(o["auth"]),
+        auth = o["auth"]?.takeIf { it !is kotlinx.serialization.json.JsonNull },
         type = str(o["type"]),
     )
 

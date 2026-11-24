@@ -119,6 +119,27 @@ internal fun ResourceTypeScreen(
             if (!model.projectUsable) {
                 item { PiInfoNote(tr("当前项目尚未信任：去「扩展与资源 → 项目信任」信任本项目后即可配置项目层资源。", "Project is not trusted yet: trust it under Extensions & Resources → Project Trust to configure project-level resources."), tone = PiTheme.palette.warning) }
             }
+            if (model.pendingReload) {
+                item {
+                    ModelsCard(accent = true) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(ModelsCardPadding),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(tr("改动还没生效", "Changes Pending Reload"), style = PiTheme.text.prose, color = PiTheme.palette.text)
+                                Text(tr("开关已写入设置；重新加载后立即生效。", "Settings saved; reload now to apply immediately."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                            }
+                            app.pi.ui.models.PrimaryAction(
+                                text = if (model.reloading) tr("加载中…", "Reloading…") else tr("重新加载", "Reload"),
+                                enabled = !model.reloading,
+                                onClick = { model.reload() },
+                            )
+                        }
+                    }
+                }
+            }
             model.error?.let { item { PiInfoNote(it, tone = PiTheme.palette.error) } }
             item {
                 PiEditorField(
@@ -200,11 +221,10 @@ internal fun ResourceTypeScreen(
     }
 }
 
+/** 手机端仅保留真正高频实用的「新建提示模板（.md 草稿）」；扩展与多文件技能应通过扩展包安装或直接在对话中让 Pi 生成。 */
 private fun creatableOf(type: Type): app.pi.packages.PiResourceFile.Creatable? = when (type) {
-    Type.Skills -> app.pi.packages.PiResourceFile.Creatable.Skill
     Type.Prompts -> app.pi.packages.PiResourceFile.Creatable.Prompt
-    Type.Extensions -> app.pi.packages.PiResourceFile.Creatable.Extension
-    Type.Themes -> null
+    Type.Extensions, Type.Skills, Type.Themes -> null
 }
 
 private fun emptyHint(type: Type): String = when (type) {
@@ -367,7 +387,31 @@ private fun ResourceDetailSheet(
                     val t = loaded.themes.firstOrNull { it.path == item.path }
                     if (t == null) NotLoaded(row.effective) else {
                         sourceFacts(t.source)
-                        Text(tr("在「设置 → 外观 → 主题」里选用。", "Select in Settings → Appearance → Theme."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                        val themeName = t.name?.takeIf { it.isNotBlank() }
+                        if (themeName != null) {
+                            var applying by remember(themeName) { mutableStateOf(false) }
+                            var applyStatus by remember(themeName) { mutableStateOf<String?>(null) }
+                            app.pi.ui.models.PrimaryAction(
+                                text = if (applying) tr("应用中…", "Applying…") else tr("设为当前主题", "Apply Theme"),
+                                enabled = !applying,
+                                onClick = {
+                                    applying = true
+                                    applyStatus = null
+                                    scope.launch {
+                                        when (val r = model.applyTheme(themeName)) {
+                                            is PiResourceCatalog.Parsed.Ok -> applyStatus = tr("已切换主题为「$themeName」。", "Applied theme \"$themeName\".")
+                                            is PiResourceCatalog.Parsed.Error -> applyStatus = r.message
+                                        }
+                                        applying = false
+                                    }
+                                },
+                            )
+                            applyStatus?.let { msg ->
+                                Text(msg, style = PiTheme.text.meta, color = PiTheme.palette.accent)
+                            }
+                        } else {
+                            Text(tr("在「设置 → 外观 → 主题」里选用。", "Select in Settings → Appearance → Theme."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                        }
                     }
                 }
             }
@@ -441,8 +485,12 @@ private fun ExtensionDetail(e: PiLoadedResources.Extension?) {
     if (e.tools.isNotEmpty()) Fact(tr("工具", "Tools"), e.tools.joinToString("\n") { it.name + (it.description?.let { d -> " — ${d.lineSequence().first()}" } ?: "") })
     if (e.flags.isNotEmpty()) Fact(tr("启动参数", "Flags"), e.flags.joinToString("\n") { "--" + it.name + (if (it.isBoolean) "" else tr(" <值>", " <value>")) + (it.description?.let { d -> " — $d" } ?: "") })
     if (e.shortcuts.isNotEmpty()) Fact(tr("快捷键", "Shortcuts"), e.shortcuts.joinToString("\n") { it.shortcut + (it.description?.let { d -> " — $d" } ?: "") })
+    if (e.toolRenderers.isNotEmpty()) Fact(tr("工具渲染器", "Tool Renderers"), e.toolRenderers.joinToString(tr("、", ", ")))
+    if (e.messageRenderers.isNotEmpty()) Fact(tr("消息渲染器", "Message Renderers"), e.messageRenderers.joinToString(tr("、", ", ")))
+    if (e.entryRenderers.isNotEmpty()) Fact(tr("自定义条目渲染器", "Entry Renderers"), e.entryRenderers.joinToString(tr("、", ", ")))
+    if (e.hasMarkdownTransformer) Fact(tr("Markdown 变换器", "Markdown Transformer"), tr("已注册（拦截并改写对话 Markdown）", "Registered (transforms conversation Markdown)"))
     if (e.events.isNotEmpty()) Fact(tr("监听的事件", "Events"), e.events.joinToString(tr("、", ", ")))
-    if (e.registered == 0 && e.events.isEmpty()) Text(tr("它没有注册命令、工具、参数或快捷键。", "Does not register any commands, tools, flags, or shortcuts."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
+    if (e.registered == 0 && e.events.isEmpty()) Text(tr("它没有注册命令、工具、参数、渲染器或快捷键。", "Does not register any commands, tools, flags, renderers, or shortcuts."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
 }
 
 @Composable

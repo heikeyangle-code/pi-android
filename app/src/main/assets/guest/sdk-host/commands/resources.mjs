@@ -15,7 +15,9 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ERR, HostError, bad, str } from "../protocol.mjs";
 
-const FALLBACK_BUILTINS = ["llama.cpp", "codemode", "tool-search", "mcp"];
+import { builtinExtensions } from "../controller.mjs";
+
+const CORE_BUILTINS = ["codemode", "tool-search", "mcp"];
 
 async function importDist(controller, rel) {
   return import(pathToFileURL(join(controller.cfg.piDir, "dist", rel)).href);
@@ -32,13 +34,10 @@ function androidBuiltinNames(controller) {
 
 async function builtinNames(controller) {
   const extra = androidBuiltinNames(controller);
-  try {
-    const { builtInExtensions } = await importDist(controller, "extensions/index.js");
-    const core = builtInExtensions.filter((e) => e.builtin === true).map((e) => e.name);
-    return [...new Set([...core, ...extra])];
-  } catch {
-    return [...new Set([...FALLBACK_BUILTINS, ...extra])]; // 取不到就用兜底名单；取到的始终以引擎为准
-  }
+  const core = controller?.sdk
+    ? builtinExtensions(controller.sdk).map((e) => e.name)
+    : CORE_BUILTINS;
+  return [...new Set([...core, ...extra])];
 }
 
 /** 上下文文件 / 提示模板正文的预览上限：列表与详情只要「是什么」，整份内容走「Pi 文件」去看去改。 */
@@ -70,17 +69,22 @@ const wireDiagnostics = (list) =>
       : null,
   }));
 
-/** 一个已加载扩展：它**注册了什么**（命令 / 工具 / flag / 快捷键 / 监听的事件）——这才是用户想知道的。 */
+/** 一个已加载扩展：它**注册了什么**（命令 / 工具 / flag / 快捷键 / 渲染器 / 监听的事件）——这才是用户想知道的。 */
 export function wireExtension(e) {
   return {
     path: e.path,
     resolvedPath: e.resolvedPath ?? e.path,
     hidden: e.hidden === true,
+    replaceable: e.replaceable === true,
     source: sourceOf(e.sourceInfo),
     commands: [...(e.commands?.values?.() ?? [])].map((c) => ({ name: c.name, description: c.description ?? null })),
     tools: [...(e.tools?.entries?.() ?? [])].map(([name, t]) => ({ name, description: t?.definition?.description ?? null })),
     flags: [...(e.flags?.values?.() ?? [])].map((f) => ({ name: f.name, description: f.description ?? null, type: f.type })),
     shortcuts: [...(e.shortcuts?.values?.() ?? [])].map((k) => ({ shortcut: String(k.shortcut), description: k.description ?? null })),
+    toolRenderers: [...(e.toolRenderers?.keys?.() ?? [])].sort(),
+    messageRenderers: [...(e.messageRenderers?.keys?.() ?? [])].sort(),
+    entryRenderers: [...(e.entryRenderers?.keys?.() ?? [])].sort(),
+    hasMarkdownTransformer: typeof e.markdownTransformer === "function",
     events: [...(e.handlers?.keys?.() ?? [])].sort(),
   };
 }

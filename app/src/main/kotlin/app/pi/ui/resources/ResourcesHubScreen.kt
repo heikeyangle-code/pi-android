@@ -322,27 +322,16 @@ private fun Hub(
         item {
             val palette = PiTheme.palette
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                ModelsSectionLabel(tr("来源与连接", "Sources & Connections"))
+                ModelsSectionLabel(tr("扩展包", "Packages"))
                 ModelsCard {
-                    Column {
-                        HubRow(
-                            icon = Icons.Filled.Inventory2,
-                            iconTint = palette.accent,
-                            title = tr("扩展包", "Packages"),
-                            summary = packagesSummary(model),
-                            badge = ov.installFailures.takeIf { it > 0 }?.let { tr("$it 个没装上", "$it failed") },
-                            onClick = { onOpen("packages") },
-                        )
-                        ModelsDivider()
-                        HubRow(
-                            icon = Icons.Filled.Hub,
-                            iconTint = palette.success,
-                            title = tr("MCP 服务器", "MCP Servers"),
-                            summary = tr("给 pi 接外部工具", "Connect external tools to pi"),
-                            badge = null,
-                            onClick = onOpenMcp,
-                        )
-                    }
+                    HubRow(
+                        icon = Icons.Filled.Inventory2,
+                        iconTint = palette.accent,
+                        title = tr("管理扩展包", "Manage Packages"),
+                        summary = packagesSummary(model),
+                        badge = ov.installFailures.takeIf { it > 0 }?.let { tr("$it 个没装上", "$it failed") },
+                        onClick = { onOpen("packages") },
+                    )
                 }
             }
         }
@@ -350,18 +339,9 @@ private fun Hub(
         item {
             val palette = PiTheme.palette
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                ModelsSectionLabel(tr("相关", "Related"))
+                ModelsSectionLabel(tr("参数与选项", "Flags & Options"))
                 ModelsCard {
                     Column {
-                        HubRow(
-                            icon = Icons.Filled.Tune,
-                            iconTint = palette.warning,
-                            title = tr("技能命令与扩展启动参数", "Skill Commands & Extension Flags"),
-                            summary = tr("/skill:name 开关、--flag 传参", "/skill:name toggles, --flag startup arguments"),
-                            badge = null,
-                            onClick = onOpenCommandSettings,
-                        )
-                        ModelsDivider()
                         HubRow(
                             icon = Icons.Filled.Flag,
                             iconTint = palette.borderAccent,
@@ -370,6 +350,15 @@ private fun Hub(
                             badge = null,
                             onClick = onOpenFlags,
                         )
+                        ModelsDivider()
+                        HubRow(
+                            icon = Icons.Filled.Tune,
+                            iconTint = palette.warning,
+                            title = tr("包安装与命令选项", "Package Install & Command Options"),
+                            summary = tr("/skill:name 命令开关、npm 镜像命令、安装遥测", "/skill:name command toggle, npm mirror command, install telemetry"),
+                            badge = null,
+                            onClick = onOpenCommandSettings,
+                        )
                     }
                 }
             }
@@ -377,15 +366,24 @@ private fun Hub(
 
         val problems = model.loaded.diagnostics.map(::describeDiagnostic) +
             model.loaded.extensionErrors.map { tr("${it.message}（${shortPath(it.path)}）", "${it.message} (${shortPath(it.path)})") } +
-            model.loaded.extensionWarnings.map { tr("${it.message}（${shortPath(it.path)}）", "${it.message} (${shortPath(it.path)})") }
+            model.loaded.extensionWarnings.map { tr("${it.message}（${shortPath(it.path)}）", "${it.message} (${shortPath(it.path)})") } +
+            model.catalogDiagnostics.map { d ->
+                val tag = when (d.kind) {
+                    "command" -> tr("命令冲突", "Command")
+                    "shortcut" -> tr("快捷键冲突", "Shortcut")
+                    else -> tr("扩展", "Extension")
+                }
+                val loc = d.path?.takeIf { it.isNotBlank() }?.let { " (${shortPath(it)})" }.orEmpty()
+                "$tag: ${d.message}$loc"
+            }
         if (problems.isNotEmpty()) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                     ModelsSectionLabel(tr("pi 报告的问题 · ${problems.size}", "Issues Reported by Pi · ${problems.size}"))
                     ModelsCard {
                         Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                            problems.take(8).forEach { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.warning) }
-                            if (problems.size > 8) Text(tr("还有 ${problems.size - 8} 条，在各类资源页里看。", "${problems.size - 8} more; view details in each resource screen."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                            problems.take(10).forEach { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.warning) }
+                            if (problems.size > 10) Text(tr("还有 ${problems.size - 10} 条，在各类资源页里看。", "${problems.size - 10} more; view details in each resource screen."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                         }
                     }
                 }

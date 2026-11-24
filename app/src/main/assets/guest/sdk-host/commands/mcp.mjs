@@ -310,6 +310,13 @@ export function register(reg, { controller, hub }) {
     if (!entry) throw new HostError(ERR.NOT_FOUND, `没有这个 MCP 服务器：${name}`);
     if (logins.has(name)) throw new HostError(ERR.BUSY, `${name} 已经有一个登录在进行`);
 
+    const authProvider = typeof entry.config?.auth?.provider === "string" ? entry.config.auth.provider.trim() : "";
+    if (authProvider) {
+      throw new HostError(
+        ERR.UNSUPPORTED,
+        `${name} 使用「${authProvider}」供应商账号认证，请在模型与供应商页登录 ${authProvider}（或运行 /login ${authProvider}）。`,
+      );
+    }
     const credentials = new rt.McpOAuthCredentialStore();
     const connection = new rt.McpServerConnection({
       entry,

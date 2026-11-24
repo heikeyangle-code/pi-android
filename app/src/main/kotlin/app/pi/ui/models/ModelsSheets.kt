@@ -1,15 +1,29 @@
 package app.pi.ui.models
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -21,17 +35,25 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
+import app.pi.ui.settings.PiEditorField
+import app.pi.ui.settings.PiFieldPaddingBlock
 import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.settings.PiTextFieldMinHeight
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 
 // ------------------------------------------------------------------ 跨供应商选模型
 
@@ -222,6 +244,7 @@ internal fun ScopedModelsSheet(
     }
 
     fun toggleProvider(providerModelKeys: List<String>) {
+        userEdited = true
         val allSelected = providerModelKeys.isNotEmpty() && providerModelKeys.all { it in selectedSet }
         selectedKeys = if (allSelected) {
             selectedKeys.filterNot { it in providerModelKeys }
@@ -235,7 +258,11 @@ internal fun ScopedModelsSheet(
         scope.launch {
             working = true
             error = null
-            val refs = selectedKeys.mapNotNull { key ->
+            val allModelsSelected = models.isNotEmpty() &&
+                selectedKeys.size >= models.size &&
+                models.all { "${it.provider.orEmpty()}/${it.id}" in selectedSet }
+            val effectiveKeys = if (allModelsSelected) emptyList() else selectedKeys
+            val refs = effectiveKeys.mapNotNull { key ->
                 val m = modelByKey[key]
                 val p = m?.provider ?: key.substringBefore('/', "")
                 val id = m?.id ?: key.substringAfter('/', key)
@@ -244,13 +271,13 @@ internal fun ScopedModelsSheet(
             val result = runCatching {
                 h.advanced.setScopedModels(refs)
                 if (persist) {
-                    h.setEnabledModels(selectedKeys.takeIf { it.isNotEmpty() })
+                    h.setEnabledModels(effectiveKeys.takeIf { it.isNotEmpty() })
                 }
             }
             result.onSuccess {
                 val msg = when {
-                    refs.isEmpty() && persist -> tr("已清空作用域与默认循环模型（将循环全部可用模型）。", "Cleared scoped and default cycling models (will cycle all available models).")
-                    refs.isEmpty() -> tr("已清空当前会话作用域模型。", "Cleared current session scoped models.")
+                    refs.isEmpty() && persist -> tr("已设为循环全部可用模型。", "Saved to cycle through all available models.")
+                    refs.isEmpty() -> tr("已清空当前会话作用域模型（循环全部可用模型）。", "Cleared current session scoped models (cycling all available).")
                     persist -> tr("已应用并设为默认循环模型（${refs.size} 个）。", "Applied and saved as default cycling models (${refs.size}).")
                     else -> tr("已应用到当前会话作用域模型（${refs.size} 个）。", "Applied to current session scoped models (${refs.size}).")
                 }
@@ -302,6 +329,7 @@ internal fun ScopedModelsSheet(
             PiSettingsChip(
                 text = tr("全选可见", "Select Visible"),
                 onClick = {
+                    userEdited = true
                     val visibleKeys = filtered.flatMap { g -> g.models.map { "${it.provider}/${it.id}" } }
                     selectedKeys = (selectedKeys + visibleKeys).distinct()
                 },
@@ -309,7 +337,10 @@ internal fun ScopedModelsSheet(
             PiSettingsChip(
                 text = tr("清空", "Clear"),
                 enabled = selectedKeys.isNotEmpty(),
-                onClick = { selectedKeys = emptyList() },
+                onClick = {
+                    userEdited = true
+                    selectedKeys = emptyList()
+                },
             )
         }
         LazyColumn(Modifier.weight(1f)) {
@@ -401,6 +432,7 @@ internal fun ScopedModelsSheet(
 // ------------------------------------------------------------------ 官方两步「逐模型思考等级」选择器
 
 private fun officialThinkingMeta(level: String): Pair<String, String>? = when (level) {
+    "off" -> tr("关闭", "Off") to tr("关闭思考，直接回答", "Disable reasoning and respond directly")
     "minimal" -> tr("极简", "Minimal") to tr("最少推理（约 1k token 预算）", "Minimal reasoning (~1k token budget)")
     "low" -> tr("低", "Low") to tr("轻量推理（约 2k token 预算）", "Light reasoning (~2k token budget)")
     "medium" -> tr("中", "Medium") to tr("均衡推理（约 8k token 预算）", "Balanced reasoning (~8k token budget)")
@@ -698,6 +730,237 @@ internal fun ModelThinkingLevelsSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 SecondaryAction(text = tr("← 返回模型列表", "← Back to Models"), enabled = !busy, onClick = { selectedModel = null; error = null })
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ 官方 models.json 导入 / 编辑 / 修复
+
+private val prettyModelsJson = Json { prettyPrint = true }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun ModelsJsonImportSheet(
+    host: () -> ModelsHost?,
+    existingProviders: Map<String, JsonObject>,
+    corruptError: String?,
+    onDismiss: () -> Unit,
+    onSaved: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    val palette = PiTheme.palette
+
+    val initialText = remember(existingProviders, corruptError) {
+        if (existingProviders.isEmpty()) {
+            ""
+        } else {
+            val root = JsonObject(mapOf("providers" to JsonObject(existingProviders)))
+            runCatching { prettyModelsJson.encodeToString(JsonObject.serializer(), root) }.getOrDefault("")
+        }
+    }
+    var text by remember(initialText) { mutableStateOf(initialText) }
+    var mergeExisting by remember(existingProviders, corruptError) {
+        mutableStateOf(existingProviders.isNotEmpty() && corruptError == null && initialText.isEmpty())
+    }
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            val content = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            if (content.isNullOrBlank()) {
+                error = tr("所选文件为空", "Selected file is empty")
+            } else {
+                error = null
+                text = content
+                if (existingProviders.isNotEmpty() && corruptError == null) mergeExisting = true
+            }
+        }.onFailure { err ->
+            error = err.message ?: tr("读取文件失败", "Failed to read file")
+        }
+    }
+
+    val parsed = remember(text) {
+        val raw = text.trim()
+        if (raw.isEmpty()) null to null
+        else runCatching {
+            val el = Json.parseToJsonElement(raw) as? JsonObject
+                ?: return@runCatching null to tr("根元素必须是 JSON 对象", "Root must be a JSON object")
+            val providers = el["providers"] as? JsonObject
+                ?: return@runCatching null to tr("缺少 providers 对象（官方 models.json 格式：{ \"providers\": { … } }）", "Missing \"providers\" object (official models.json format: { \"providers\": { … } })")
+            providers to null
+        }.getOrElse { null to tr("JSON 语法有误", "Invalid JSON syntax") }
+    }
+    val detectedProviders = parsed.first
+    val parseError = parsed.second
+
+    PiSheet(onDismiss = onDismiss, fullHeight = true) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = PiSettingsMetrics.pageHorizontal)
+                .padding(bottom = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                tr("导入 / 编辑 models.json", "Import / Edit models.json"),
+                style = PiType.title,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                tr(
+                    "完全遵循官方 ~/.pi/agent/models.json 结构，保存时经官方 Pi SDK 校验生效；支持批量导入自定义端点（Ollama / vLLM / DeepSeek / 中转等）或修复损坏配置。",
+                    "Follows official ~/.pi/agent/models.json schema and validates via Pi SDK on save. Bulk-import custom endpoints or repair invalid JSON.",
+                ),
+                style = PiTheme.text.meta,
+                color = palette.muted,
+            )
+            corruptError?.let { cErr ->
+                Text(
+                    tr("当前文件错误：$cErr", "Current file error: $cErr"),
+                    style = PiTheme.text.meta,
+                    color = palette.error,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(palette.accent.copy(alpha = 0.12f))
+                        .clickable { filePicker.launch(arrayOf("application/json", "text/plain", "*/*")) }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(Icons.Filled.FolderOpen, contentDescription = null, tint = palette.accent, modifier = Modifier.size(14.dp))
+                    Text(tr("选择 .json 文件", "Pick .json file"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = palette.accent)
+                }
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .clickable {
+                            val pasted = clipboard.getText()?.text.orEmpty()
+                            if (pasted.isNotBlank()) {
+                                error = null
+                                text = pasted
+                            }
+                        }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(Icons.Filled.ContentPaste, contentDescription = null, tint = palette.text, modifier = Modifier.size(14.dp))
+                    Text(tr("从剪贴板粘贴", "Paste"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = palette.text)
+                }
+            }
+            if (existingProviders.isNotEmpty() && corruptError == null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PiSettingsChip(
+                        text = tr("合并到现有配置", "Merge with existing"),
+                        active = mergeExisting,
+                        onClick = { mergeExisting = true },
+                    )
+                    PiSettingsChip(
+                        text = tr("整份覆盖", "Replace entire file"),
+                        active = !mergeExisting,
+                        onClick = { mergeExisting = false },
+                    )
+                }
+            }
+            PiEditorField(
+                value = text,
+                onValueChange = {
+                    error = null
+                    text = it
+                },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = "{\n  \"providers\": {\n    \"my-openai\": {\n      \"baseUrl\": \"https://…/v1\",\n      \"api\": \"openai-completions\",\n      \"apiKey\": \"\${MY_API_KEY}\",\n      \"models\": [{ \"id\": \"…\" }]\n    }\n  }\n}",
+                singleLine = false,
+                maxLines = 16,
+                minHeight = PiTextFieldMinHeight * 2,
+                contentPadding = PiFieldPaddingBlock,
+            )
+            if (parseError != null) {
+                Text(parseError, style = PiTheme.text.meta, color = palette.error)
+            } else if (detectedProviders != null && detectedProviders.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        tr("检测到 ${detectedProviders.size} 个供应商：", "Detected ${detectedProviders.size} provider(s):"),
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                        color = palette.success,
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        detectedProviders.keys.forEach { key ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainer,
+                                border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f)),
+                            ) {
+                                Text(
+                                    text = key,
+                                    style = PiTheme.text.monoSmall,
+                                    color = palette.text,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            error?.let { Text(it, style = PiTheme.text.meta, color = palette.error) }
+            Spacer(Modifier.height(2.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                PrimaryAction(
+                    text = if (saving) tr("保存中…", "Saving…") else tr("校验并保存", "Validate & Save"),
+                    enabled = !saving && detectedProviders != null && parseError == null,
+                    onClick = {
+                        val h = host() ?: run {
+                            error = tr("引擎没在运行。", "Engine is not running.")
+                            return@PrimaryAction
+                        }
+                        val incoming = detectedProviders ?: return@PrimaryAction
+                        val finalProviders = if (mergeExisting && existingProviders.isNotEmpty()) {
+                            LinkedHashMap<String, kotlinx.serialization.json.JsonElement>(existingProviders).apply {
+                                incoming.forEach { (k, v) -> put(k, v) }
+                            }
+                        } else {
+                            incoming
+                        }
+                        val payload = JsonObject(mapOf("providers" to JsonObject(finalProviders)))
+                        scope.launch {
+                            saving = true
+                            error = null
+                            runCatching { h.advanced.setModelsConfig(payload) }
+                                .onSuccess {
+                                    onSaved(
+                                        tr(
+                                            "models.json 已保存（共 ${finalProviders.size} 个自定义供应商）。",
+                                            "Saved models.json (${finalProviders.size} custom provider(s)).",
+                                        ),
+                                    )
+                                    onDismiss()
+                                }
+                                .onFailure { err ->
+                                    error = err.message ?: tr("保存失败", "Save failed")
+                                    saving = false
+                                }
+                        }
+                    },
+                )
+                SecondaryAction(text = tr("取消", "Cancel"), onClick = onDismiss)
             }
         }
     }

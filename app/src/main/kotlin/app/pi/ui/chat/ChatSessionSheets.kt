@@ -495,13 +495,22 @@ fun RenameSessionDialog(
                 keyboardActions = androidx.compose.foundation.text.KeyboardActions(
                     onDone = {
                         val trimmed = name.trim()
-                        if (trimmed.isNotEmpty()) onConfirm(trimmed)
+                        val hadInitial = !initial.isNullOrBlank()
+                        if (trimmed.isNotEmpty() || hadInitial) onConfirm(trimmed)
                     },
                 ),
                 decorationBox = { inner ->
                     Box {
                         if (name.isEmpty()) {
-                            Text(tr("输入新名称…", "Enter a new name…"), style = PiTheme.text.prose, color = palette.muted)
+                            Text(
+                                text = if (!initial.isNullOrBlank()) {
+                                    tr("留空可清除自定义名称…", "Leave blank to clear name…")
+                                } else {
+                                    tr("输入新名称…", "Enter a new name…")
+                                },
+                                style = PiTheme.text.prose,
+                                color = palette.muted,
+                            )
                         }
                         inner()
                     }
@@ -524,13 +533,15 @@ fun RenameSessionDialog(
                 }
             }
         }
+        val canSubmit = name.isNotBlank() || !initial.isNullOrBlank()
+        val clearing = name.isBlank() && !initial.isNullOrBlank()
         PiDialogActions {
             PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = onDismiss)
             PiDialogAction(
-                label = tr("保存", "Save"),
+                label = if (clearing) tr("清除名称", "Clear name") else tr("保存", "Save"),
                 primary = true,
-                enabled = name.isNotBlank(),
-                onClick = { onConfirm(name) },
+                enabled = canSubmit,
+                onClick = { onConfirm(name.trim()) },
             )
         }
     }

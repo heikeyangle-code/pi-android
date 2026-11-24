@@ -259,7 +259,8 @@ internal fun PackagesScreen(
                     }
                     updates?.let {
                         Text(
-                            if (it.isEmpty()) tr("都是最新的。固定了版本的包不参与检查。", "Everything is up to date. Pinned packages are skipped.") else tr("有 ${it.size} 个包可以更新。固定了版本的包不会动。", "${it.size} packages can be updated. Pinned packages are skipped."),
+                            if (it.isEmpty()) tr("都是最新的（固定 npm 版本不参与更新检查）。", "Everything is up to date (pinned npm versions are skipped by update checks).")
+                            else tr("有 ${it.size} 个包有可用更新。", "${it.size} package(s) have available updates."),
                             style = PiTheme.text.meta,
                             color = PiTheme.palette.muted,
                             modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
@@ -267,14 +268,37 @@ internal fun PackagesScreen(
                     }
                 }
             }
+            val failures = model.snapshot?.failures.orEmpty()
+            if (failures.isNotEmpty()) {
+                item(key = "pkg-failures") {
+                    PiInfoNote(
+                        tr("以下扩展包未能安装：", "Failed to install packages:") + "\n" + failures.joinToString("\n"),
+                        tone = PiTheme.palette.error,
+                    )
+                }
+            }
             val list = packages.orEmpty()
             if (packages != null && list.isEmpty()) {
                 item { PiInfoNote(tr("还没装任何包。在上面填一个来源装一个。", "No packages installed yet. Enter a source above to install one.")) }
             }
+            val snapshotGroups = model.snapshot?.let { it.global + it.project }.orEmpty()
             items(list, key = { it.scope + ":" + it.source }) { p ->
                 val info = p.info
                 val view = if (info != null) sourceView(p.source, info.kind, info.name, info.version, info.pinned) else sourceView(p.source, "unknown", null, null, false)
                 val update = updates?.firstOrNull { it.source == p.source && it.scope == p.scope }
+                val provided = remember(snapshotGroups, p.source, p.isProject) {
+                    val matched = snapshotGroups.filter { it.source == p.source && it.projectScoped == p.isProject }
+                    val ext = matched.sumOf { it.items(app.pi.packages.PiResourceCatalog.Type.Extensions).size }
+                    val sk = matched.sumOf { it.items(app.pi.packages.PiResourceCatalog.Type.Skills).size }
+                    val pr = matched.sumOf { it.items(app.pi.packages.PiResourceCatalog.Type.Prompts).size }
+                    val th = matched.sumOf { it.items(app.pi.packages.PiResourceCatalog.Type.Themes).size }
+                    buildList {
+                        if (ext > 0) add(tr("$ext 个扩展", "$ext ext"))
+                        if (sk > 0) add(tr("$sk 个技能", "$sk skills"))
+                        if (pr > 0) add(tr("$pr 个模板", "$pr prompts"))
+                        if (th > 0) add(tr("$th 个主题", "$th themes"))
+                    }.joinToString(" · ")
+                }
                 ModelsCard {
                     Column(Modifier.fillMaxWidth().padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
@@ -305,14 +329,25 @@ internal fun PackagesScreen(
                             )
                         }
                         TagRow(packageTags(p.scope, p.filtered, p.installedPath != null, view) + listOfNotNull(if (update != null) tr("有更新", "Update available") else null))
+                        if (provided.isNotEmpty()) {
+                            Text(
+                                tr("提供：$provided", "Provides: $provided"),
+                                style = PiTheme.text.meta,
+                                color = PiTheme.palette.muted,
+                            )
+                        }
                         p.installedPath?.let { Text(shortPath(it), style = PiTheme.text.monoSmall, color = PiTheme.palette.dim, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         view.warning?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.warning) }
                         Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                             if (p.installedPath == null) {
                                 PiSettingsChip(text = tr("重新安装", "Reinstall"), enabled = busy == null && (p.scope != "project" || projectUsable), onClick = { run("install") { id -> access.ext.install(p.source, p.isProject, id) } })
-                            }
-                            if (update != null) {
-                                PiSettingsChip(text = tr("更新", "Update"), enabled = busy == null && (p.scope != "project" || projectUsable), onClick = { run("update") { id -> access.ext.update(p.source, id) } })
+                            } else {
+                                PiSettingsChip(
+                                    text = tr("更新", "Update"),
+                                    active = update != null,
+                                    enabled = busy == null && (p.scope != "project" || projectUsable),
+                                    onClick = { run("update") { id -> access.ext.update(p.source, id) } },
+                                )
                             }
                             PiSettingsChip(text = tr("移除", "Remove"), enabled = busy == null && (p.scope != "project" || projectUsable), onClick = { confirmRemove = p })
                         }

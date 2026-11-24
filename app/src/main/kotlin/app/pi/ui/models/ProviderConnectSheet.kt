@@ -695,19 +695,17 @@ internal fun ProviderSheet(
 
             val filtered = searchModels(allModels, emptyMap(), modelQuery)
             if (filtered.isNotEmpty()) {
-                item(key = "models-card") {
-                    ModelsCard {
-                        Column {
-                            filtered.forEachIndexed { idx, m ->
-                                if (idx > 0) ModelsDivider()
-                                ModelRow(
-                                    model = m,
-                                    current = current?.let { m.sameAs(it.first, it.second) } == true,
-                                    selected = picked?.id == m.id,
-                                    onClick = if (configured) ({ picked = m; pickError = null }) else null,
-                                )
-                            }
-                        }
+                items(
+                    items = filtered,
+                    key = { m -> "m:${m.provider}/${m.id}" },
+                ) { m ->
+                    Box(Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal)) {
+                        ModelRow(
+                            model = m,
+                            current = current?.let { m.sameAs(it.first, it.second) } == true,
+                            selected = picked?.id == m.id,
+                            onClick = if (configured) ({ picked = m; pickError = null }) else null,
+                        )
                     }
                 }
             } else if (modelQuery.isNotBlank()) {

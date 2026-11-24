@@ -5,7 +5,7 @@ import { withState } from "../state.mjs";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 
-const THINKING_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
+const THINKING_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 let cachedGetSupportedThinkingLevels = undefined;
 
 async function resolveSupportedThinkingLevelsFn(piDir) {
@@ -41,10 +41,10 @@ function supportedThinkingLevelsOf(model, sdkFn) {
   }
   const map = model.thinkingLevelMap;
   if (map && typeof map === "object") {
-    const mapped = THINKING_ORDER.filter((lvl) => lvl in map);
+    const mapped = THINKING_ORDER.filter((lvl) => lvl === "off" || lvl in map);
     if (mapped.length > 0) return mapped;
   }
-  return ["minimal", "low", "medium", "high"];
+  return ["off", "minimal", "low", "medium", "high"];
 }
 
 export function register(reg, { controller }) {

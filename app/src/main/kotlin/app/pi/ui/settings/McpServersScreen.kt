@@ -92,10 +92,10 @@ internal fun McpServersScreen(
     var project by remember { mutableStateOf(false) }
     var pendingRestart by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var picking by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
     var importNote by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<Editing?>(null) }
+    var editSaveError by remember { mutableStateOf<String?>(null) }
     var hostCfg by remember { mutableStateOf<HostExtensions.McpConfig?>(null) }
 
     val hostNow = access()
@@ -165,16 +165,22 @@ internal fun McpServersScreen(
         checkFailure = null
         scope.launch {
             try {
-                val reports = host.ext.mcpCheck()
+                val report = host.ext.mcpCheck()
                 status = PiMcpStatus.Report(
-                    servers = reports.map {
+                    servers = report.servers.map {
                         PiMcpStatus.Server(
-                            name = it.name, scope = "", enabled = it.state != "disabled", state = it.state,
-                            tools = it.tools, toolExposure = emptyMap(), resources = it.resources, error = it.error,
+                            name = it.name,
+                            scope = "",
+                            enabled = it.state != "disabled",
+                            state = it.state,
+                            tools = it.tools,
+                            toolExposure = it.toolExposure,
+                            resources = it.resources,
+                            error = it.error,
                         )
                     },
-                    errors = emptyList(),
-                    note = null,
+                    errors = report.errors,
+                    note = report.note,
                 )
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -295,7 +301,10 @@ internal fun McpServersScreen(
             scrolled = scrolled,
             actions = {
                 PiTopBarIcon(
-                    onClick = { picking = true },
+                    onClick = {
+                        editSaveError = null
+                        editing = Editing(null, PiMcpConfig.Draft(http = true, url = "https://"))
+                    },
                     contentDescription = tr("添加服务器", "Add Server"),
                     icon = Icons.Filled.Add,
                 )
@@ -403,11 +412,41 @@ internal fun McpServersScreen(
                             )
                             PiSettingsChip(
                                 text = tr("添加服务", "Add Server"),
-                                onClick = { picking = true },
+                                onClick = {
+                                    editSaveError = null
+                                    editing = Editing(null, PiMcpConfig.Draft(http = true, url = "https://"))
+                                },
                             )
                             PiSettingsChip(
                                 text = tr("导入 JSON", "Import JSON"),
                                 onClick = { importing = true },
+                            )
+                        }
+                    }
+                }
+            }
+            importNote?.let { note ->
+                item {
+                    PiSettingsCard {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                                    vertical = PiSettingsMetrics.rowPaddingVertical,
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                        ) {
+                            Text(
+                                text = note,
+                                modifier = Modifier.weight(1f),
+                                style = PiTheme.text.meta,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            PiSettingsChip(
+                                text = tr("知道了", "Dismiss"),
+                                onClick = { importNote = null },
                             )
                         }
                     }
@@ -505,7 +544,7 @@ internal fun McpServersScreen(
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
-                                tr("按需添加远程 HTTP 服务、本地 STDIO 命令，或直接粘贴 Claude / Cursor / VS Code 的 mcpServers JSON。", "Add a remote HTTP server, a local STDIO command, or paste mcpServers JSON from Claude, Cursor, or VS Code."),
+                                tr("按需添加远程 HTTP 服务、本地 STDIO 命令，或直接导入 Claude / Cursor / VS Code 的 mcpServers JSON。", "Add a remote HTTP server, a local STDIO command, or import mcpServers JSON from Claude, Cursor, or VS Code."),
                                 style = PiTheme.text.meta,
                                 color = PiTheme.palette.muted,
                             )
@@ -515,14 +554,20 @@ internal fun McpServersScreen(
                             ) {
                                 PiSettingsChip(
                                     text = tr("＋ 远程服务 (HTTP)", "+ Remote HTTP"),
-                                    onClick = { editing = Editing(null, PiMcpConfig.Draft(http = true, url = "https://")) },
+                                    onClick = {
+                                        editSaveError = null
+                                        editing = Editing(null, PiMcpConfig.Draft(http = true, url = "https://"))
+                                    },
                                 )
                                 PiSettingsChip(
                                     text = tr("＋ 本地命令 (STDIO)", "+ Local STDIO"),
-                                    onClick = { editing = Editing(null, PiMcpConfig.Draft(http = false, command = "npx", args = "-y\n")) },
+                                    onClick = {
+                                        editSaveError = null
+                                        editing = Editing(null, PiMcpConfig.Draft(http = false, command = "npx", args = "-y\n"))
+                                    },
                                 )
                                 PiSettingsChip(
-                                    text = tr("粘贴 JSON 导入", "Import JSON"),
+                                    text = tr("导入 JSON", "Import JSON"),
                                     active = true,
                                     onClick = { importing = true },
                                 )
@@ -538,6 +583,7 @@ internal fun McpServersScreen(
                                 state = status?.of(server.name),
                                 onLogin = { startLogin(server.name) },
                                 onOpen = {
+                                    editSaveError = null
                                     editing = Editing(server.name, PiMcpConfig.toDraft(server))
                                 },
                                 onToggle = { on -> updateServerEnabled(server.name, on) },
@@ -547,7 +593,6 @@ internal fun McpServersScreen(
                 }
             }
 
-            importNote?.let { note -> item { PiInfoNote(note) } }
             val autoCodemodeChecked = cfgNow?.let {
                 if (project) it.autoEnableCodemode else it.globalAutoEnableCodemode
             } ?: PiMcpConfig.autoEnableCodemode(doc.root)
@@ -639,20 +684,6 @@ internal fun McpServersScreen(
         }
     }
 
-    if (picking) {
-        McpAddMethodSheet(
-            onDismiss = { picking = false },
-            onImport = {
-                picking = false
-                importing = true
-            },
-            onPick = { draft ->
-                picking = false
-                editing = Editing(null, draft)
-            },
-        )
-    }
-
     loginUi?.takeIf { it.redirectRequestId == null }?.let { ui ->
         val waiting = ui.phase == LoginUi.Phase.Waiting
         PiSettingsDialog(
@@ -666,8 +697,8 @@ internal fun McpServersScreen(
                     tr("正在连接服务器…", "Connecting to server…")
                 } else {
                     tr(
-                        "已在浏览器里打开授权页，授权后回到这里即可，最长等 3 分钟。\n\n${ui.url}",
-                        "Opened the authorization page in your browser. Return here after authorizing (up to 3 minutes).\n\n${ui.url}",
+                        "已在浏览器里打开授权页，授权后回到这里即可，最长等 5 分钟。\n\n${ui.url}",
+                        "Opened the authorization page in your browser. Return here after authorizing (up to 5 minutes).\n\n${ui.url}",
                     )
                 }
                 LoginUi.Phase.Done -> ui.message
@@ -745,12 +776,12 @@ internal fun McpServersScreen(
     if (importing) {
         McpImportSheet(
             onDismiss = { importing = false },
-            onImport = { text ->
+            onImport = { text, fallbackName ->
                 val host = access()
                 if (host != null) {
                     scope.launch {
                         try {
-                            val r = host.ext.mcpImport(text, project, "imported")
+                            val r = host.ext.mcpImport(text, project, fallbackName)
                             error = null
                             status = null
                             pendingRestart = true
@@ -773,7 +804,7 @@ internal fun McpServersScreen(
                 } else {
                     var result: PiMcpConfig.Imported? = null
                     write { root ->
-                        PiMcpConfig.importJson(root, text, "imported").also { result = it }.root
+                        PiMcpConfig.importJson(root, text, fallbackName).also { result = it }.root
                     }
                     val r = result
                     importNote = when {
@@ -795,12 +826,21 @@ internal fun McpServersScreen(
 
     editing?.let { current ->
         val editServers = definitions
+        val existingServer = current.oldName?.let { name -> editServers.firstOrNull { it.name == name } }
+        val hasExplicitAuth = current.draft.bearer.isNotBlank() ||
+            PiMcpConfig.parseHeaders(current.draft.headers).map.keys.any { it.equals("Authorization", ignoreCase = true) } ||
+            existingServer?.config?.get("auth") != null
+        val canUseOauth = current.oldName != null && current.draft.http && !hasExplicitAuth
         McpEditSheet(
             initial = current.draft,
             state = current.oldName?.let { status?.of(it) },
             isNew = current.oldName == null,
             otherNames = editServers.map { it.name }.filter { it != current.oldName },
-            onDismiss = { editing = null },
+            saveError = editSaveError,
+            onDismiss = {
+                editSaveError = null
+                editing = null
+            },
             onSave = { draft ->
                 val base = current.oldName?.let { name -> editServers.firstOrNull { it.name == name }?.config ?: doc.server(name)?.config }
                 val config = PiMcpConfig.toConfig(draft, base)
@@ -810,6 +850,7 @@ internal fun McpServersScreen(
                     scope.launch {
                         try {
                             host.ext.mcpSave(targetName, current.oldName, config, project)
+                            editSaveError = null
                             error = null
                             status = null
                             pendingRestart = true
@@ -820,24 +861,27 @@ internal fun McpServersScreen(
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
                         } catch (e: Exception) {
-                            error = e.message ?: tr("保存失败", "Failed to save")
-                            editing = null
+                            // 保留编辑弹层与用户输入，原位提示官方校验失败原因
+                            editSaveError = e.message ?: tr("保存失败", "Failed to save")
                         }
                     }
                 } else {
                     write { PiMcpConfig.upsert(it, current.oldName, targetName, config) }
+                    editSaveError = null
                     editing = null
                     if (current.oldName == null && draft.http && !activeStore.read().corrupt) runCheck()
                 }
             },
-            onLogin = current.oldName?.takeIf { current.draft.http }?.let { name ->
+            onLogin = current.oldName?.takeIf { canUseOauth }?.let { name ->
                 {
+                    editSaveError = null
                     editing = null
                     startLogin(name)
                 }
             },
-            onLogout = current.oldName?.takeIf { current.draft.http }?.let { name ->
+            onLogout = current.oldName?.takeIf { canUseOauth }?.let { name ->
                 {
+                    editSaveError = null
                     editing = null
                     loginUi = LoginUi(LoginUi.Kind.Logout, name, LoginUi.Phase.Waiting, null, "")
                     scope.launch {
@@ -859,20 +903,22 @@ internal fun McpServersScreen(
                         scope.launch {
                             try {
                                 host.ext.mcpRemove(name, project)
+                                editSaveError = null
                                 error = null
                                 status = null
                                 pendingRestart = true
                                 onFilesWritten()
                                 epoch++
+                                editing = null
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
                             } catch (e: Exception) {
-                                error = e.message ?: tr("删除失败", "Failed to delete")
+                                editSaveError = e.message ?: tr("删除失败", "Failed to delete")
                             }
-                            editing = null
                         }
                     } else {
                         write { PiMcpConfig.remove(it, name) }
+                        editSaveError = null
                         editing = null
                     }
                 }
@@ -890,7 +936,7 @@ private fun hostServerToConfig(server: HostExtensions.McpServer): PiMcpConfig.Se
     server.cwd?.let { map["cwd"] = JsonPrimitive(it) }
     server.url?.let { map["url"] = JsonPrimitive(it) }
     server.headers?.let { map["headers"] = it }
-    server.auth?.let { map["auth"] = JsonPrimitive(it) }
+    server.auth?.let { map["auth"] = it }
     server.oauth?.let { map["oauth"] = it }
     server.description?.let { map["description"] = JsonPrimitive(it) }
     server.timeout?.let {

@@ -236,8 +236,8 @@ export function register(reg, { controller }) {
   });
 
   reg.add("session.name", (args) => {
-    const name = str(args, "name").trim();
-    if (!name) throw bad("会话名不能为空");
+    if (typeof args?.name !== "string") throw bad("缺少字符串参数 name");
+    const name = args.name.trim();
     controller.requireSession().setSessionName(name);
     controller.invalidateSessionList?.();
     return withState(controller);

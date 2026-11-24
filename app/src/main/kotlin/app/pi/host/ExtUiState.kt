@@ -77,6 +77,8 @@ data class ExtUiState(
     val autocompleteCount: Int = 0,
     /** 扩展通过 `ctx.ui.onTerminalInput` 注册的终端输入监听器数量。 */
     val terminalInputCount: Int = 0,
+    /** 扩展通过 `ctx.ui.setTitle` / OSC 0/2 设置的标题。 */
+    val title: String? = null,
     /** 终端响铃（BEL `\x07` / OSC 通知）单调计数，用于触发原生提示音。 */
     val bellSeq: Long = 0L,
 ) {
@@ -147,6 +149,7 @@ class ExtUiReducer {
             "ui.terminalInput" -> state = state.copy(
                 terminalInputCount = (d["registered"] as? JsonPrimitive)?.content?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
             )
+            "ui.title" -> state = state.copy(title = str(d["title"])?.takeIf { it.isNotBlank() })
             "ui.bell" -> state = state.copy(bellSeq = state.bellSeq + 1L)
             else -> return null
         }

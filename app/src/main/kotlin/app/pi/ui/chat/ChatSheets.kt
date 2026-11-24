@@ -69,15 +69,17 @@ fun ModelPickerSheet(
     val palette = PiTheme.palette
     var filter by remember(initialFilter) { mutableStateOf(initialFilter) }
     var persistAsDefault by remember { mutableStateOf(false) }
+    val tokens = remember(filter) {
+        filter.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    }
     val query = filter.trim().lowercase()
-    val shown = remember(query, models) {
-        if (query.isEmpty()) {
+    val shown = remember(tokens, models) {
+        if (tokens.isEmpty()) {
             models
         } else {
-            models.filter {
-                it.id.lowercase().contains(query) ||
-                    it.name.lowercase().contains(query) ||
-                    it.provider.orEmpty().lowercase().contains(query)
+            models.filter { m ->
+                val hay = "${m.provider.orEmpty()} ${m.id} ${m.name}".lowercase()
+                tokens.all { tok -> hay.contains(tok) }
             }
         }
     }
@@ -99,6 +101,21 @@ fun ModelPickerSheet(
                     style = PiType.title,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                        .clickable(enabled = !busy, onClickLabel = tr("刷新模型目录", "Refresh models"), onClick = onRefresh),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Refresh,
+                        contentDescription = tr("刷新模型目录", "Refresh models"),
+                        tint = if (busy) palette.accent else palette.muted,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
                 PersistTogglePill(
                     persistAsDefault = persistAsDefault,
                     onToggle = { persistAsDefault = !persistAsDefault },

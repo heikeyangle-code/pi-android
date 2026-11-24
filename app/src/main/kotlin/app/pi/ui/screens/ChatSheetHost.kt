@@ -44,7 +44,7 @@ internal fun ChatSheetHost(
                 session.setModel(model, persist = persist)
                 onSheet(null)
             },
-            onRefresh = { session.refreshModels() },
+            onRefresh = { session.refreshModelsCatalog() },
             onManageProviders = { session.requestNav(NavRequest.SettingsFocus("hub:models")) },
             onDismiss = { onSheet(null) },
         )

@@ -1593,6 +1593,7 @@ internal fun ChatBody(
             engineLabel = session.engineLabel(state),
             sessionTitle = state.meta.sessionName?.takeIf { it.isNotBlank() },
             workspaceName = state.workspace.displayName.takeIf { it.isNotBlank() },
+            extensionTitle = state.ext.title,
             searchOpen = searchOpen,
             scrolled = topBarScrolled,
             toolsExpanded = toolsExpanded,
@@ -1656,6 +1657,27 @@ internal fun ChatBody(
                     searchQuery = ""
                 },
             )
+        }
+
+        // 官方 headerContainer（`ctx.ui.setHeader`）：默认直接显示在对话最顶部（顶栏下方），支持一键收进扩展芯片，软键盘弹出时平滑让位。
+        val visibleHeader = state.ext.header?.takeIf { app.pi.ui.extension.HIDE_KEY_HEADER !in hiddenWidgetSet }
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !imeVisible && visibleHeader != null,
+            enter = androidx.compose.animation.expandVertically(tween(150)) + fadeIn(tween(130)),
+            exit = androidx.compose.animation.shrinkVertically(tween(130)) + fadeOut(tween(110)),
+        ) {
+            visibleHeader?.let { hdr ->
+                ExtensionWidgetStack(
+                    widgets = listOf(hdr),
+                    onInteract = { panel -> interactingWidgetKey = panel.key },
+                    onHide = {
+                        if (app.pi.ui.extension.HIDE_KEY_HEADER !in hiddenWidgetKeys) {
+                            hiddenWidgetKeys = hiddenWidgetKeys + app.pi.ui.extension.HIDE_KEY_HEADER
+                        }
+                    },
+                    maxStackHeight = 96.dp,
+                )
+            }
         }
 
         // The transcript's **status row is gone** (user ruling, decision D23): a
@@ -2338,6 +2360,47 @@ internal fun ChatBody(
                             if (panel.key !in hiddenWidgetKeys) hiddenWidgetKeys = hiddenWidgetKeys + panel.key
                         },
                         maxStackHeight = 96.dp,
+                    )
+                }
+
+                // 官方 footerContainer（`ctx.ui.setFooter`）：默认直接显示在输入框最底部，支持一键收进扩展芯片，软键盘弹出时让位。
+                val visibleFooter = state.ext.footer?.takeIf { app.pi.ui.extension.HIDE_KEY_FOOTER !in hiddenWidgetSet }
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !imeVisible && visibleFooter != null,
+                    enter = androidx.compose.animation.expandVertically(tween(150)) + fadeIn(tween(130)),
+                    exit = androidx.compose.animation.shrinkVertically(tween(130)) + fadeOut(tween(110)),
+                ) {
+                    visibleFooter?.let { ftr ->
+                        ExtensionWidgetStack(
+                            widgets = listOf(ftr),
+                            onInteract = { panel -> interactingWidgetKey = panel.key },
+                            onHide = {
+                                if (app.pi.ui.extension.HIDE_KEY_FOOTER !in hiddenWidgetKeys) {
+                                    hiddenWidgetKeys = hiddenWidgetKeys + app.pi.ui.extension.HIDE_KEY_FOOTER
+                                }
+                            },
+                            maxStackHeight = 84.dp,
+                        )
+                    }
+                }
+
+                // 官方 footer 状态条（`ctx.ui.setStatus`）：无自定义 setFooter 接管时默认显示在输入框最底部，支持一键收起。
+                val showFooterStatuses = state.ext.footer == null &&
+                    state.ext.statuses.isNotEmpty() &&
+                    app.pi.ui.extension.HIDE_KEY_STATUSES !in hiddenWidgetSet
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !imeVisible && showFooterStatuses,
+                    enter = androidx.compose.animation.expandVertically(tween(150)) + fadeIn(tween(130)),
+                    exit = androidx.compose.animation.shrinkVertically(tween(130)) + fadeOut(tween(110)),
+                ) {
+                    app.pi.ui.extension.ExtensionFooterStatusStrip(
+                        statuses = state.ext.statuses,
+                        onHide = {
+                            if (app.pi.ui.extension.HIDE_KEY_STATUSES !in hiddenWidgetKeys) {
+                                hiddenWidgetKeys = hiddenWidgetKeys + app.pi.ui.extension.HIDE_KEY_STATUSES
+                            }
+                        },
+                        onOpenHub = { widgetsInspectorOpen = true },
                     )
                 }
             }

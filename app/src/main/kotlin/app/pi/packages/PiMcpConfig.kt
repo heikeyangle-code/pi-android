@@ -211,8 +211,8 @@ object PiMcpConfig {
         val oauthCallbackUrl: String = "",
         val oauthScope: String = "",
         val oauthClientName: String = "",
-        /** `clientRegistration: "cimd"`：用 pi 的 Client ID Metadata Document 标识自己，不做动态注册。 */
-        val oauthCimd: Boolean = false,
+        /** `clientRegistration`: `""`/`"auto"`（自动）、`"dcr"`（强制动态注册）、`"cimd"`（使用 CIMD 元数据）。 */
+        val oauthClientRegistration: String = "",
         val oauthAuthServerUrl: String = "",
     )
 
@@ -269,7 +269,7 @@ object PiMcpConfig {
             oauthCallbackUrl = oauth.text("callbackUrl"),
             oauthScope = oauth.text("scope"),
             oauthClientName = oauth.text("clientName"),
-            oauthCimd = oauth.text("clientRegistration") == "cimd",
+            oauthClientRegistration = oauth.text("clientRegistration").takeIf { it in setOf("dcr", "cimd") }.orEmpty(),
             oauthAuthServerUrl = oauth.text("authServerMetadataUrl"),
         )
     }
@@ -285,16 +285,17 @@ object PiMcpConfig {
         parseHeaders(draft.headers).error?.let { return it }
         parseToolExposure(draft.toolExposure).error?.let { return it }
         if (draft.http) {
+            val isCimd = draft.oauthClientRegistration == "cimd"
             val hasAuthHeader = draft.bearer.isNotBlank() ||
                 parseHeaders(draft.headers).map.keys.any { it.equals("Authorization", ignoreCase = true) }
             val oauthUsed = listOf(
                 draft.oauthClientId, draft.oauthClientSecret, draft.oauthCallbackPort, draft.oauthCallbackUrl,
                 draft.oauthScope, draft.oauthClientName, draft.oauthAuthServerUrl,
-            ).any { it.isNotBlank() } || draft.oauthCimd
+            ).any { it.isNotBlank() } || draft.oauthClientRegistration.isNotBlank()
             if (oauthUsed && hasAuthHeader) {
                 return "已经填了访问令牌/Authorization 头，就不会再走 OAuth 登录；二选一。"
             }
-            if (draft.oauthCimd && (draft.oauthClientId.isNotBlank() || draft.oauthClientName.isNotBlank())) {
+            if (isCimd && (draft.oauthClientId.isNotBlank() || draft.oauthClientName.isNotBlank())) {
                 return "「CIMD 登记」不能和客户端 ID、客户端名称同时用。"
             }
             if (draft.oauthCallbackPort.isNotBlank()) {
@@ -306,7 +307,7 @@ object PiMcpConfig {
                 if (uri == null || uri.scheme?.lowercase() != "http" || !isLoopback(uri.host)) {
                     return "回调地址必须是 localhost、127.0.0.1 或 [::1] 上的 http 地址。"
                 }
-                if (draft.oauthCimd && uri.path != "/callback") return "CIMD 登记的回调地址路径必须是 /callback。"
+                if (isCimd && uri.path != "/callback") return "CIMD 登记的回调地址路径必须是 /callback。"
             }
             if (draft.oauthAuthServerUrl.isNotBlank()) {
                 val uri = try { URI(draft.oauthAuthServerUrl.trim()) } catch (_: Exception) { null }
@@ -391,7 +392,10 @@ object PiMcpConfig {
             oauthText("authServerMetadataUrl", draft.oauthAuthServerUrl)
             draft.oauthCallbackPort.trim().toIntOrNull()?.let { oauth["callbackPort"] = JsonPrimitive(it) }
                 ?: oauth.remove("callbackPort")
-            if (draft.oauthCimd) oauth["clientRegistration"] = JsonPrimitive("cimd") else oauth.remove("clientRegistration")
+            when (draft.oauthClientRegistration) {
+                "dcr", "cimd" -> oauth["clientRegistration"] = JsonPrimitive(draft.oauthClientRegistration)
+                else -> oauth.remove("clientRegistration")
+            }
             put("oauth", oauth.takeIf { it.isNotEmpty() }?.let { JsonObject(it) })
         } else {
             put("url", null); put("headers", null); put("oauth", null)
@@ -569,12 +573,41 @@ object PiMcpConfig {
     fun dropNulls(root: JsonObject): JsonObject =
         JsonObject(root.filterValues { it !is JsonNull })
 
-    // ------------------------------------------------------------------ 标准配置入口（对齐 Pi SDK，不内置第三方预设）
+    /** 导入 JSON 的实时轻量预览，供手机端导入面板在提交前展示检测到的服务器列表。 */
+    data class ImportPreviewEntry(val name: String, val isHttp: Boolean)
+    data class ImportPreview(
+        val entries: List<ImportPreviewEntry> = emptyList(),
+        val isSingleServer: Boolean = false,
+        val error: String? = null,
+    )
 
-    /** 空白配置模板（对齐官方 `pi mcp add` 的两种传输方式，无第三方硬编码预设）。 */
-    data class Template(val title: String, val note: String, val draft: Draft)
-
-    val TEMPLATES: List<Template> = emptyList()
+    fun previewImport(rawText: String, fallbackName: String = "imported"): ImportPreview {
+        val text = rawText.trim()
+        if (text.isEmpty()) return ImportPreview()
+        val parsed = runCatching { Json.parseToJsonElement(text) }.getOrNull() as? JsonObject
+            ?: return ImportPreview(error = "JSON 语法有误")
+        val table = (parsed["mcpServers"] as? JsonObject) ?: (parsed["servers"] as? JsonObject)
+        if (table != null) {
+            val items = table.entries.mapNotNull { (k, v) ->
+                val obj = v as? JsonObject ?: return@mapNotNull null
+                val hasUrl = (obj["url"] as? JsonPrimitive)?.contentOrNull?.isNotBlank() == true ||
+                    (obj["serverUrl"] as? JsonPrimitive)?.contentOrNull?.isNotBlank() == true
+                ImportPreviewEntry(name = k, isHttp = hasUrl)
+            }
+            return ImportPreview(entries = items, isSingleServer = false)
+        }
+        val singleLooksValid = parsed.containsKey("command") || parsed.containsKey("url") ||
+            parsed.containsKey("serverUrl") || parsed.containsKey("type")
+        if (singleLooksValid) {
+            val hasUrl = (parsed["url"] as? JsonPrimitive)?.contentOrNull?.isNotBlank() == true ||
+                (parsed["serverUrl"] as? JsonPrimitive)?.contentOrNull?.isNotBlank() == true
+            return ImportPreview(
+                entries = listOf(ImportPreviewEntry(name = fallbackName.trim().ifEmpty { "imported" }, isHttp = hasUrl)),
+                isSingleServer = true,
+            )
+        }
+        return ImportPreview(error = "未找到 mcpServers / servers 或单个服务器配置")
+    }
 }
 
 /**

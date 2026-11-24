@@ -59,8 +59,8 @@ export function register(reg, { controller }) {
   });
 
   reg.add("session.rename", (args) => {
-    const name = str(args, "name").trim();
-    if (!name) throw bad("会话名不能为空");
+    if (typeof args?.name !== "string") throw bad("缺少字符串参数 name");
+    const name = args.name.trim();
     const path = inside(str(args, "path"));
     if (path === currentFile()) {
       controller.requireSession().setSessionName(name);
