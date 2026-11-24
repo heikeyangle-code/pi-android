@@ -351,7 +351,6 @@ private fun PiMarkdownHeading(
     isFirstBlock: Boolean,
 ) {
     val palette = PiTheme.palette
-    val classic = PiTheme.typography.isClassic
     val style = when (level) {
         1 -> typography.h1
         2 -> typography.h2
@@ -364,9 +363,9 @@ private fun PiMarkdownHeading(
         val targetType = if (setext) MarkdownTokenTypes.SETEXT_CONTENT else MarkdownTokenTypes.ATX_CONTENT
         node.findChildOfType(targetType) ?: node
     }
-    val skipTop = classic || isFirstBlock || headingFollowsHeading(node)
+    val skipTop = isFirstBlock || headingFollowsHeading(node)
     val topPad = if (skipTop) 0.dp else extraTop
-    val showRule = !classic && level == 1
+    val showRule = level == 1
 
     Column(
         modifier = Modifier
@@ -1065,10 +1064,9 @@ private val TASK_CHECKBOX_END_PADDING = 7.dp
 
 @Composable
 private fun PiMarkdownDivider(colors: PiMarkdownColors) {
-    val classic = PiTheme.typography.isClassic
-    Box(Modifier.padding(vertical = if (classic) 0.dp else 8.dp)) {
+    Box(Modifier.padding(vertical = 8.dp)) {
         HorizontalDivider(
-            thickness = if (classic) 1.dp else 0.5.dp,
+            thickness = 0.5.dp,
             color = colors.dividerColor,
         )
     }
@@ -1845,9 +1843,8 @@ private fun PiCodeSurface(
         else -> Unit
     }
     val highlighted = rememberPiHighlightedCode(code, normalized)
-    val classic = PiTheme.typography.isClassic
     if (settled && code.isNotBlank() && (normalized?.lowercase() == "html" || normalized?.lowercase() == "htm")) {
-        PiHtmlFence(code, info, highlighted, style, palette, classic)
+        PiHtmlFence(code, info, highlighted, style, palette)
         return
     }
     PiRichCodeBlock(
@@ -1856,7 +1853,6 @@ private fun PiCodeSurface(
         highlighted = highlighted,
         style = style,
         palette = palette,
-        classic = classic,
     )
 }
 

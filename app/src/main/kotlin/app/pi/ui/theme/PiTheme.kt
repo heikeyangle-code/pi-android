@@ -597,6 +597,9 @@ object PiTheme {
     /** The resolved 排版 preset behind [text]: gaps, headings and radii. */
     val typography: PiTypographyProfile
         @Composable @ReadOnlyComposable get() = LocalPiTypographyProfile.current
+    /** True when the active theme palette is dark (`pageBg` luminance < 0.5). */
+    val isDark: Boolean
+        @Composable @ReadOnlyComposable get() = PiContrast.luminance(palette.pageBg) < 0.5
 }
 
 /** Blend helper for the surface ladder below. */
@@ -642,14 +645,17 @@ private fun PiPalette.colorScheme(): androidx.compose.material3.ColorScheme {
         // Disable M3 tonal tint wash so elevated surfaces stay pure neutral grayscale.
         surfaceTint = Color.Transparent,
 
-        // Neutral surfaceContainer ladder: crisp, restrained tonal depth without accent color bleed.
-        surfaceContainerLowest = pageBg,
+        // Neutral surfaceContainer ladder:
+        //  - Dark: step lighter from pageBg -> cardBg -> container -> high -> highest.
+        //  - Light: keep floating sheets/dialogs crisp cardBg/white while recessed tracks/pills
+        //    use cool neutral tint, preventing muddy gray sheets over white cards.
+        surfaceContainerLowest = if (isDark) pageBg else Color.White,
         surfaceContainerLow = cardBg,
-        surfaceContainer = if (isDark) cardBg.elevate(text, 0.035f) else pageBg.elevate(text, 0.022f),
-        surfaceContainerHigh = if (isDark) cardBg.elevate(text, 0.068f) else pageBg.elevate(text, 0.045f),
-        surfaceContainerHighest = if (isDark) cardBg.elevate(text, 0.11f) else pageBg.elevate(text, 0.078f),
-        surfaceBright = cardBg.elevate(text, 0.14f),
-        surfaceDim = pageBg.elevate(text, 0.02f),
+        surfaceContainer = if (isDark) cardBg.elevate(text, 0.035f) else pageBg.elevate(text, 0.025f),
+        surfaceContainerHigh = if (isDark) cardBg.elevate(text, 0.068f) else cardBg,
+        surfaceContainerHighest = if (isDark) cardBg.elevate(text, 0.11f) else pageBg.elevate(text, 0.055f),
+        surfaceBright = if (isDark) cardBg.elevate(text, 0.14f) else Color.White,
+        surfaceDim = if (isDark) pageBg.elevate(Color.Black, 0.16f) else pageBg.elevate(text, 0.045f),
 
         outline = borderMuted,
         outlineVariant = borderMuted.copy(alpha = if (isDark) 0.65f else 0.72f),
@@ -666,28 +672,35 @@ private fun PiPalette.colorScheme(): androidx.compose.material3.ColorScheme {
 }
 
 /**
- * M3's slots, with the 字号 row's offset applied.
- *
- * `textScaleDelta` is `PiTypographyProfile.fontSizeOffsetSp` (−1/0/+1/+2). The
- * markdown headings do **not** go through here — they are sized by
- * `render/PiMarkdownTheme.kt` from the profile — and that split is today's:
- * `app.appearance.fontScaleDelta` never moved a heading either.
+ * All 15 M3 Typography slots aligned to Pi's precise font metrics and `textScaleDelta` (−1/0/+1/+2 sp).
  */
 private fun piTypography(textScaleDelta: Int = 0): Typography {
-    // `.piPrecise()`（无字体自带内边距、行距居中、首末行裁剪）也走 M3 槽：设置页的标题与
-    // 副行、对话框、空态标题都是这些槽画的，只给 [PiTextStyles] 加会让同一个屏幕上
-    // 两种文字度量并存 —— 那正是「精致」的反面。
     fun TextStyle.shift(): TextStyle = copy(
         fontSize = (fontSize.value + textScaleDelta).coerceAtLeast(1f).sp,
         lineHeight = (lineHeight.value + textScaleDelta).coerceAtLeast(1f).sp,
     ).piPrecise()
     val base = Typography()
     return base.copy(
+        displayLarge = base.displayLarge.copy(
+            fontSize = 36.sp, lineHeight = 44.sp, fontWeight = FontWeight.SemiBold,
+        ).shift(),
+        displayMedium = base.displayMedium.copy(
+            fontSize = 32.sp, lineHeight = 40.sp, fontWeight = FontWeight.SemiBold,
+        ).shift(),
         displaySmall = base.displaySmall.copy(
             fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Medium,
         ).shift(),
+        headlineLarge = base.headlineLarge.copy(
+            fontSize = 26.sp, lineHeight = 34.sp, fontWeight = FontWeight.SemiBold,
+        ).shift(),
+        headlineMedium = base.headlineMedium.copy(
+            fontSize = 24.sp, lineHeight = 31.sp, fontWeight = FontWeight.SemiBold,
+        ).shift(),
         headlineSmall = base.headlineSmall.copy(
             fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold,
+        ).shift(),
+        titleLarge = base.titleLarge.copy(
+            fontSize = 19.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold,
         ).shift(),
         titleMedium = base.titleMedium.copy(
             fontSize = 17.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold,
@@ -701,6 +714,9 @@ private fun piTypography(textScaleDelta: Int = 0): Typography {
         bodyMedium = base.bodyMedium.copy(
             fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Normal,
         ).shift(),
+        bodySmall = base.bodySmall.copy(
+            fontSize = 13.sp, lineHeight = 19.sp, fontWeight = FontWeight.Normal,
+        ).shift(),
         labelLarge = base.labelLarge.copy(
             fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium,
         ).shift(),
@@ -708,18 +724,6 @@ private fun piTypography(textScaleDelta: Int = 0): Typography {
             fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium,
         ).shift(),
         labelSmall = base.labelSmall.copy(
-            // B7's 同类收尾 (final font audit): this slot was the last 11.5 sp step in the app.
-            // B7 raised `meta`/`monoSmall` off 11.5 sp for exactly this reason — it is under the
-            // spec's own floor, `01-design-spec.md` §2 「正文 ≥14px、标签/注释 ≥12px」 — and left
-            // this one behind because it is reached through M3's slot rather than through
-            // `PiTextStyles`. It is **this app's** number, not M3's: the line below overrides the
-            // framework's default (11 sp Medium) with an explicit size, so the floor is ours to
-            // keep. `06 §2` 字号 5 档 (12/13/14/15/17) has no 11.5 either.
-            //
-            // Leading stays 16, which is M3's own leading for this slot and the pairing
-            // `labelMedium` already uses (12/16) — only the size was off the floor. `meta` and
-            // `monoSmall` are the app's 12/18 roles; a badge drawn at 16 keeps its row height and
-            // this is a badge/label slot, not a body one.
             fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Normal,
         ).shift(),
     )

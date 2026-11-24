@@ -3,6 +3,7 @@ package app.pi.ui.settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,10 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,7 +29,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
+import app.pi.ui.components.PiDivider
+import app.pi.ui.components.PiPrimaryButton
+import app.pi.ui.components.PiSecondaryButton
+import app.pi.ui.components.PiSheet
+import app.pi.ui.components.PiSheetActionBar
+import app.pi.ui.components.PiSheetChromeMetrics
+import app.pi.ui.components.PiSlider
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiSystemPalettes
@@ -39,14 +47,8 @@ import app.pi.ui.theme.PiTheme
 import kotlin.math.roundToInt
 
 /**
- * 「系统主题」：选一个底色，其余 55 个 token 按 pi 的规则推导。
- *
- * 只产出一个输入 —— **底色**（外加推导函数的饱和度倍率），全部颜色由
- * `deriveSystemPalette` 算出来，与 pi 的 `system` 主题同一条规则。页面底色就是选的
- * 那个色，卡片 = 同色向白混 6%（对齐 pi 的 `#21252C → #282C34` 差值）。
- *
- * 应用时机：**只按「应用」时才写盘并切到 `system` 主题**。拖动滑杆只改这一页的
- * HSV / HEX 读数，不会顺手改掉用户原来的 dark/light 选择。
+ * 「系统主题」调色弹层（Studio 重绘版，零原生 M3 Slider / Button）：
+ * 选一个底色，其余 55 个 token 由 `deriveSystemPalette` 实时推导；仅点击「应用」才落盘。
  */
 @Composable
 internal fun PiSystemPaletteSheet(
@@ -55,24 +57,30 @@ internal fun PiSystemPaletteSheet(
     onApply: (hex: String, saturationWire: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val haptic = LocalHapticFeedback.current
     val initial = PiSystemPalettes.parseHex(initialBackground) ?: 0x1E1E1E
     var hsv by remember { mutableStateOf(rgbToHsv(initial)) }
     var hexText by remember { mutableStateOf(hexOf(hsvToRgb(hsv))) }
     var saturationWire by remember { mutableStateOf(initialSaturation) }
+
     fun setColor(rgb: Int) {
         hexText = hexOf(rgb)
         hsv = rgbToHsv(rgb)
     }
 
-    // 滑杆改的是 HSV 本身，**不能**再走 `setColor`（RGB → HSV）：色相 360° 与 0° 是
-    // 同一个红，饱和度 0 的灰、明度 0 的黑也会把色相读回 0 —— 那样拖到右端游标会跳回
-    // 左端、拖到黑/灰再拖回来颜色就丢了。这里只把 HSV 换成新值，再由它算 HEX。
     fun setHsv(next: Triple<Float, Float, Float>) {
         hsv = next
         hexText = hexOf(hsvToRgb(next))
     }
 
-    PiSettingsSheet(onDismiss = onDismiss) {
+    val hexValid = PiSystemPalettes.parseHex(hexText) != null
+    val previewRgb = hsvToRgb(hsv)
+    val previewPalette = remember(previewRgb, saturationWire) {
+        val input = PiSystemPalettes.paletteOf(PiSystemPalettes.CUSTOM_ID, hexOf(previewRgb))
+        app.pi.ui.theme.deriveSystemPalette(input, PiSystemPalettes.saturationOf(saturationWire))
+    }
+
+    PiSheet(onDismiss = onDismiss) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -82,46 +90,53 @@ internal fun PiSystemPaletteSheet(
                     top = PiSettingsMetrics.sheetHeadTop,
                 ),
         ) {
-            Text(tr("系统主题", "System Theme"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
-            Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
+            Text(tr("系统调色", "System Palette"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
+            Spacer(Modifier.height(4.dp))
             Text(
                 tr(
-                    "底色决定其余颜色；滑杆只改这一页，按「应用」才写盘。",
-                    "Background derives all other colors. Sliders preview locally until you tap Apply.",
+                    "底色自动推导整套 55 项主题色；滑杆仅实时预览，点「应用」才保存。",
+                    "Base color derives all 55 theme tokens. Sliders preview locally until you tap Apply.",
                 ),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(PiSettingsMetrics.rowGap))
-            val previewRgb = hsvToRgb(hsv)
-            val previewPalette = remember(previewRgb, saturationWire) {
-                val input = PiSystemPalettes.paletteOf(PiSystemPalettes.CUSTOM_ID, hexOf(previewRgb))
-                app.pi.ui.theme.deriveSystemPalette(input, PiSystemPalettes.saturationOf(saturationWire))
-            }
+            Spacer(Modifier.height(12.dp))
+
+            // Live derived preview card
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+                    .clip(RoundedCornerShape(12.dp))
                     .background(previewPalette.pageBg)
                     .border(
-                        PiSettingsMetrics.hairline,
-                        previewPalette.borderMuted,
-                        RoundedCornerShape(PiSettingsMetrics.cardRadius),
+                        PiSpacing.hairlineThin,
+                        previewPalette.borderMuted.copy(alpha = 0.8f),
+                        RoundedCornerShape(12.dp),
                     )
-                    .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSettingsMetrics.rowPaddingVertical),
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            tr("实时推导预览", "Live Derived Preview"),
-                            style = PiTheme.text.meta,
-                            color = previewPalette.muted,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                tr("实时推导预览", "Live Derived Preview"),
+                                style = PiTheme.text.meta,
+                                color = previewPalette.muted,
+                            )
+                            Text(
+                                hexOf(previewRgb),
+                                style = PiTheme.text.monoSmall,
+                                color = previewPalette.text,
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             listOf(
                                 previewPalette.accent,
                                 previewPalette.success,
@@ -131,7 +146,7 @@ internal fun PiSystemPaletteSheet(
                             ).forEach { swatch ->
                                 Box(
                                     Modifier
-                                        .size(PiSpacing.inner)
+                                        .size(10.dp)
                                         .clip(CircleShape)
                                         .background(swatch),
                                 )
@@ -140,14 +155,14 @@ internal fun PiSystemPaletteSheet(
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(PiSpacing.inline))
+                                .clip(RoundedCornerShape(8.dp))
                                 .background(previewPalette.userMessageBg)
-                                .padding(horizontal = PiSpacing.inline, vertical = PiSpacing.small),
+                                .padding(horizontal = 9.dp, vertical = 4.dp),
                         ) {
                             Text(
                                 tr("用户消息", "User"),
@@ -155,72 +170,98 @@ internal fun PiSystemPaletteSheet(
                                 color = previewPalette.userMessageText,
                             )
                         }
-                        Text(
-                            "val theme = \"system\"",
-                            style = PiTheme.text.monoSmall,
-                            color = previewPalette.text,
-                            maxLines = 1,
-                        )
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(previewPalette.cardBg)
+                                .border(PiSpacing.hairlineThin, previewPalette.borderMuted.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 9.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                "val theme = \"system\"",
+                                style = PiTheme.text.monoSmall,
+                                color = previewPalette.text,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
             }
-            Spacer(Modifier.height(PiSettingsMetrics.rowGap))
+
+            Spacer(Modifier.height(12.dp))
+
             Column(
                 Modifier
                     .fillMaxWidth()
+                    .weight(1f, fill = false)
                     .verticalScroll(rememberScrollState()),
             ) {
                 Text(tr("常用底色", "Preset Backgrounds"), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
-                Row(horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap)) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     PiSystemPalettes.presets.forEach { preset ->
-                        val selected = hexOf(preset.background) == hexText
-                        val shape = RoundedCornerShape(PiSettingsMetrics.cardRadius)
+                        val selected = hexOf(preset.background).equals(hexText.trim(), ignoreCase = true)
+                        val shape = RoundedCornerShape(10.dp)
                         Box(
                             Modifier
-                                .size(PiSettingsMetrics.cardIconSize * 2)
+                                .size(38.dp)
                                 .clip(shape)
-                                .background(
-                                    Color(0xFF000000L or (preset.background.toLong() and 0xFFFFFFL)),
-                                )
+                                .background(Color(0xFF000000L or (preset.background.toLong() and 0xFFFFFFL)))
                                 .border(
-                                    if (selected) PiSettingsMetrics.hairline * 2 else PiSettingsMetrics.hairline,
-                                    if (selected) PiTheme.palette.accent else MaterialTheme.colorScheme.outline,
-                                    shape,
+                                    width = if (selected) 2.dp else PiSpacing.hairlineThin,
+                                    color = if (selected) PiTheme.palette.accent else MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+                                    shape = shape,
                                 )
-                                .clickable { setColor(preset.background) },
+                                .clickable {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    setColor(preset.background)
+                                },
                         )
                     }
                 }
-                Spacer(Modifier.height(PiSpacing.unit))
+                Spacer(Modifier.height(12.dp))
 
-                ColourSlider(
+                StudioColorSlider(
                     label = tr("色相", "Hue"),
                     reading = "${hsv.first.roundToInt()}°",
                     colors = (0..6).map { hueColor(it * 60f) },
                     fraction = hsv.first / 360f,
+                    thumbColor = hueColor(hsv.first),
                     onChange = { f -> setHsv(Triple(f * 360f, hsv.second, hsv.third)) },
                 )
-                ColourSlider(
+                StudioColorSlider(
                     label = tr("饱和度", "Saturation"),
                     reading = "${(hsv.second * 100f).roundToInt()}%",
                     colors = listOf(greyOf(hsvToRgb(hsv)), hueColor(hsv.first)),
                     fraction = hsv.second,
+                    thumbColor = Color(0xFF000000L or (previewRgb.toLong() and 0xFFFFFFL)),
                     onChange = { f -> setHsv(Triple(hsv.first, f, hsv.third)) },
                 )
-                ColourSlider(
+                StudioColorSlider(
                     label = tr("明度", "Brightness"),
                     reading = "${(hsv.third * 100f).roundToInt()}%",
                     colors = listOf(Color.Black, hueColor(hsv.first), Color.White),
                     fraction = hsv.third,
+                    thumbColor = Color(0xFF000000L or (previewRgb.toLong() and 0xFFFFFFL)),
                     onChange = { f -> setHsv(Triple(hsv.first, hsv.second, f)) },
                 )
 
-                Spacer(Modifier.height(PiSpacing.unit))
+                Spacer(Modifier.height(12.dp))
 
                 Text(tr("色彩强度", "Color Intensity"), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
-                Row(horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap)) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     PiSystemPalettes.saturations.forEach { (wire, _) ->
                         PiSettingsChip(
                             text = PiSystemPalettes.saturationLabel(wire),
@@ -230,57 +271,70 @@ internal fun PiSystemPaletteSheet(
                     }
                 }
 
-                Spacer(Modifier.height(PiSpacing.unit))
+                Spacer(Modifier.height(14.dp))
 
-                Text(tr("底色 HEX", "Background HEX"), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
                 PiEditorField(
                     value = hexText,
                     onValueChange = { text ->
                         hexText = text
                         PiSystemPalettes.parseHex(text)?.let { rgb -> hsv = rgbToHsv(rgb) }
                     },
-                    placeholder = "#RRGGBB",
+                    label = tr("底色 HEX", "Background HEX"),
+                    placeholder = "#1E1E1E",
+                    container = PiSheetChromeMetrics.sheetCardBg,
                     modifier = Modifier.fillMaxWidth(),
+                    leading = {
+                        Box(
+                            Modifier
+                                .size(18.dp)
+                                .clip(RoundedCornerShape(5.dp))
+                                .background(Color(0xFF000000L or (previewRgb.toLong() and 0xFFFFFFL)))
+                                .border(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outline, RoundedCornerShape(5.dp)),
+                        )
+                    },
                 )
-                Spacer(Modifier.height(PiSettingsMetrics.rowGap))
-                Button(
-                    enabled = PiSystemPalettes.parseHex(hexText) != null,
+                if (!hexValid) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        tr("请输入有效的 6 位十六进制色值，例如 #1E1E1E。", "Enter a valid 6-digit hex color, e.g. #1E1E1E."),
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.error,
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+            }
+
+            PiDivider()
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
+            PiSheetActionBar {
+                PiSecondaryButton(
+                    label = tr("取消", "Cancel"),
+                    onClick = onDismiss,
+                )
+                PiPrimaryButton(
+                    label = tr("应用", "Apply"),
+                    enabled = hexValid,
                     onClick = {
                         onApply(hexText.trim().removePrefix("#"), saturationWire)
                         onDismiss()
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(tr("应用", "Apply"))
-                }
-                Spacer(Modifier.height(PiSpacing.unit))
-
+                )
             }
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
         }
     }
 }
 
-/**
- * 一条色相 / 饱和度 / 明度滑杆。
- *
- * 轨道渐变、游标白圈都由我们自己画，但**手势和布局全部交给 M3 的 `Slider`**：
- *
- *  - 游标由 `Slider` 沿轨道居中放置，不再手写 `offset`（旧版从轨道顶端量，偏了 4dp）；
- *  - 拖动 / 点按 / 两端都能到 0 和 1，由 `SliderState` 处理，不再和 tap/drag 两套
- *    `pointerInput` 互相吃事件；
- *  - 48dp 的触摸高度、无障碍和纵向滚动的手势仲裁也都是 `Slider` 自带的。
- */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ColourSlider(
+private fun StudioColorSlider(
     label: String,
     reading: String,
     colors: List<Color>,
     fraction: Float,
+    thumbColor: Color,
     onChange: (Float) -> Unit,
 ) {
-    Column(Modifier.padding(top = PiSettingsMetrics.rowPaddingVertical)) {
+    Column(Modifier.padding(top = 6.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -289,41 +343,18 @@ private fun ColourSlider(
             Text(label, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(reading, style = PiTheme.text.monoSmall, color = MaterialTheme.colorScheme.onSurface)
         }
-        Slider(
+        PiSlider(
             value = fraction.coerceIn(0f, 1f),
             onValueChange = onChange,
+            trackHeight = 8.dp,
+            thumbRadius = 10.dp,
+            trackBrush = Brush.horizontalGradient(colors),
+            thumbFillColor = thumbColor,
             modifier = Modifier.fillMaxWidth(),
-            thumb = { ColourThumb() },
-            track = { ColourTrack(colors) },
         )
     }
 }
 
-/** 游标：18dp 白圈 + 1px 黑边，压在渐变轨道上。 */
-@Composable
-private fun ColourThumb() {
-    Box(
-        Modifier
-            .size(PiSettingsMetrics.cardIconSize)
-            .clip(CircleShape)
-            .background(Color.White)
-            .border(PiSettingsMetrics.hairline, Color.Black, CircleShape),
-    )
-}
-
-/** 轨道：13dp 高的圆角色带（`chipHeight / 2`，与芯片同一档圆角）。 */
-@Composable
-private fun ColourTrack(colors: List<Color>) {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(PiSettingsMetrics.chipHeight / 2)
-            .clip(RoundedCornerShape(percent = 50))
-            .background(Brush.horizontalGradient(colors)),
-    )
-}
-
-/** HSV（h 0..360、s/v 0..1）→ `0xRRGGBB`。 */
 private fun hsvToRgb(hsv: Triple<Float, Float, Float>): Int {
     val h = ((hsv.first % 360f) + 360f) % 360f
     val s = hsv.second.coerceIn(0f, 1f)
@@ -343,7 +374,6 @@ private fun hsvToRgb(hsv: Triple<Float, Float, Float>): Int {
     return (channel(rgb.first) shl 16) or (channel(rgb.second) shl 8) or channel(rgb.third)
 }
 
-/** `0xRRGGBB` → HSV。 */
 private fun rgbToHsv(rgb: Int): Triple<Float, Float, Float> {
     val r = ((rgb shr 16) and 0xFF) / 255f
     val g = ((rgb shr 8) and 0xFF) / 255f
@@ -363,11 +393,9 @@ private fun rgbToHsv(rgb: Int): Triple<Float, Float, Float> {
 
 private fun hexOf(rgb: Int): String = "#%06X".format(rgb and 0xFFFFFF)
 
-/** 纯色相（s=1、v=1），滑杆渐变用。 */
 private fun hueColor(hue: Float): Color =
     Color(0xFF000000L or (hsvToRgb(Triple(hue, 1f, 1f)).toLong() and 0xFFFFFFL))
 
-/** 同一色相但去掉饱和度的灰，用来画饱和度轨道左端。 */
 private fun greyOf(rgb: Int): Color {
     val hsv = rgbToHsv(rgb)
     return Color(0xFF000000L or (hsvToRgb(Triple(hsv.first, 0f, hsv.third)).toLong() and 0xFFFFFFL))

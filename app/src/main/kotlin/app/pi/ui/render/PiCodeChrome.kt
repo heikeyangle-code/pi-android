@@ -88,7 +88,6 @@ internal fun PiRichCodeBlock(
     highlighted: PiHighlightedCode,
     style: TextStyle,
     palette: PiPalette,
-    classic: Boolean,
     topPadding: androidx.compose.ui.unit.Dp = 0.dp,
     extraMenu: List<PiCardMenuItem> = emptyList(),
 ) {
@@ -145,7 +144,7 @@ internal fun PiRichCodeBlock(
         ),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = topPadding, bottom = if (classic) 8.dp else 0.dp),
+            .padding(top = topPadding),
     ) {
         Column {
             // 「横向滚动 / 自动换行」「显示行号」「展开/收起」统一收进 ⋮ 菜单，保持代码块头部极简克制。
@@ -389,7 +388,6 @@ internal fun PiRichCardFrame(
             copied = false
         }
     }
-    val classic = PiTheme.typography.isClassic
     val slot = remember { PiCardMenuSlot() }
     val allMenu = menu + slot.items
     val shownStatus = status ?: slot.status
@@ -399,7 +397,7 @@ internal fun PiRichCardFrame(
         border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.58f)),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = topPadding, bottom = if (classic) 8.dp else 0.dp),
+            .padding(top = topPadding),
     ) {
         Column {
             PiCardHeader(

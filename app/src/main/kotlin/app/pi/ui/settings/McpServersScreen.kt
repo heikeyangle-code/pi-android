@@ -21,7 +21,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -749,7 +748,7 @@ internal fun McpServersScreen(
                 }
             }
         }
-        PiSettingsSheet(onDismiss = { answer(null) }) {
+        app.pi.ui.components.PiSheet(onDismiss = { answer(null) }) {
             Column(
                 Modifier
                     .fillMaxWidth()

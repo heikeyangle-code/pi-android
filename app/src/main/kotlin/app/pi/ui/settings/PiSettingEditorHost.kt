@@ -66,36 +66,17 @@ fun PiSettingEditorSheet(
         PiRowKind.Switch, PiRowKind.Action -> Unit
 
         PiRowKind.Value -> {
-            // 「配色方案」有自己的一层：它是唯一需要**画色块**的选择行，而通用选择器只
-            // 有 `✓/○ + 名字 + 说明`。这一支不加第二个机制 —— 写入仍然在这里
-            // （`store.write` + `onWritten`），只是把排版交给 [PiSystemPaletteSheet]。
             if (setting.key == PiSystemPalettes.SETTING_KEY) {
-                // 三个键（主题 id、底色、饱和度）都在这一页里，但**只在按「应用」时**写，
-                // 由这里一次写完再 `onWritten` → `refreshTheme`；拖动滑杆不会碰设置。
                 PiSystemPaletteSheet(
                     initialBackground = (store.read(PiSystemPalettes.BACKGROUND_KEY) as? JsonPrimitive)
                         ?.content.orEmpty(),
                     initialSaturation = (store.read(PiSystemPalettes.SATURATION_KEY) as? JsonPrimitive)
                         ?.content ?: PiSystemPalettes.saturationWire(1.0),
                     onApply = { hex, saturationWire ->
-                        // 只有按「应用」才写盘并切主题：拖滑杆只改这一页的预览，
-                        // 不会顺手把用户原来的 dark/light 选择改掉。
                         store.write(PiSystemPalettes.SETTING_KEY, JsonPrimitive(PiSystemPalettes.CUSTOM_ID))
                         store.write(PiSystemPalettes.BACKGROUND_KEY, JsonPrimitive("#$hex"))
                         store.write(PiSystemPalettes.SATURATION_KEY, JsonPrimitive(saturationWire))
                         store.write("theme", JsonPrimitive("system"))
-                        onWritten(setting)
-                    },
-                    onDismiss = onDismiss,
-                )
-            } else if (setting.key == "theme") {
-                PiThemeEditorSheet(
-                    currentRaw = setting.textIn(store, "dark"),
-                    knownThemes = knownThemes,
-                    notes = themeNotes,
-                    error = themeError,
-                    onSet = { value ->
-                        store.write(setting.key, JsonPrimitive(value))
                         onWritten(setting)
                     },
                     onDismiss = onDismiss,
@@ -117,8 +98,6 @@ fun PiSettingEditorSheet(
                     customCheck = pickerCustomCheck,
                     clearLabel = pickerClearLabel,
                     grouped = pickerGrouped,
-                    // 「清除」= `remove`（pi 的未设置），不是写空串：这一行在磁盘上要么是
-                    // 一个字符串，要么不存在，`""` 会被 pi 当成一个模型 ID 去找。
                     onClear = if (pickerClearLabel != null) {
                         {
                             store.remove(setting.key)
@@ -149,13 +128,7 @@ fun PiSettingEditorSheet(
 
         PiRowKind.Text -> PiTextEditorSheet(
             setting = setting,
-            // The row shows this value, so the editor must show the same one.
             initial = valueOverrides[setting.key] ?: setting.textIn(store, ""),
-            // "Clear" is also a removal: an empty string is a *value* in the file (`""` is not
-            // `undefined`), and every text row here means "unset" when it is empty — for
-            // `shellPath` pi's `if (customShellPath)` makes `""` behave as unset, and for the
-            // app's own launch knobs `takeIf { it.isNotBlank() }` does the same. Removing it
-            // also keeps `isExplicit()` from reporting a value that is not really set.
             onSet = { value ->
                 if (value.isEmpty()) store.remove(setting.key) else store.write(setting.key, JsonPrimitive(value))
                 onWritten(setting)
@@ -166,7 +139,6 @@ fun PiSettingEditorSheet(
         PiRowKind.List -> {
             val initialEntries = setting.editableEntries(store.read(setting.key) ?: setting.defaultValue)
             val saveEntries: (List<String>) -> Unit = { entries ->
-                // An empty list **removes the key** instead of writing `[]` / `{}`.
                 if (entries.isEmpty()) {
                     store.remove(setting.key)
                 } else {
@@ -176,13 +148,6 @@ fun PiSettingEditorSheet(
             }
             when (setting.key) {
                 "thinkingBudgets" -> PiThinkingBudgetsSheet(
-                    title = setting.title,
-                    description = setting.description,
-                    initialEntries = initialEntries,
-                    onSet = saveEntries,
-                    onDismiss = onDismiss,
-                )
-                "defaultTools" -> PiDefaultToolsSheet(
                     title = setting.title,
                     description = setting.description,
                     initialEntries = initialEntries,

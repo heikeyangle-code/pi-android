@@ -109,7 +109,7 @@ fun PiDialog(
             usePlatformDefaultWidth = false,
         ),
     ) {
-        ClearPlatformDim()
+        ClearDialogPlatformDim()
         val enter = remember { Animatable(0f) }
         LaunchedEffect(Unit) {
             enter.animateTo(
@@ -293,49 +293,6 @@ fun PiDialogAction(
     }
 }
 
-/**
- * Clears the platform's dialog dim, because [PiDialog] draws the board's own
- * 0.32 itself. Without this the two would stack, and the app would show a scrim
- * darker than any value in the design.
- */
-@Composable
-private fun ClearPlatformDim() {
-    val view = LocalView.current
-    // 在首帧绘制前同步清掉 FLAG_DIM_BEHIND + dimAmount=0f，彻底消除 Dialog 首帧双重暗幕闪烁。
-    remember(view) {
-        (view.parent as? DialogWindowProvider)?.window?.let { w ->
-            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            w.setDimAmount(0f)
-        }
-        true
-    }
-    SideEffect {
-        (view.parent as? DialogWindowProvider)?.window?.let { w ->
-            if ((w.attributes.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0 || w.attributes.dimAmount != 0f) {
-                w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                w.setDimAmount(0f)
-            }
-        }
-    }
-}
-
-/**
- * Puts the caret in a dialog's / sheet's text field and raises the keyboard.
- *
- * v2 draws both text-bearing surfaces focused — `phone41`'s number field and
- * `phone42`'s text field carry a caret and the `borderAccent` ring, `phone56`'s
- * extension `input` and `phone58`'s `editor` the same — so a field the user opened
- * the surface *for* must already have the keys up. The alternative (tap the field
- * first) is one extra tap on every single edit.
- *
- * The request waits one frame: a `Dialog` / `ModalBottomSheet` window is not
- * focusable in the frame its content is composed in, and a `requestFocus()` issued
- * then is dropped. `keyboard?.show()` is nullable for the same reason
- * `ChatScreen`'s dismissal is (`ChatScreen.kt:229-236`): a device with no software
- * keyboard has nothing to raise, and the `?.` says so.
- *
- * @param requester the same instance attached with `Modifier.focusRequester`.
- */
 @Composable
 fun PiAutoFocus(requester: FocusRequester) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -345,11 +302,6 @@ fun PiAutoFocus(requester: FocusRequester) {
         keyboard?.show()
     }
 }
-
-// ------------------------------------------------------------- the board's numbers
-//
-// Literals here rather than members of a theme object, cited one by one, so this
-// component carries its own evidence (`06 §2` 的「对话框」一行 + `.b-dlg`).
 
 /** 现代对话框：最大宽 340，圆角 20，舒适留白。 */
 private val PiDialogMaxWidth = 340.dp
@@ -368,9 +320,9 @@ private val PiDialogContentPadding = PaddingValues(
     bottom = PiDialogPaddingBottom,
 )
 
-private const val PiDialogScrimAlpha = 0.45f
+private const val PiDialogScrimAlpha = 0.36f
 
-private val PiDialogHairline = 1.dp
+private val PiDialogHairline = 0.5.dp
 
 private val PiDialogTitleGap = 8.dp
 

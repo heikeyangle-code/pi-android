@@ -759,7 +759,6 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
             section = t("外观", "Appearance"),
             defaultValue = str("comfortable"),
             options = choices(
-                "classic" to t("经典", "Classic"),
                 "compact" to t("紧凑", "Compact"),
                 "comfortable" to t("舒适", "Comfortable"),
                 "loose" to t("宽松", "Loose"),

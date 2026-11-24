@@ -107,18 +107,36 @@ internal object PiSheetChromeMetrics {
      */
     val scrim: Color = Color(0x52000000)
 
-    /** 面板底色 `surfaceContainerHigh`：M3 的 `containerColor`，也是自绘壳的 `background`。 */
+    /** 面板底色 `surfaceContainerHigh`：深色浮起、浅色纯白。 */
     val containerColor: Color
         @Composable
         @ReadOnlyComposable
         get() = MaterialTheme.colorScheme.surfaceContainerHigh
 
     /**
-     * 把手色 `outlineVariant`（= 稿子里 `borderMuted` 的 55% 版本）。
-     *
-     * 两套壳以前一个用不透明的 `borderMuted`、一个用 `outlineVariant`：尺寸一样、深浅
-     * 不一样，两个壳并排就看得出。
+     * 弹层内部卡片/输入框底色：与 [containerColor] 明确拉开一档，彻底消除深色/浅色下
+     * 卡片或输入框融进弹层背景的问题。
      */
+    val sheetCardBg: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = if (app.pi.ui.theme.PiTheme.isDark) {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        } else {
+            MaterialTheme.colorScheme.surfaceContainer
+        }
+
+    /** 弹层内部次按钮/控件底色：清晰可辨的 tonal 填充。 */
+    val sheetControlBg: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = if (app.pi.ui.theme.PiTheme.isDark) {
+            MaterialTheme.colorScheme.surfaceContainerHighest
+        } else {
+            MaterialTheme.colorScheme.surfaceContainer
+        }
+
+    /** 把手色 `outlineVariant`。 */
     val handleColor: Color
         @Composable
         @ReadOnlyComposable

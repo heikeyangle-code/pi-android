@@ -38,14 +38,11 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -477,7 +474,6 @@ fun AppearanceScreen(
                         InlineSegmentRow(
                             title = tr("排版密度", "Density"),
                             options = listOf(
-                                PiTypographyProfile.CLASSIC to tr("经典", "Classic"),
                                 PiTypographyProfile.COMPACT to tr("紧凑", "Compact"),
                                 PiTypographyProfile.COMFORTABLE to tr("舒适", "Cozy"),
                                 PiTypographyProfile.LOOSE to tr("宽松", "Loose"),
@@ -502,17 +498,14 @@ fun AppearanceScreen(
 
                         PiSettingsHairline()
 
-                        val isClassic = typography == PiTypographyProfile.CLASSIC
                         InlineSegmentRow(
                             title = tr("行距", "Line Height"),
-                            subtitle = if (isClassic) tr("经典档保持固定行距", "Fixed in Classic preset") else null,
                             options = listOf(
                                 "tight" to tr("紧", "Tight"),
                                 "normal" to tr("标准", "Normal"),
                                 "loose" to tr("松", "Loose"),
                             ),
                             selected = lineHeight,
-                            enabled = !isClassic,
                             onSelect = { writeStr("app.appearance.lineHeight", it) },
                         )
                     }
@@ -1404,7 +1397,7 @@ private fun ThemeImportSheet(
         }
     }
 
-    PiSettingsSheet(onDismiss = onDismiss) {
+    app.pi.ui.components.PiSheet(onDismiss = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

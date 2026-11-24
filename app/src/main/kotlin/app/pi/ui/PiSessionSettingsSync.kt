@@ -168,10 +168,8 @@ internal fun PiSessionViewModel.readPrefs(): UiPrefs {
         }
     }
 
-    val typography = raw("app.appearance.typography")
-        ?: PiTypographyProfile.migratedTypography(raw("app.appearance.messageDensity"))
-    val fontSize = raw("app.appearance.fontSize")
-        ?: PiTypographyProfile.migratedFontSize(raw("app.appearance.fontScaleDelta"))
+    val typography = raw("app.appearance.typography") ?: PiTypographyProfile.COMFORTABLE
+    val fontSize = raw("app.appearance.fontSize") ?: "normal"
 
     return UiPrefs(
         typographyProfile = PiTypographyProfile.forPreset(

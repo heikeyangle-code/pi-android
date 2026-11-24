@@ -4,16 +4,16 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Timeline
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,16 +29,13 @@ import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.update.AppUpdater
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
- * 设置首页（SDK 重构版），按清晰职责分为五节，彻底去除旧版「模型与推理」和冗余的「引擎」入口：
- *  1. **模型与连接**：模型与供应商（含订阅登录、API Key、自定义模型、推理与缓存）、MCP 服务器；
- *  2. **扩展与工具**：扩展与资源（含项目信任、扩展/技能/提示/主题/包与运行时 flag）、工具；
- *  3. **对话与提示词**：系统提示词、对话与消息、上下文与压缩、网络与重试；
- *  4. **外观**：主题、配色、排版、思考块显示；
- *  5. **系统**：引擎与运行环境、应用更新（原生下载覆盖安装）、其他（终端、设备能力、开源许可）。
+ * 设置首页：4 个清晰视觉分组，所有高频入口直达（无嵌套「其他」中间页），
+ * 分组标题与对应卡片严格遵循 6dp 内聚 / 18dp 组间 Gestalt 间距。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsHome(
     store: PiSettingsStore,
@@ -50,10 +47,12 @@ fun SettingsHome(
     freshness: Int = 0,
     onOpenRuntime: (() -> Unit)? = null,
     runtimeSummary: String? = null,
-    onOpenOther: (() -> Unit)? = null,
     onOpenMcp: (() -> Unit)? = null,
     onOpenUpdate: (() -> Unit)? = null,
     updateOutcome: AppUpdater.CheckOutcome? = null,
+    onOpenTerminal: (() -> Unit)? = null,
+    onOpenDeviceCapabilities: (() -> Unit)? = null,
+    onOpenLicenses: (() -> Unit)? = null,
 ) {
     var query by remember { mutableStateOf("") }
     val q = query.trim()
@@ -72,6 +71,19 @@ fun SettingsHome(
         }.take(40)
     }
     val palette = PiTheme.palette
+    val context = LocalContext.current
+    val capStore = remember(context) { app.pi.bridge.DeviceCapabilityStore.get(context) }
+    var capStates by remember { mutableStateOf<List<app.pi.bridge.DeviceCapabilityState>>(emptyList()) }
+    LaunchedEffect(capStore) {
+        capStates = withContext(Dispatchers.IO) { capStore.states() }
+    }
+    val capUsable = capStates.count { it.usable }
+    val capSupporting = if (capStates.isEmpty() || capUsable == 0) {
+        tr("未启用（0 Token 占用）· 屏幕自动化、通知与设备 Shell", "Disabled (0 Token) · Screen automation, notifications & device shell")
+    } else {
+        tr("$capUsable/${capStates.size} 组就绪 · 屏幕自动化、通知与设备 Shell", "$capUsable/${capStates.size} active · Screen automation, notifications & device shell")
+    }
+
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scrolled by remember(listState) {
         androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
@@ -141,7 +153,7 @@ fun SettingsHome(
                 return@LazyColumn
             }
 
-            fun groupCards(
+            fun groupSection(
                 sectionKey: String,
                 label: String,
                 ids: List<String>,
@@ -150,31 +162,33 @@ fun SettingsHome(
             ) {
                 val groups = ids.mapNotNull { id -> PiSettingsCatalog.groups.firstOrNull { it.id == id } }
                 if (groups.isEmpty() && lead.isEmpty()) return
-                item(key = "label:$sectionKey") { HomeSectionLabel(label) }
-                item(key = "card:$sectionKey") {
-                    PiSettingsCard {
-                        var first = true
-                        lead.forEach { entry ->
-                            if (!first) PiSettingsHairline()
-                            first = false
-                            PiSettingsEntryRow(
-                                title = entry.title,
-                                supporting = entry.supporting,
-                                onClick = entry.onClick,
-                                leadingIcon = entry.icon,
-                                leadingTint = entry.tint,
-                            )
-                        }
-                        groups.forEach { group ->
-                            if (!first) PiSettingsHairline()
-                            first = false
-                            GroupEntry(group, store, freshness, tint) { onOpenGroup(group.id) }
+                item(key = "section:$sectionKey") {
+                    Column(verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupHeaderGap)) {
+                        HomeSectionLabel(label)
+                        PiSettingsCard {
+                            var first = true
+                            lead.forEach { entry ->
+                                if (!first) PiSettingsHairline()
+                                first = false
+                                PiSettingsEntryRow(
+                                    title = entry.title,
+                                    supporting = entry.supporting,
+                                    onClick = entry.onClick,
+                                    leadingIcon = entry.icon,
+                                    leadingTint = entry.tint,
+                                )
+                            }
+                            groups.forEach { group ->
+                                if (!first) PiSettingsHairline()
+                                first = false
+                                GroupEntry(group, store, freshness, tint) { onOpenGroup(group.id) }
+                            }
                         }
                     }
                 }
             }
 
-            groupCards(
+            groupSection(
                 sectionKey = "models-conn",
                 label = tr("模型与连接", "Models & Connections"),
                 ids = emptyList(),
@@ -199,62 +213,91 @@ fun SettingsHome(
                     },
                 ),
             )
-            groupCards("ext-tools", tr("扩展与工具", "Extensions & Tools"), listOf("resources", "tools"), tint = palette.success)
-            groupCards("chat-prompts", tr("对话与外观", "Chat & Appearance"), listOf("prompts", "messages", "compaction", "retry", "appearance"), tint = palette.mdLink)
-            item(key = "label:system") { HomeSectionLabel(tr("系统", "System")) }
-            item(key = "card:system") {
-                val context = LocalContext.current
+            groupSection("ext-tools", tr("扩展与工具", "Extensions & Tools"), listOf("resources", "tools"), tint = palette.success)
+            groupSection("chat-prompts", tr("对话与外观", "Chat & Appearance"), listOf("prompts", "messages", "compaction", "retry", "appearance"), tint = palette.mdLink)
+
+            item(key = "section:system") {
                 val currentVer = remember(context) { AppUpdater.installedVersionName(context) }
                 val hasNew = updateOutcome?.hasUpdate == true
                 val newVer = updateOutcome?.latest?.version
-                PiSettingsCard {
-                    var hasPrev = false
-                    if (onOpenRuntime != null) {
-                        hasPrev = true
-                        PiSettingsEntryRow(
-                            title = tr("引擎与运行环境", "Engine & Runtime"),
-                            supporting = runtimeSummary ?: tr(
-                                "引擎状态、容器运行时（proot / proroot / tawcroot）、工具链自检与诊断报告",
-                                "Engine status, container runtime (proot / proroot / tawcroot), self-check & diagnostics",
-                            ),
-                            onClick = onOpenRuntime,
-                            leadingIcon = Icons.Filled.Memory,
-                            leadingTint = palette.accent,
-                        )
-                    }
-                    if (onOpenUpdate != null) {
-                        if (hasPrev) PiSettingsHairline()
-                        hasPrev = true
-                        PiSettingsEntryRow(
-                            title = tr("应用更新", "App Update"),
-                            supporting = if (hasNew && !newVer.isNullOrBlank()) {
-                                if (updateOutcome?.matchedAsset != null) {
-                                    tr("发现新版本 v$newVer（当前 v$currentVer）· 点击下载安装", "New version v$newVer available (current v$currentVer) · Tap to update")
+                Column(verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupHeaderGap)) {
+                    HomeSectionLabel(tr("系统与工具", "System & Tools"))
+                    PiSettingsCard {
+                        var hasPrev = false
+                        if (onOpenRuntime != null) {
+                            hasPrev = true
+                            PiSettingsEntryRow(
+                                title = tr("引擎与运行环境", "Engine & Runtime"),
+                                supporting = runtimeSummary ?: tr(
+                                    "引擎状态、容器运行时（proot / proroot / tawcroot）、工具链自检与诊断报告",
+                                    "Engine status, container runtime (proot / proroot / tawcroot), self-check & diagnostics",
+                                ),
+                                onClick = onOpenRuntime,
+                                leadingIcon = Icons.Filled.Memory,
+                                leadingTint = palette.accent,
+                            )
+                        }
+                        if (onOpenDeviceCapabilities != null) {
+                            if (hasPrev) PiSettingsHairline()
+                            hasPrev = true
+                            PiSettingsEntryRow(
+                                title = tr("设备能力", "Device Capabilities"),
+                                supporting = capSupporting,
+                                onClick = onOpenDeviceCapabilities,
+                                leadingIcon = Icons.Filled.PhoneAndroid,
+                                leadingTint = palette.success,
+                                trailingBadge = if (capUsable > 0) {
+                                    { PiSettingsBadge(label = "$capUsable/${capStates.size}", tone = palette.success) }
                                 } else {
-                                    tr("发现新版本 v$newVer（当前 v$currentVer）· 点击查看发布说明", "New version v$newVer available (current v$currentVer) · Tap to view release")
-                                }
-                            } else {
-                                tr("当前版本 v$currentVer · 检查并原地覆盖安装新版", "Current v$currentVer · Check & install updates in-app")
-                            },
-                            onClick = onOpenUpdate,
-                            leadingIcon = Icons.Filled.SystemUpdate,
-                            leadingTint = if (hasNew) palette.success else palette.borderAccent,
-                            trailingBadge = if (hasNew && !newVer.isNullOrBlank()) {
-                                { PiSettingsBadge(label = "v$newVer", tone = palette.success) }
-                            } else {
-                                null
-                            },
-                        )
-                    }
-                    if (onOpenOther != null) {
-                        if (hasPrev) PiSettingsHairline()
-                        PiSettingsEntryRow(
-                            title = tr("其他", "More"),
-                            supporting = tr("终端、设备能力、开源许可", "Terminal, device capabilities, licenses"),
-                            onClick = onOpenOther,
-                            leadingIcon = Icons.Filled.MoreVert,
-                            leadingTint = palette.muted,
-                        )
+                                    null
+                                },
+                            )
+                        }
+                        if (onOpenTerminal != null) {
+                            if (hasPrev) PiSettingsHairline()
+                            hasPrev = true
+                            PiSettingsEntryRow(
+                                title = tr("内置终端", "Built-in Terminal"),
+                                supporting = tr("打开内置原生多标签 Linux 终端（后台常驻）", "Open built-in native multi-tab Linux terminal"),
+                                onClick = onOpenTerminal,
+                                leadingIcon = Icons.Filled.Terminal,
+                                leadingTint = palette.accent,
+                            )
+                        }
+                        if (onOpenUpdate != null) {
+                            if (hasPrev) PiSettingsHairline()
+                            hasPrev = true
+                            PiSettingsEntryRow(
+                                title = tr("应用更新", "App Update"),
+                                supporting = if (hasNew && !newVer.isNullOrBlank()) {
+                                    if (updateOutcome?.matchedAsset != null) {
+                                        tr("发现新版本 v$newVer（当前 v$currentVer）· 点击下载安装", "New version v$newVer available (current v$currentVer) · Tap to update")
+                                    } else {
+                                        tr("发现新版本 v$newVer（当前 v$currentVer）· 点击查看发布说明", "New version v$newVer available (current v$currentVer) · Tap to view release")
+                                    }
+                                } else {
+                                    tr("当前版本 v$currentVer · 检查并原地覆盖安装新版", "Current v$currentVer · Check & install updates in-app")
+                                },
+                                onClick = onOpenUpdate,
+                                leadingIcon = Icons.Filled.SystemUpdate,
+                                leadingTint = if (hasNew) palette.success else palette.borderAccent,
+                                trailingBadge = if (hasNew && !newVer.isNullOrBlank()) {
+                                    { PiSettingsBadge(label = "v$newVer", tone = palette.success) }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                        if (onOpenLicenses != null) {
+                            if (hasPrev) PiSettingsHairline()
+                            PiSettingsEntryRow(
+                                title = tr("开源许可", "Open Source Licenses"),
+                                supporting = tr("查看第三方依赖与开源协议声明", "View third-party dependencies and license notices"),
+                                onClick = onOpenLicenses,
+                                leadingIcon = Icons.Filled.Info,
+                                leadingTint = palette.muted,
+                            )
+                        }
                     }
                 }
             }

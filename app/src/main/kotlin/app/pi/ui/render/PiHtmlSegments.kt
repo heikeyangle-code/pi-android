@@ -61,7 +61,6 @@ internal fun PiHtmlFence(
     highlighted: PiHighlightedCode,
     style: androidx.compose.ui.text.TextStyle,
     palette: app.pi.ui.theme.PiPalette,
-    classic: Boolean,
 ) {
     var preview by androidx.compose.runtime.saveable.rememberSaveable(code) {
         androidx.compose.runtime.mutableStateOf(false)
@@ -69,7 +68,7 @@ internal fun PiHtmlFence(
     if (!preview) {
         PiRichCodeBlock(
             code = code, info = info, highlighted = highlighted, style = style,
-            palette = palette, classic = classic,
+            palette = palette,
             extraMenu = listOf(PiCardMenuItem(tr("预览渲染", "Preview Rendered")) { preview = true }),
         )
     } else {

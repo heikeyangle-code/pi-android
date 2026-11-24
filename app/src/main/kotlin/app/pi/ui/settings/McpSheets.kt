@@ -108,7 +108,7 @@ internal fun McpEditSheet(
     val fieldBg = palette.pageBg.copy(alpha = 0.55f)
     val fieldBorder = palette.borderMuted.copy(alpha = 0.75f)
 
-    PiSettingsSheet(onDismiss = onDismiss, fullHeight = true) {
+    app.pi.ui.components.PiSheet(onDismiss = onDismiss, fullHeight = true) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -726,7 +726,7 @@ internal fun McpImportSheet(
     }
     val preview = remember(text, fallbackName) { PiMcpConfig.previewImport(text, fallbackName) }
 
-    PiSettingsSheet(onDismiss = onDismiss, fullHeight = true) {
+    app.pi.ui.components.PiSheet(onDismiss = onDismiss, fullHeight = true) {
         Column(
             Modifier
                 .fillMaxWidth()

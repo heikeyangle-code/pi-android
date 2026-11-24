@@ -1,9 +1,6 @@
 package app.pi.ui.settings
 
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,22 +8,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,52 +24,26 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
 import app.pi.protocol.PiResponses
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
+import app.pi.ui.components.PiDivider
+import app.pi.ui.components.PiIconSquareButton
+import app.pi.ui.components.PiPrimaryButton
+import app.pi.ui.components.PiSecondaryButton
+import app.pi.ui.components.PiSheet
+import app.pi.ui.components.PiSheetActionBar
+import app.pi.ui.components.PiTextAction
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.PiThinkingLevel
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * 「逐模型思考等级」的专用编辑器：**没有任何文本输入** —— 模型从清单点、等级从枚举点。
- *
- * 为什么必须有它：这一行原来是 `container = Object` 的通用列表编辑器，用户看到的只有
- * 一个「新增一项」输入框，而答案是一行 `"provider/modelId" = level` 的 JSON 文本 ——
- * 用户原话「点了也是一个输入框让自己填，我该填什么呢？所有的我都不想自己填」。
- *
- * 两件事都是 pi 的事实，不是本编辑器的发明：
- *
- *  - 键是 `Record<"provider/modelId", ModelThinkingLevel>`，**精确、大小写敏感**，模型 id
- *    自己可以带斜杠（`core/settings-manager.ts:805`、`docs/settings-audit-pi-gap.md:471`）；
- *  - 值就是 `defaultThinkingLevel` 那 7 档（`packages/ai/src/types.ts:83-84` 的
- *    `ThinkingLevel | "off"`；注册表里 `thinkingLevelOptions` 也是同一份 [PiThinkingLevel]），
- *    所以两颗选择器不会各说各话。
- *
- * 写回的语义照旧交给 host 的 `PiSetting.elementFromEntries`：空列表 = 删键（回到默认），
- * 不是写 `{}`。
- *
- * @param models 清单里的模型，`wire` 是 `厂商/模型`（清单页 `modelPickerOptions` 的同一份）。
- * @param initialEntries 当前值，`名字 = 值` 原文行（`PiSetting.editableEntries`）。
+ * 「思考预算 (`thinkingBudgets`)」专用编辑器：固定 4 档 token 输入，留空 = 厂商默认。
  */
-/**
- * 「思考预算」的专用编辑器：**固定 4 行、只填数字**，键名不用手打。
- *
- * pi 的 `ThinkingBudgets` 只有四个键 `minimal` / `low` / `medium` / `high`，值是 token 数
- * （`packages/ai/src/types.ts:100-105`、`docs/settings-audit-pi-gap.md:263`）。pi **不给
- * 默认数字**：消费侧是 `?? 各厂商自己的默认`（`core/settings-manager.ts:1174-1176`、
- * `core/sdk.ts:370`），所以**留空就是正确用法** —— 这里不编造任何"官方数值"。
- *
- * 四行都空 = 整个键删掉（host 走 `store.remove`），不是写 `{}`。只接受非负整数：
- * 一个非数字写下去只会让这个思考等级退回厂商默认，静默无效（这就是以前手打那种行的
- * 下场）。
- */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PiThinkingBudgetsSheet(
     title: String,
@@ -105,7 +67,7 @@ fun PiThinkingBudgetsSheet(
         text.isNotEmpty() && parseThinkingBudget(text) == null
     }
 
-    PiSettingsSheet(onDismiss = onDismiss) {
+    PiSheet(onDismiss = onDismiss) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -115,68 +77,47 @@ fun PiThinkingBudgetsSheet(
                     top = PiSettingsMetrics.sheetHeadTop,
                 ),
         ) {
-            Text(
-                title,
-                style = PiType.title,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            Text(title, style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(PiSpacing.small))
-            Text(
-                description,
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text(description, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
             keys.forEach { key ->
-                val tierLabel = thinkingBudgetLabel(key)
                 PiEditorField(
                     value = values[key].orEmpty(),
                     onValueChange = { values[key] = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = tierLabel,
+                    label = thinkingBudgetLabel(key),
                     placeholder = thinkingBudgetHint(key),
                     height = PiNumberFieldHeight,
                     trailing = {
-                        Text(
-                            "token",
-                            style = PiTheme.text.mono,
-                            color = PiTheme.palette.muted,
-                        )
+                        Text("token", style = PiTheme.text.mono, color = PiTheme.palette.muted)
                     },
                 )
                 Spacer(Modifier.height(PiSpacing.small))
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(PiSpacing.inline))
             Text(
-                if (invalid) {
-                    tr("只接受非负整数", "Only non-negative integers are accepted")
-                } else {
-                    tr("留空 = 用厂商默认", "Empty = provider default")
-                },
+                if (invalid) tr("只接受非负整数", "Only non-negative integers are accepted")
+                else tr("留空 = 用厂商默认", "Empty = provider default"),
                 style = PiTheme.text.meta,
                 color = if (invalid) PiTheme.palette.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            HorizontalDivider(
-                thickness = PiSettingsMetrics.hairline,
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
+            Spacer(Modifier.height(PiSpacing.inline))
+            PiDivider()
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline, Alignment.End),
-            ) {
+            PiSheetActionBar {
                 if (keys.any { values[it].orEmpty().isNotBlank() }) {
-                    TextButton(
-                        onClick = {
-                            keys.forEach { values[it] = "" }
-                        },
-                    ) { Text(tr("清空", "Clear")) }
+                    PiTextAction(
+                        label = tr("清空", "Clear"),
+                        tone = PiTheme.palette.muted,
+                        onClick = { keys.forEach { values[it] = "" } },
+                    )
                 }
-                OutlinedButton(onClick = onDismiss) { Text(tr("取消", "Cancel")) }
-                Button(
+                PiSecondaryButton(label = tr("取消", "Cancel"), onClick = onDismiss)
+                PiPrimaryButton(
+                    label = tr("保存", "Save"),
                     enabled = !invalid,
                     onClick = {
-                        // 只写有字的行；四行全空 = 空列表 = 删键（host 负责）。
                         onSet(
                             keys.mapNotNull { key ->
                                 values[key]?.trim()?.takeIf { it.isNotEmpty() }?.let { "$key = $it" }
@@ -184,14 +125,13 @@ fun PiThinkingBudgetsSheet(
                         )
                         onDismiss()
                     },
-                ) { Text(tr("保存", "Save")) }
+                )
             }
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
         }
     }
 }
 
-/** pi 的 `ThinkingBudgets` 四个合法键，顺序按 token 从小到大（`types.ts:100-105`）。 */
 private val THINKING_BUDGET_KEYS = listOf("minimal", "low", "medium", "high")
 
 private fun thinkingBudgetLabel(key: String): String = when (key) {
@@ -208,180 +148,6 @@ private fun thinkingBudgetHint(key: String): String? = when (key) {
     "medium" -> tr("默认约 8192", "Default ~8192")
     "high" -> tr("默认约 16384", "Default ~16384")
     else -> null
-}
-
-private data class BuiltInToolChoice(
-    val id: String,
-    val title: String,
-    val detail: String,
-    val groupLabel: String,
-)
-
-private fun builtinToolChoices(): List<BuiltInToolChoice> = listOf(
-    BuiltInToolChoice("read", "read", tr("读取文件内容与图片", "Read file contents and images"), tr("默认内置", "Default built-in")),
-    BuiltInToolChoice("bash", "bash", tr("在工作区执行 Shell 命令", "Execute shell commands in the workspace"), tr("默认内置", "Default built-in")),
-    BuiltInToolChoice("edit", "edit", tr("按精确片段修改文件", "Edit files with exact replacements"), tr("默认内置", "Default built-in")),
-    BuiltInToolChoice("write", "write", tr("创建或整份写入文件", "Create or overwrite files"), tr("默认内置", "Default built-in")),
-    BuiltInToolChoice("grep", "grep", tr("按正则在目录中搜索文本", "Search text with regular expressions"), tr("可选内置", "Optional built-in")),
-    BuiltInToolChoice("find", "find", tr("按 glob 模式查找文件", "Find files by glob pattern"), tr("可选内置", "Optional built-in")),
-    BuiltInToolChoice("ls", "ls", tr("列出目录内容", "List directory contents"), tr("可选内置", "Optional built-in")),
-    BuiltInToolChoice("codemode", "codemode", tr("通过内建扩展启用沙箱脚本执行", "Run sandboxed scripts via built-in extension"), tr("内置扩展", "Built-in extension")),
-    BuiltInToolChoice("tool_search", "tool_search", tr("按需检索并激活外部工具，减少提示词占用", "Search and activate external tools on demand"), tr("内置扩展", "Built-in extension")),
-)
-
-private val DEFAULT_BUILTIN_TOOL_SET = setOf("read", "bash", "edit", "write")
-
-/**
- * 「内建工具 (`defaultTools`)」可视化开关面板：取代旧版纯文本框。
- *
- * 严格保持 Pi SDK 语义：选中集合刚好等于默认四件套（`read / bash / edit / write`）时回传空列表，
- * 由 host 调用 `store.remove("defaultTools")` 恢复默认；否则按勾选顺序写入完整白名单。
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun PiDefaultToolsSheet(
-    title: String,
-    description: String,
-    initialEntries: List<String>,
-    onSet: (List<String>) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val toolChoices = builtinToolChoices()
-    val initialSelected = remember(initialEntries) {
-        val cleaned = initialEntries.map { it.trim() }.filter { it.isNotEmpty() }
-        if (cleaned.isEmpty()) DEFAULT_BUILTIN_TOOL_SET else cleaned.toSet()
-    }
-    var selected by remember(initialSelected) { mutableStateOf(initialSelected) }
-    val customExtras = remember(initialSelected) {
-        val known = toolChoices.map { it.id }.toSet()
-        initialSelected.filterNot { it in known }
-    }
-
-    PiSettingsSheet(onDismiss = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(
-                    start = PiSettingsMetrics.pageHorizontal,
-                    end = PiSettingsMetrics.pageHorizontal,
-                    top = PiSettingsMetrics.sheetHeadTop,
-                ),
-        ) {
-            Text(title, style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
-            Spacer(Modifier.height(PiSpacing.small))
-            Text(
-                description,
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = PiSettingsMetrics.sheetBodyMax)
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                toolChoices.forEachIndexed { index, item ->
-                    if (index > 0) {
-                        HorizontalDivider(
-                            thickness = PiSettingsMetrics.hairline,
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                        )
-                    }
-                    val checked = item.id in selected
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                selected = if (checked) selected - item.id else selected + item.id
-                            }
-                            .padding(vertical = PiOptionRowPadding),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "${item.title} · ${item.groupLabel}",
-                                style = PiTheme.text.prose,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            Text(
-                                item.detail,
-                                style = PiTheme.text.meta,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Spacer(Modifier.width(PiSpacing.inline))
-                        PiSettingsSwitch(
-                            checked = checked,
-                            onCheckedChange = { on ->
-                                selected = if (on) selected + item.id else selected - item.id
-                            },
-                        )
-                    }
-                }
-                if (customExtras.isNotEmpty()) {
-                    Spacer(Modifier.height(PiSpacing.small))
-                    Text(
-                        tr(
-                            "保留配置中的其他工具名：${customExtras.joinToString(", ")}",
-                            "Preserved custom tools: ${customExtras.joinToString(", ")}",
-                        ),
-                        style = PiTheme.text.meta,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            Spacer(Modifier.height(PiSpacing.small))
-            Text(
-                if (selected.isEmpty()) {
-                    tr(
-                        "已全部取消：保存将恢复默认四件套（如需彻底禁用全部内建工具，请在「Pi 文件」手动写 []）。",
-                        "All unchecked: saving resets to the 4 defaults (to disable all built-ins, set [] in settings.json).",
-                    )
-                } else if (selected == DEFAULT_BUILTIN_TOOL_SET) {
-                    tr(
-                        "当前即默认四件套（read / bash / edit / write）。",
-                        "Default tool set active (read / bash / edit / write).",
-                    )
-                } else {
-                    tr(
-                        "将启用 ${selected.size} 个工具：${selected.joinToString(", ")}",
-                        "Will enable ${selected.size} tools: ${selected.joinToString(", ")}",
-                    )
-                },
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            HorizontalDivider(
-                thickness = PiSettingsMetrics.hairline,
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
-            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline, Alignment.End),
-            ) {
-                if (selected != DEFAULT_BUILTIN_TOOL_SET) {
-                    TextButton(onClick = { selected = DEFAULT_BUILTIN_TOOL_SET }) { Text(tr("恢复默认", "Reset default")) }
-                }
-                OutlinedButton(onClick = onDismiss) { Text(tr("取消", "Cancel")) }
-                Button(
-                    onClick = {
-                        val ordered = toolChoices.map { it.id }.filter { it in selected } +
-                            customExtras.filter { it in selected }
-                        val result = if (ordered.isEmpty() || ordered.toSet() == DEFAULT_BUILTIN_TOOL_SET) {
-                            emptyList()
-                        } else {
-                            ordered
-                        }
-                        onSet(result)
-                        onDismiss()
-                    },
-                ) { Text(tr("保存", "Save")) }
-            }
-            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
-        }
-    }
 }
 
 private data class CompactionOverrideDraft(
@@ -413,12 +179,8 @@ private fun formatCompactionOverrideEntries(items: List<CompactionOverrideDraft>
     }
 
 /**
- * 「按模型压缩阈值覆盖 (`compaction.modelOverrides`)」结构化编辑器：取代手写 JSON 文本框。
- *
- * 从 SDK 真实模型目录挑选 `provider/modelId`（也允许手输），再用两个纯数字框填
- * `reserveTokens` 与 `keepRecentTokens`，彻底告别手敲 JSON。
+ * 「按模型压缩阈值覆盖 (`compaction.modelOverrides`)」结构化编辑器（零原生 M3 Button）。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PiCompactionOverridesSheet(
     title: String,
@@ -448,7 +210,7 @@ fun PiCompactionOverridesSheet(
         draftError = null
     }
 
-    PiSettingsSheet(onDismiss = onDismiss) {
+    PiSheet(onDismiss = onDismiss) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -460,11 +222,7 @@ fun PiCompactionOverridesSheet(
         ) {
             Text(title, style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(PiSpacing.small))
-            Text(
-                description,
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text(description, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
 
             val activeKey = editingKey
@@ -495,12 +253,15 @@ fun PiCompactionOverridesSheet(
                     Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error)
                 }
                 Spacer(Modifier.height(PiSpacing.unit))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline, Alignment.End),
-                ) {
-                    OutlinedButton(onClick = { editingKey = null; draftError = null }) { Text(tr("返回", "Back")) }
-                    Button(
+                PiDivider()
+                Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
+                PiSheetActionBar {
+                    PiSecondaryButton(
+                        label = tr("返回", "Back"),
+                        onClick = { editingKey = null; draftError = null },
+                    )
+                    PiPrimaryButton(
+                        label = tr("确定", "OK"),
                         onClick = {
                             val rTrim = reserveText.trim()
                             val kTrim = keepText.trim()
@@ -508,18 +269,18 @@ fun PiCompactionOverridesSheet(
                             val kVal = if (kTrim.isEmpty()) null else kTrim.toIntOrNull()?.takeIf { it >= 0 }
                             if ((rTrim.isNotEmpty() && rVal == null) || (kTrim.isNotEmpty() && kVal == null)) {
                                 draftError = tr("只接受非负整数。", "Only non-negative integers are accepted.")
-                                return@Button
+                                return@PiPrimaryButton
                             }
                             if (rVal == null && kVal == null) {
                                 draftError = tr("请至少填写其中一项数值。", "Enter at least one value.")
-                                return@Button
+                                return@PiPrimaryButton
                             }
                             val next = CompactionOverrideDraft(activeKey, rVal, kVal)
                             items = items.filterNot { it.modelKey == activeKey } + next
                             editingKey = null
                             draftError = null
                         },
-                    ) { Text(tr("确定", "OK")) }
+                    )
                 }
             } else if (pickingModel) {
                 PiEditorField(
@@ -569,7 +330,7 @@ fun PiCompactionOverridesSheet(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(m.name.ifBlank { m.id }, style = PiTheme.text.prose, color = MaterialTheme.colorScheme.onSurface)
+                                Text(m.name.ifBlank { m.id }, style = PiType.rowTitle, color = MaterialTheme.colorScheme.onSurface)
                                 Text(key, style = PiTheme.text.monoSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Text(tr("选择 ›", "Select ›"), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.primary)
@@ -591,11 +352,10 @@ fun PiCompactionOverridesSheet(
                     }
                 }
                 Spacer(Modifier.height(PiSpacing.small))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    OutlinedButton(onClick = { pickingModel = false }) { Text(tr("返回", "Back")) }
+                PiDivider()
+                Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
+                PiSheetActionBar {
+                    PiSecondaryButton(label = tr("返回", "Back"), onClick = { pickingModel = false })
                 }
             } else {
                 Column(
@@ -615,12 +375,7 @@ fun PiCompactionOverridesSheet(
                         )
                     } else {
                         items.forEachIndexed { idx, item ->
-                            if (idx > 0) {
-                                HorizontalDivider(
-                                    thickness = PiSettingsMetrics.hairline,
-                                    color = MaterialTheme.colorScheme.outlineVariant,
-                                )
-                            }
+                            if (idx > 0) PiDivider()
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -636,40 +391,41 @@ fun PiCompactionOverridesSheet(
                                     }.joinToString(" · ")
                                     Text(detail, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                IconButton(onClick = { items = items.filterNot { it.modelKey == item.modelKey } }) {
-                                    Icon(
-                                        Icons.Filled.Delete,
-                                        contentDescription = tr("删除覆盖", "Remove override"),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
+                                PiIconSquareButton(
+                                    icon = Icons.Filled.Delete,
+                                    contentDescription = tr("删除覆盖", "Remove override"),
+                                    tint = PiTheme.palette.muted,
+                                    onClick = { items = items.filterNot { it.modelKey == item.modelKey } },
+                                )
                             }
                         }
                     }
-                    Spacer(Modifier.height(PiSpacing.unit))
-                    TextButton(onClick = { query = ""; pickingModel = true }) {
-                        Text(tr("+ 添加模型覆盖", "+ Add model override"))
-                    }
+                    Spacer(Modifier.height(10.dp))
+                    PiTextAction(
+                        label = tr("添加模型覆盖", "Add model override"),
+                        leadingIcon = Icons.Filled.Add,
+                        onClick = { query = ""; pickingModel = true },
+                    )
                 }
-                HorizontalDivider(
-                    thickness = PiSettingsMetrics.hairline,
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                )
+                Spacer(Modifier.height(8.dp))
+                PiDivider()
                 Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline, Alignment.End),
-                ) {
+                PiSheetActionBar {
                     if (items.isNotEmpty()) {
-                        TextButton(onClick = { items = emptyList() }) { Text(tr("清空", "Clear")) }
+                        PiTextAction(
+                            label = tr("清空", "Clear"),
+                            tone = PiTheme.palette.muted,
+                            onClick = { items = emptyList() },
+                        )
                     }
-                    OutlinedButton(onClick = onDismiss) { Text(tr("取消", "Cancel")) }
-                    Button(
+                    PiSecondaryButton(label = tr("取消", "Cancel"), onClick = onDismiss)
+                    PiPrimaryButton(
+                        label = tr("保存", "Save"),
                         onClick = {
                             onSet(formatCompactionOverrideEntries(items))
                             onDismiss()
                         },
-                    ) { Text(tr("保存", "Save")) }
+                    )
                 }
             }
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
@@ -677,6 +433,5 @@ fun PiCompactionOverridesSheet(
     }
 }
 
-/** 思考预算的一格：空、非负整数，其它都不收。超出 `Long` 的数字同样不收（那是打字错误）。 */
 private fun parseThinkingBudget(text: String): Long? =
     text.trim().toLongOrNull()?.takeIf { it >= 0 }

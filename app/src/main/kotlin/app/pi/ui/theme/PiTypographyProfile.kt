@@ -319,13 +319,6 @@ data class PiTypographyProfile(
     /** Markdown reading font family: `sans` (modern UI sans), `serif` (bundled Source Han Serif), or `mono` (JetBrains Mono). */
     val proseFont: String = FONT_SANS,
 ) {
-    /**
-     * True for 经典. The preset that keeps the pre-feature scale (and the only one
-     * the leading multiplier does not touch); its text metrics still go through
-     * `TextStyle.piPrecise()` like every other preset's.
-     */
-    val isClassic: Boolean get() = preset == CLASSIC
-
     fun proseFontFamily(): FontFamily = when (proseFont) {
         FONT_SERIF -> PiProseFamily
         FONT_MONO -> PiMonoFamily
@@ -333,7 +326,6 @@ data class PiTypographyProfile(
     }
 
     companion object {
-        const val CLASSIC = "classic"
         const val COMPACT = "compact"
         const val COMFORTABLE = "comfortable"
         const val LOOSE = "loose"
@@ -350,13 +342,12 @@ data class PiTypographyProfile(
 
         /** Unknown or absent → the default preset, never a crash over a text file. */
         fun presetOf(raw: String?): String = when (raw) {
-            CLASSIC -> CLASSIC
             COMPACT -> COMPACT
             LOOSE -> LOOSE
             else -> COMFORTABLE
         }
 
-        /** Unknown or absent → `normal`, i.e. today's leading, untouched. */
+        /** Unknown or absent → `normal`. */
         fun lineHeightOf(raw: String?): String = when (raw) {
             "tight" -> "tight"
             "loose" -> "loose"
@@ -371,7 +362,7 @@ data class PiTypographyProfile(
             else -> "normal"
         }
 
-        /** `−1 / 0 / +1 / +2 sp`; the row's four steps, in one place. */
+        /** `−1 / 0 / +1 / +2 sp`; the four steps, in one place. */
         fun offsetSp(fontSize: String): Int = when (fontSize) {
             "small" -> -1
             "large" -> 1
@@ -379,75 +370,18 @@ data class PiTypographyProfile(
             else -> 0
         }
 
-        /**
-         * 一次性读时迁移：`app.appearance.messageDensity` → `app.appearance.typography`。
-         *
-         * The two old keys are **gone from the registry**, so this is the only
-         * place in the tree that still reads them — which is exactly the point:
-         * leaving the rows registered would be two truths for one decision, and
-         * deleting the keys without this would silently reset a preference the
-         * user had already expressed. The old wire values were the option names
-         * `compact` / `comfortable` / `cozy`; the new set is
-         * `compact` / `comfortable` / `loose`, so only the last one is renamed.
-         *
-         * Read-time, not a one-off rewrite of the file: nothing writes the new
-         * key here, so a user who has not touched the row keeps being migrated
-         * on every read and the two documents never disagree. When the new key
-         * *is* present it always wins (its reader takes it directly), so a later
-         * edit is not overwritten by a stale legacy value.
-         */
-        fun migratedTypography(legacyMessageDensity: String?): String = when (legacyMessageDensity) {
-            COMPACT -> COMPACT
-            COMFORTABLE -> COMFORTABLE
-            "cozy" -> LOOSE
-            else -> COMFORTABLE
-        }
-
-        /**
-         * 一次性读时迁移：`app.appearance.fontScaleDelta` → `app.appearance.fontSize`。
-         *
-         * The old row was a `Number` (±2 sp), the new one is four named steps:
-         * `−2/−1 → small`, `0 → normal`, `1 → large`, `2 → xlarge`. The legacy
-         * value arrives as the JSON primitive's own text, because the old row was
-         * written as a number and never as a string. Same read-time contract as
-         * [migratedTypography].
-         */
-        fun migratedFontSize(legacyFontScaleDelta: String?): String =
-            when (legacyFontScaleDelta?.toIntOrNull()) {
-                -2, -1 -> "small"
-                1 -> "large"
-                2 -> "xlarge"
-                else -> "normal"
-            }
-
-        // The rows of this class's KDoc table, verbatim. Declared inside the
-        // companion, before `Default`, so the object's initialisation order is linear:
-        // the constants, then these tables, then `Default`.
         private val PRESETS: Map<String, Preset> = mapOf(
-            CLASSIC to Preset(
-                proseSize = 14, proseLine = 23,
-                block = 2, listItem = 2, indent = 12,
-                codeSize = 13, codeLine = 19,
-                blockSpacing = 8,
-                messageGap = 8,
-                inlineSize = 12.5f, inlineWeight = 400,
-                tableSize = 12.5f, tableLine = 18,
-                headings = intArrayOf(22, 20, 18, 16, 15, 14),
-            ),
             COMPACT to Preset(
                 proseSize = 15, proseLine = 24,
                 block = 10, listItem = 3, indent = 18,
                 codeSize = 12, codeLine = 19,
                 blockSpacing = 6,
                 messageGap = 18,
-                // JetBrains Mono 仅内置 400 / 700，使用真实 Regular 400 避免合成粗重感。
                 inlineSize = 12.5f, inlineWeight = 400,
                 tableSize = 13.5f, tableLine = 21,
-                headings = intArrayOf(21, 19, 17, 16, 15, 15),
+                headings = intArrayOf(22, 20, 18, 17, 16, 15),
             ),
             COMFORTABLE to Preset(
-                // 现代杂志感舒适档：16/26（1.625 黄金中英混排行距），克制清晰的标题阶梯 22/19/17/16，
-                // 段落 12dp、列表项 8dp（上下各 4）、行内代码 13.5sp Regular（约 0.84em 视觉等高）。
                 proseSize = 16, proseLine = 26,
                 block = 12, listItem = 4, indent = 20,
                 codeSize = 13, codeLine = 21,
@@ -455,7 +389,7 @@ data class PiTypographyProfile(
                 messageGap = 24,
                 inlineSize = 13.5f, inlineWeight = 400,
                 tableSize = 14f, tableLine = 22,
-                headings = intArrayOf(22, 19, 17, 16, 16, 15),
+                headings = intArrayOf(24, 21, 19, 18, 17, 16),
             ),
             LOOSE to Preset(
                 proseSize = 17, proseLine = 28,
@@ -465,25 +399,10 @@ data class PiTypographyProfile(
                 messageGap = 32,
                 inlineSize = 14.5f, inlineWeight = 400,
                 tableSize = 15f, tableLine = 24,
-                headings = intArrayOf(24, 21, 19, 18, 17, 17),
+                headings = intArrayOf(26, 23, 21, 19, 18, 17),
             ),
         )
 
-        /**
-         * 经典档每个标题槽的行高比例：与 `PiMarkdownTheme.kt` 改造前写死的
-         * 22/30、20/28、18/26、16/24、15/22、14/21 逐值相同（1.36 → 1.50）。
-         * 经典档的 factor 恒为 1.0，所以这组比例原样落地，密度不动。
-         */
-        private val CLASSIC_HEADING_LEADING_RATIO = doubleArrayOf(
-            30.0 / 22.0, 28.0 / 20.0, 26.0 / 18.0, 24.0 / 16.0, 22.0 / 15.0, 21.0 / 14.0,
-        )
-
-        /**
-         * 非经典档每个标题槽的行高比例 = 舒适档 24/31、22/29、20/27、18/25、17/24、16/23。
-         * 紧凑/宽松用**同一组比例**乘各自字号四舍五入，四档的标题节奏是同一个形状
-         * （比例 1.29–1.44：字号越小比例越大，小标题行高不至于贴着字走）。六级逐级递减，
-         * 每一级都和相邻一级差 1–2 sp。
-         */
         private val HEADING_LEADING_RATIO = doubleArrayOf(
             31.0 / 24.0, 29.0 / 22.0, 27.0 / 20.0, 25.0 / 18.0, 24.0 / 17.0, 23.0 / 16.0,
         )
@@ -491,20 +410,11 @@ data class PiTypographyProfile(
         private fun heading(
             numbers: Preset,
             slot: Int,
-            leading: Double,
             offsetSp: Int = 0,
-            classic: Boolean = false,
         ): PiHeading {
             val size = numbers.headings[slot]
-            val ratio = (if (classic) CLASSIC_HEADING_LEADING_RATIO else HEADING_LEADING_RATIO)[slot]
-            // 标题的行高固定按本表比例，不随「行距」档移动（比例 1.32–1.39 低于正文的
-            // CJK 行距地板 1.40，乘 0.92/1.08 之后有的落进范围、有的不落，同一档里
-            // 标题行距时变时不变，不如固定）；正文/代码/表格仍随「行距」移动。
-            val effective = ratio
-            val base = PiHeading(size, (size * effective).roundToInt())
-            // `字号` 的平移与 [PiTextStyles.shifted] 同一口径：字号与行高各 +offsetSp。
-            // 六个槽加同一个数，所以阶梯形状（2/2/2/1/1）与「h6 = 正文 + 1」在四个
-            // `字号` 档上都不变。
+            val ratio = HEADING_LEADING_RATIO[slot]
+            val base = PiHeading(size, (size * ratio).roundToInt())
             return if (offsetSp == 0) {
                 base
             } else {
@@ -521,14 +431,10 @@ data class PiTypographyProfile(
         ): PiTypographyProfile {
             val resolved = presetOf(preset)
             val numbers = PRESETS.getValue(resolved)
-            val leading = if (resolved == CLASSIC) {
-                1.0
-            } else {
-                when (lineHeightOf(lineHeight)) {
-                    "tight" -> 0.92
-                    "loose" -> 1.08
-                    else -> 1.0
-                }
+            val leading = when (lineHeightOf(lineHeight)) {
+                "tight" -> 0.92
+                "loose" -> 1.08
+                else -> 1.0
             }
             val offset = offsetSp(fontSizeOf(fontSize))
 
@@ -536,50 +442,33 @@ data class PiTypographyProfile(
                 preset = resolved,
                 lineHeight = lineHeightOf(lineHeight),
                 fontSize = fontSizeOf(fontSize),
-                // 经典 hands back `PiTextStyles.Default` itself rather than a copy of its
-                // numbers, so "classic is today" cannot drift if one of the two is ever
-                // edited. `leadingScaled(1.0)` and `scaled(0)` are both identity.
-                styles = if (resolved == CLASSIC) {
-                    PiTextStyles.Default
-                } else {
-                    PiTextStyles(
-                        // 次要：13/20 400. The row's own number, and the same leading as the
-                        // 13 sp `mono` role so one size has one leading in this app.
-                        meta = TextStyle(
-                            fontFamily = FontFamily.Default,
-                            fontSize = 13.sp,
-                            lineHeight = 20.sp,
-                            fontWeight = FontWeight.Normal,
-                        ).piPrecise(),
-                        mono = PiTextStyles.Default.mono,
-                        // 最次：12/18 400 — today's role, unchanged (the row says so).
-                        monoSmall = PiTextStyles.Default.monoSmall,
-                        // 正文：the preset's size and leading, at 字重 500 (400 in classic).
-                        prose = TextStyle(
-                            fontFamily = FontFamily.Default,
-                            fontSize = numbers.proseSize.sp,
-                            lineHeight = numbers.proseLine.sp,
-                            fontWeight = FontWeight.Medium,
-                        ).piPrecise(),
-                        code = TextStyle(
-                            fontFamily = PiMonoFamily,
-                            fontSize = numbers.codeSize.sp,
-                            lineHeight = numbers.codeLine.sp,
-                        ).piPrecise(),
-                    )
-                }
-                    .leadingScaled(leading)
-                    .scaled(offset),
-                // 标题槽也吃 `字号` 偏移（与 [PiTextStyles.scaled] 同一机制：字号与行高
-                // 各平移 offset）。不这样做的话，`字号 = 更大` 时正文（18）会超过 h6（17）
-                // —— 「标题严格大于正文」这条系统不变量必须对四个 `字号` 档都成立，
-                // 而 h6 = 正文 + 1 是在**同一个偏移下**成立的（两个数各加同一个 offset）。
-                h1 = heading(numbers, 0, leading, offset, classic = resolved == CLASSIC),
-                h2 = heading(numbers, 1, leading, offset, classic = resolved == CLASSIC),
-                h3 = heading(numbers, 2, leading, offset, classic = resolved == CLASSIC),
-                h4 = heading(numbers, 3, leading, offset, classic = resolved == CLASSIC),
-                h5 = heading(numbers, 4, leading, offset, classic = resolved == CLASSIC),
-                h6 = heading(numbers, 5, leading, offset, classic = resolved == CLASSIC),
+                styles = PiTextStyles(
+                    meta = TextStyle(
+                        fontFamily = FontFamily.Default,
+                        fontSize = 13.sp,
+                        lineHeight = 20.sp,
+                        fontWeight = FontWeight.Normal,
+                    ).piPrecise(),
+                    mono = PiTextStyles.Default.mono,
+                    monoSmall = PiTextStyles.Default.monoSmall,
+                    prose = TextStyle(
+                        fontFamily = FontFamily.Default,
+                        fontSize = numbers.proseSize.sp,
+                        lineHeight = numbers.proseLine.sp,
+                        fontWeight = FontWeight.Normal,
+                    ).piPrecise(),
+                    code = TextStyle(
+                        fontFamily = PiMonoFamily,
+                        fontSize = numbers.codeSize.sp,
+                        lineHeight = numbers.codeLine.sp,
+                    ).piPrecise(),
+                ).leadingScaled(leading).scaled(offset),
+                h1 = heading(numbers, 0, offset),
+                h2 = heading(numbers, 1, offset),
+                h3 = heading(numbers, 2, offset),
+                h4 = heading(numbers, 3, offset),
+                h5 = heading(numbers, 4, offset),
+                h6 = heading(numbers, 5, offset),
                 // 行内代码的字号跟着走，行高跟着平移（它与标题槽同一处理）。
                 // 注意：这一对行高**进不了渲染** —— Compose 的 `SpanStyle` 没有
                 // `lineHeight`（库把 `inlineCode` 当 span 压进 AnnotatedString，

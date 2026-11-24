@@ -127,9 +127,9 @@ import app.pi.ui.components.PiEmptyState
 import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
+import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
 import app.pi.ui.settings.PiSettingsMetrics
-import app.pi.ui.settings.PiSettingsSheet
 import app.pi.ui.settings.settingsPageTopInset
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
@@ -716,7 +716,7 @@ fun SessionsScreen(
         val actingIsCurrent = acting.isCurrent || (activeFile != null && acting.file.name == activeFile)
         val actingCwd = acting.cwd.trimEnd('/')
         val isOtherProject = actingCwd.isNotEmpty() && actingCwd !in currentCwds
-        PiSettingsSheet(onDismiss = { actions = null }) {
+        PiSheet(onDismiss = { actions = null }) {
             Column(
                 Modifier
                     .fillMaxWidth()

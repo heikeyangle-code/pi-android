@@ -27,7 +27,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material3.Button
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -282,7 +281,12 @@ private fun WorkspaceExternalBrowser(
         subtitle = here,
         subtitleMono = true,
         trailing = {
-            Button(onClick = { onPick(here) }, enabled = refusal == null) { Text(tr("设为项目", "Use Folder")) }
+            app.pi.ui.components.PiPrimaryButton(
+                label = tr("设为项目", "Use Folder"),
+                compact = true,
+                enabled = refusal == null,
+                onClick = { onPick(here) },
+            )
         },
         footer = tr(
             "直接将所选目录设为 Pi 项目目录（cwd），不复制或移动任何文件。",

@@ -19,6 +19,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -370,11 +371,23 @@ fun PiSeg(
     disabledIndices: Set<Int> = emptySet(),
 ) {
     val haptic = LocalHapticFeedback.current
+    val isDark = PiTheme.isDark
     val segSpring = spring<Color>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+    val trackBg = if (isDark) {
+        MaterialTheme.colorScheme.surfaceContainerLow
+    } else {
+        MaterialTheme.colorScheme.surfaceContainer
+    }
+    val activeBg = if (isDark) {
+        MaterialTheme.colorScheme.surfaceContainerHighest
+    } else {
+        Color.White
+    }
     Row(
         modifier = modifier
             .clip(SEG_SHAPE)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .background(trackBg)
+            .border(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f), SEG_SHAPE)
             .padding(SEG_PADDING),
         horizontalArrangement = Arrangement.spacedBy(SEG_ITEM_GAP),
     ) {
@@ -382,7 +395,7 @@ fun PiSeg(
             val selected = index == selectedIndex
             val enabled = index !in disabledIndices
             val bg by animateColorAsState(
-                targetValue = if (selected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                targetValue = if (selected) activeBg else Color.Transparent,
                 animationSpec = segSpring,
                 label = "seg-bg-$index",
             )
@@ -401,6 +414,17 @@ fun PiSeg(
                     .alpha(if (enabled) 1f else 0.48f)
                     .clip(SEG_ITEM_SHAPE)
                     .background(bg)
+                    .then(
+                        if (selected && !isDark) {
+                            Modifier.border(
+                                PiSpacing.hairlineThin,
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                                SEG_ITEM_SHAPE,
+                            )
+                        } else {
+                            Modifier
+                        },
+                    )
                     .clickable(enabled = enabled) {
                         if (!selected) {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)

@@ -7,12 +7,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -23,41 +21,29 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiTheme
 
 /**
- * 设置行构件：全设置面（含「设备能力」页）共用**一套行骨架、三种尾巴**。
- *
- * ## 三种尾巴（用户裁定的统一口径）
- *
- *  1. 布尔行：`标题 15/500 + 一行说明 12 灰 + Switch`，开关贴右；
- *  2. 值行：`标题 + 一行说明 + 值 13 等宽 + chevron`；
- *  3. 动作行：`标题（accent，危险用 error）+ 一行说明 + chevron`。
- *
- * 行内边距 `14 横向 / 10 纵向`（[PiSettingsMetrics]），说明**最多一行**（超出省略），
- * 行与行之间的 1px hairline 由页面给。任何行都不出现「查看 / 打开 / 编辑 / 阅读」
- * 这类文字尾巴 —— 有 chevron 的那一行本来就是可点的。
- *
- * 「设备能力」页此前自己画了一套 `Card` 与 `CapabilityRow`（标题 `titleSmall`、说明
- * 不截断、M3 `Switch`），与设置行两套取值；现在两边都只走这里。
- *
- * 这里不复用 `ui/components/PiCommon.kt` 的 `PiSwitchRow` / `PiValueRow`：
- * 那两个还服务对话页的 sheet 与会话列表（本批范围外），且它们的取值来自旧 spec
- * 的 16dp/12dp 节奏；改它们会牵动别的屏。设置页的行因此自成一套，取值只来自
- * [PiSettingsMetrics]。
+ * Unified settings rows:
+ *  1. Switch row: whole-row toggleable + `PiSettingsSwitch`;
+ *  2. Value row: title + description + right-aligned mono value + chevron;
+ *  3. Action / Entry row: optional leading icon tile + title + description + trailing badge + chevron.
  */
-
-/** The six kinds of `02-real-content.md` §4.3, dispatched from the registry metadata. */
 @Composable
 fun PiSettingRow(
     setting: PiSetting,
@@ -68,27 +54,37 @@ fun PiSettingRow(
     onExplainEffect: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    /**
-     * 这一行是命中跳转的目标（1px accent 左线 + `selectedBg` 底）。
-     *
-     * 「当前生效值」的 2px accent 条已删：统一后的设置行只有三种尾巴，行内不再
-     * 挂第二种标记；主题选择列表里的「当前」徽标仍然保留（那是一个选项列表）。
-     */
     highlighted: Boolean = false,
 ) {
     when (setting.kind) {
-        PiRowKind.Switch -> PiSettingsRowShell(highlighted = highlighted, modifier = modifier) {
-            RowBody(
-                title = setting.title,
-                supporting = setting.description,
-                effective = setting.effective,
-                onExplainEffect = onExplainEffect,
-            )
-            PiSettingsSwitch(
-                checked = checked,
-                onCheckedChange = onToggle,
-                enabled = enabled,
-            )
+        PiRowKind.Switch -> {
+            val haptic = LocalHapticFeedback.current
+            PiSettingsRowShell(
+                highlighted = highlighted,
+                modifier = modifier
+                    .alpha(if (enabled) 1f else 0.45f)
+                    .toggleable(
+                        value = checked,
+                        enabled = enabled,
+                        role = Role.Switch,
+                        onValueChange = { next ->
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onToggle(next)
+                        },
+                    ),
+            ) {
+                RowBody(
+                    title = setting.title,
+                    supporting = setting.description,
+                    effective = setting.effective,
+                    onExplainEffect = onExplainEffect,
+                )
+                PiSettingsSwitch(
+                    checked = checked,
+                    onCheckedChange = null,
+                    enabled = enabled,
+                )
+            }
         }
 
         PiRowKind.Action -> PiSettingsRowShell(
@@ -102,27 +98,19 @@ fun PiSettingRow(
                 supporting = setting.description,
                 effective = setting.effective,
                 onExplainEffect = onExplainEffect,
-                // v2：Action 行的标题本身就是动作，用 accent；危险行动作词用 error。
                 titleColor = if (setting.dangerous) {
                     PiTheme.palette.error
                 } else {
                     MaterialTheme.colorScheme.primary
                 },
             )
-            // 动作行的尾巴就是 chevron（原来的「! 执行」文字尾巴已按统一口径删掉）：
-            // 危险由 error 色的标题承担，不再往行尾再挂一个动词。
             PiSettingsChevron()
         }
 
-        // Value / Number / Text / List 都是「尾部值 + chevron」，只有编辑器不同
-        // （06 §2：尾部值 13 等宽 + tabular）。
         PiRowKind.Value, PiRowKind.Number, PiRowKind.Text, PiRowKind.List ->
             PiSettingsRowShell(
                 highlighted = highlighted,
                 modifier = modifier,
-                // 只读行（运行时事实）没有可打开的东西，所以**点击与 chevron 用同一个条件**：
-                // 以前只藏了 chevron，行却还能点开一个空的、禁用的编辑器 —— 行上写着当时的
-                // 引擎版本（`0.85.1`），sheet 里是空白（`docs/settings-audit-impl.md` §B4）。
                 onClick = if (setting.readOnly) null else onOpen,
                 enabled = enabled,
             ) {
@@ -132,9 +120,6 @@ fun PiSettingRow(
                     effective = setting.effective,
                     onExplainEffect = onExplainEffect,
                 )
-                // 值的**槽**占最多 40%（长值挤不垮标题），但槽本身填满并用 `CenterEnd`
-                // 把文字顶到右缘：`fill = false` 时槽宽=文字宽，短值会停在槽的起点
-                // ——那正是用户报的「值在屏幕中间、没有右对齐」。
                 Box(
                     modifier = Modifier.weight(0.4f),
                     contentAlignment = Alignment.CenterEnd,
@@ -148,7 +133,6 @@ fun PiSettingRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                // 只读行（运行时事实）没有可打开的东西，v2 也不给它 chevron。
                 if (!setting.readOnly) {
                     PiSettingsChevron()
                 }
@@ -156,12 +140,7 @@ fun PiSettingRow(
     }
 }
 
-/**
- * 布尔行：`标题 15/500 + 一行说明 12 灰 + Switch`（开关贴右）。
- *
- * 「设备能力」页的三行能力开关走这一条；`description` 与「未开启」这类提示合成
- * **一行**（[supportingTone] 非空时整句换警示色），不再有第二行与行内按钮。
- */
+/** Whole-row tappable boolean toggle row. */
 @Composable
 internal fun PiSettingsToggleRow(
     title: String,
@@ -172,7 +151,21 @@ internal fun PiSettingsToggleRow(
     enabled: Boolean = true,
     supportingTone: Color? = null,
 ) {
-    PiSettingsRowShell(highlighted = false, modifier = modifier) {
+    val haptic = LocalHapticFeedback.current
+    PiSettingsRowShell(
+        highlighted = false,
+        modifier = modifier
+            .alpha(if (enabled) 1f else 0.45f)
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Switch,
+                onValueChange = { next ->
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onCheckedChange(next)
+                },
+            ),
+    ) {
         RowBody(
             title = title,
             supporting = supporting,
@@ -180,63 +173,13 @@ internal fun PiSettingsToggleRow(
         )
         PiSettingsSwitch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = null,
             enabled = enabled,
         )
     }
 }
 
-/**
- * 值行：`标题 + 一行说明（这里放值）+ chevron`。
- *
- * 值放在**第二行**（整行宽、13 等宽、一行省略）而不是贴右：模型 id 与 pattern 列表可以很长，
- * 贴右会把最要紧的那几个字截掉。原来这条尾巴是一个「修改」词（模型与供应商那三行），
- * 已按统一口径换成 chevron。
- */
-@Composable
-internal fun PiSettingsValueRow(
-    title: String,
-    value: String,
-    onClick: (() -> Unit)? = null,
-    modifier: Modifier = Modifier,
-    leadingIcon: ImageVector? = null,
-) {
-    PiSettingsRowShell(highlighted = false, modifier = modifier, onClick = onClick) {
-        if (leadingIcon != null) {
-            Icon(
-                leadingIcon,
-                contentDescription = null,
-                tint = PiTheme.palette.muted,
-                modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-            )
-        }
-        // 这一行的值**留在标题下面那一行**（等宽 13、左对齐）。用户裁定：这种行读起来
-        // 没问题，不要为了和分组页的值行统一而挪到行尾 —— 长值（循环模型是一串 pattern）
-        // 在行尾只能分到 40% 宽，会比这里更早被省略号截断。
-        RowBody(
-            title = title,
-            supporting = value,
-            supportingMono = true,
-        )
-        if (onClick != null) PiSettingsChevron()
-    }
-}
-
-/**
- * 入口 / 动作行：`标题 + 一行说明 + chevron`。
- *
- * 设置首页的入口行（模型与供应商、设备能力、扩展包、Pi 文件、许可、诊断）、
- * 许可页的每一条通告、以及文末的分组入口都走这一条 —— 以前它们各自抄了一遍
- * `Row(padding = 10/12) + Icon + Column(title, supporting) + Text(查看/打开) + chevron`，
- * 于是同一个形状在四个文件里有四种字号与三种文字尾巴。
- *
- * 动作行的标题色（accent / 危险 error）由 `PiSettingRow` 自己按注册表的 `dangerous`
- * 决定，所以这里**不留一个 `tone` 形参**：它没有任何调用方会传。
- *
- * @param leadingIcon 前置图标（16 灰）；分组入口行没有图标，传 null。
- * @param monoTitle 标题用等宽（许可通告的组件名，要与 `dpkg -l` 对得上）。
- * @param expanded 只有折叠行传值：chevron 展开时转 90°。
- */
+/** Navigation / entry row with optional leading tinted icon box and trailing badge. */
 @Composable
 internal fun PiSettingsEntryRow(
     title: String,
@@ -277,20 +220,6 @@ internal fun PiSettingsEntryRow(
     }
 }
 
-/**
- * 行骨架：底色（命中/普通）+ 左缘竖线 + `14px / 10px` 的行内边距。
- *
- * 命中高亮（`highlighted`）是唯一还留在行上的标记：1px accent + `selectedBg` 填充。
- * 它是**搜索跳转**的落点，不是「当前值」—— 后者那种 2px accent 条已经删掉
- * （统一后的行只有三种尾巴，行内不再挂第二种标记）。
- *
- * 命中填充为什么是 `selectedBg`：它就是 pi 的「选中」令牌（也就是 v2 的
- * `--selected-bg: #3A3A4A`），`colorScheme()` 里另映射到 `primaryContainer`。
- * 设置行躺在同为 `surfaceContainerLow` 的卡片里，填 `surfaceContainerLow` 等于没填，
- * 只剩那 1px 竖线。改成 `selectedBg` 后命中行既有可见填充、又不引入任何新颜色。
- *
- * `onClick` 为 null 时整行不可点（Switch 行由控件自己吃点击）。
- */
 @Composable
 private fun PiSettingsRowShell(
     highlighted: Boolean,
@@ -302,11 +231,7 @@ private fun PiSettingsRowShell(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(
-                // 命中填充 = pi 的 selectedBg（v2 的 --selected-bg）；见上方 KDoc
-                // 里「为什么不填 surfaceContainerLow」。
-                if (highlighted) PiTheme.palette.selectedBg else Color.Transparent,
-            )
+            .background(if (highlighted) PiTheme.palette.selectedBg else Color.Transparent)
             .then(
                 if (onClick != null) {
                     Modifier.clickable(enabled = enabled, onClick = onClick)
@@ -341,13 +266,6 @@ private fun PiSettingsRowShell(
     }
 }
 
-/**
- * 标题 + 生效徽标 + 副行。徽标紧跟标题（v2 的 Row 把 `badge` 放在标题行里，
- * 不是钉在最右侧），点它弹生效说明。
- *
- * 副行只有**一行**：说明文案本来就有几百条，行高不能被其中几条长的撑开
- * （超出省略）。
- */
 @Composable
 private fun RowScope.RowBody(
     title: String,
@@ -357,7 +275,6 @@ private fun RowScope.RowBody(
     titleColor: Color = MaterialTheme.colorScheme.onSurface,
     supportingTone: Color? = null,
     mono: Boolean = false,
-    /** 副行是**机器值**（模型 id、pattern 列表）：等宽脸。 */
     supportingMono: Boolean = false,
 ) {
     Column(Modifier.weight(1f)) {
@@ -367,20 +284,12 @@ private fun RowScope.RowBody(
         ) {
             Text(
                 title,
-                style = if (mono) {
-                    PiTheme.text.mono
-                } else {
-                    // 行标题就是 `PiType.rowTitle`（15/23 Medium）：设置面、工作区、文件列表
-                    // 与菜单动作共用这一个角色，不再借 M3 的 `bodyLarge`，也不再退回 `prose`
-                    // （14/23 Regular）—— 那会让同一个 App 的行标题差一档。
-                    PiType.rowTitle
-                },
+                modifier = Modifier.weight(1f, fill = false),
+                style = if (mono) PiTheme.text.mono else PiType.rowTitle,
                 color = titleColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            // 生效徽标（需重载 / 新会话 / 需重启…）保留：它说的是「这一行什么时候生效」，
-            // 是设置面唯一必须留的徽标。Immediate 不出徽标。
             if (effective != null && effective != EffectiveKind.Immediate && onExplainEffect != null) {
                 PiSettingsEffectiveBadge(
                     kind = effective,
@@ -401,7 +310,6 @@ private fun RowScope.RowBody(
     }
 }
 
-/** 行尾的 chevron（14，muted）。折叠行展开时转 90°。 */
 @Composable
 private fun PiSettingsChevron(expanded: Boolean? = null) {
     Icon(
@@ -414,21 +322,18 @@ private fun PiSettingsChevron(expanded: Boolean? = null) {
     )
 }
 
-/** 灰底说明卡：glob 语法、主题告警与只读提示共用（`06 §2` 卡片：圆角 10、内 12/14）。 */
+/** Tonal info note card. Pass `horizontalInset = 0.dp` when placed inside an already padded sheet. */
 @Composable
 fun PiInfoNote(
     text: String,
     modifier: Modifier = Modifier,
-    /**
-     * 需要时只换字色（pi 的 `warning` / `error` 令牌），底色不动 ——
-     * `06 §3`「提示条 Notice」的三档 tone 就是「同一张底 + 不同字色」。
-     */
     tone: Color? = null,
+    horizontalInset: Dp = PiSettingsMetrics.pageHorizontal,
 ) {
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSettingsMetrics.notePaddingVertical),
+            .padding(horizontal = horizontalInset, vertical = PiSettingsMetrics.notePaddingVertical),
         shape = PiSettingsCardShape,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
@@ -440,7 +345,7 @@ fun PiInfoNote(
                 top = PiSettingsMetrics.rowPaddingVertical,
                 bottom = PiSettingsMetrics.rowPaddingVertical,
             ),
-            style = PiTheme.text.prose,
+            style = PiTheme.text.meta,
             color = tone ?: MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

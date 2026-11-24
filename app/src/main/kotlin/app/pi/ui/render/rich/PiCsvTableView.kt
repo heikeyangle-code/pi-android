@@ -268,7 +268,7 @@ private fun CsvDivider() {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(1.dp)
+            .height(0.5.dp)
             .background(PiTheme.palette.borderMuted.copy(alpha = 0.35f)),
     )
 }

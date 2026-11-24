@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -165,13 +163,13 @@ private fun PiAudioBody(url: String) {
                     color = palette.dim,
                 )
             } else {
-                Slider(
+                app.pi.ui.components.PiSlider(
                     value = if (dur > 0) pos.toFloat() / dur else 0f,
                     onValueChange = { f ->
                         if (dur > 0) { pos = (f * dur).toInt(); runCatching { holder[0]?.seekTo(pos) } }
                     },
                     enabled = dur > 0,
-                    colors = SliderDefaults.colors(thumbColor = palette.accent, activeTrackColor = palette.accent),
+                    activeColor = palette.accent,
                 )
             }
         }

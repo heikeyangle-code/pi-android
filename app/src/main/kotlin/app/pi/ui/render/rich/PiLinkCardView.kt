@@ -177,7 +177,6 @@ fun PiLinkCardView(
                     Text(
                         text = extTag,
                         style = PiTheme.text.monoSmall.copy(
-                            fontSize = 10.sp,
                             fontWeight = FontWeight.Medium,
                         ),
                         color = palette.muted,
@@ -191,7 +190,7 @@ fun PiLinkCardView(
             }
             Text(
                 text = if (copied) tr("已复制链接", "Link copied") else subtitle,
-                style = PiTheme.text.monoSmall.copy(fontSize = 11.5.sp, lineHeight = 15.sp),
+                style = PiTheme.text.monoSmall,
                 color = if (copied) palette.accent else palette.muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

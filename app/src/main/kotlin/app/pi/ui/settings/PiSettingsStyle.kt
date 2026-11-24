@@ -355,6 +355,8 @@ internal fun PiSettingsChip(
             text,
             style = PiTheme.text.meta.copy(fontWeight = if (active) androidx.compose.ui.text.font.FontWeight.SemiBold else androidx.compose.ui.text.font.FontWeight.Normal),
             color = fg,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
     }
 }
@@ -391,6 +393,8 @@ internal fun PiSettingsBadge(
             label,
             style = PiTheme.text.meta,
             color = tone,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
     }
 }
@@ -400,13 +404,14 @@ internal fun PiSettingsEffectiveBadge(
     kind: EffectiveKind,
     modifier: Modifier = Modifier,
 ) {
+    val palette = PiTheme.palette
     val (label, tone) = when (kind) {
         EffectiveKind.Immediate -> return
-        EffectiveKind.Reload -> tr("需重载", "Reload") to MaterialTheme.colorScheme.tertiary
-        EffectiveKind.NewSession -> tr("新会话", "New session") to MaterialTheme.colorScheme.onSurfaceVariant
-        EffectiveKind.RestartEngine -> tr("需重启引擎", "Restart engine") to MaterialTheme.colorScheme.error
-        EffectiveKind.AutoRestartEngine -> tr("自动重启引擎", "Auto-restarts engine") to MaterialTheme.colorScheme.tertiary
-        EffectiveKind.RestartApp -> tr("需重启", "Restart app") to MaterialTheme.colorScheme.error
+        EffectiveKind.Reload -> tr("需重载", "Reload") to palette.accent
+        EffectiveKind.NewSession -> tr("新会话", "New session") to palette.muted
+        EffectiveKind.RestartEngine -> tr("需重启引擎", "Restart engine") to palette.warning
+        EffectiveKind.AutoRestartEngine -> tr("自动重启引擎", "Auto-restarts engine") to palette.accent
+        EffectiveKind.RestartApp -> tr("需重启", "Restart app") to palette.warning
     }
     PiSettingsBadge(label = label, tone = tone, modifier = modifier)
 }
@@ -414,63 +419,16 @@ internal fun PiSettingsEffectiveBadge(
 @Composable
 internal fun PiSettingsSwitch(
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    onCheckedChange: ((Boolean) -> Unit)?,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
-    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    val accent = PiTheme.palette.accent
-    val track by animateColorAsState(
-        targetValue = if (checked) accent else MaterialTheme.colorScheme.surfaceContainerHighest,
-        animationSpec = tween(160),
-        label = "switchTrack",
+    app.pi.ui.components.PiSwitch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = modifier,
+        enabled = enabled,
     )
-    val border by animateColorAsState(
-        targetValue = if (checked) accent else PiTheme.palette.borderMuted.copy(alpha = 0.7f),
-        animationSpec = tween(160),
-        label = "switchBorder",
-    )
-    val travel = PiSettingsMetrics.switchWidth - PiSettingsMetrics.switchPadding * 2 - PiSettingsMetrics.switchKnob
-    val knobOffset by animateDpAsState(
-        targetValue = if (checked) travel else 0.dp,
-        animationSpec = androidx.compose.animation.core.spring(
-            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
-            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
-        ),
-        label = "switchKnob",
-    )
-    Box(
-        modifier = modifier
-            .alpha(if (enabled) 1f else 0.45f)
-            .size(
-                width = PiSettingsMetrics.switchWidth,
-                height = PiSettingsMetrics.switchHeight,
-            )
-            .clip(PiShapes.badge)
-            .background(track)
-            .border(PiSpacing.hairlineThin, border, PiShapes.badge)
-            .toggleable(
-                value = checked,
-                enabled = enabled,
-                role = Role.Switch,
-                onValueChange = { next ->
-                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                    onCheckedChange(next)
-                },
-            )
-            .padding(PiSettingsMetrics.switchPadding),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        Box(
-            Modifier
-                .offset(x = knobOffset)
-                .size(PiSettingsMetrics.switchKnob)
-                .clip(CircleShape)
-                .background(
-                    if (checked) MaterialTheme.colorScheme.onPrimary else PiTheme.palette.muted,
-                ),
-        )
-    }
 }
 
 /**

@@ -455,87 +455,7 @@ fun PiBilledCostLine(
     )
 }
 
-/**
- * One line, **two voices**: the app's own wording in the UI face and the machine value it
- * carries in the machine face.
- *
- * Rule #7 splits text by *who wrote it*, and a line like
- * `审计日志：/data/user/0/app.pi/files/audit.log` has both authors on it: the four Chinese
- * characters are ours and the path is the engine's. One face for the whole line is wrong
- * whichever face is picked — the UI face puts a path in the reading font, the machine face
- * puts a Chinese label in the machine's. The frozen board draws this shape by nesting spans,
- * both with the machine half first and ours after:
- *
- *  - the workspace viewer's meta line is `<span className="mono">{path2}</span><span> · {size}
- *    · {time}</span>` (`design-demos/workspace-final.html:1081-1085`, handed to a `TopBar`
- *    whose meta slot is `t12 c-muted`);
- *  - a session row is `<span className="mono t12 c-muted">{row.time}</span>` beside
- *    `<span className="t12 c-muted">{row.sub}</span>` (`direction-b-v2.html:1817-1824`).
- *
- * [machine] takes the machine face; [prefix] and [suffix] and [style] are ours. There is no
- * "machine == empty" case: a line with nothing machine-produced on it is a plain `Text`, and
- * the callers branch rather than pass `""` (see `PiPackagesScreen.ResourceOriginText`).
- *
- * Every parameter is required rather than defaulted: `PiContextRing`'s `placeholderStyle` set
- * this project's precedent that it does not read `PiTheme.text` inside a default argument — it
- * compiles, but nothing else here does it.
- *
- * @param prefix our wording before the value (`审计日志：`, `保存为 `).
- * @param machine the machine-produced value: a path, an id, a pair of ids.
- * @param suffix our wording after it (`）`), or `""`.
- */
-@Composable
-fun PiMixedLine(
-    prefix: String,
-    machine: String,
-    suffix: String,
-    style: TextStyle,
-    color: Color,
-    modifier: Modifier = Modifier,
-    maxLines: Int = Int.MAX_VALUE,
-) {
-    val machineFamily = PiTheme.text.monoSmall.fontFamily
-    // Built with the stdlib: `AnnotatedString.Builder` implements `Appendable`, so a chained
-    // `append(…).append(…)` on it resolves through `Appendable.append(CharSequence?)` and
-    // stops returning a `Builder` (`WorkspaceViewer.ViewerTopBar` hit the same thing).
-    val value = machine
-    val text = buildAnnotatedString {
-        append(prefix)
-        withStyle(SpanStyle(fontFamily = machineFamily)) { append(value) }
-        append(suffix)
-    }
-    Text(
-        text = text,
-        modifier = modifier,
-        style = style,
-        color = color,
-        maxLines = maxLines,
-        overflow = TextOverflow.Ellipsis,
-    )
-}
-
-/**
- * Empty states never say "no data". They say what the screen is for and offer
- * the one action that fills it.
- *
- * The glyph is **always the screen's own icon** — v2's prototype had a second
- * spelling here (the app's π mark for the chat's two engine states); it went away
- * with that mark, so every empty state now names its own screen.
- *
- * **The glyph is bare.** It is the screen's icon at the board's 30 dp in `muted`,
- * with no disc behind it. The app used to wrap it in a 68 dp `surfaceContainerHigh`
- * disc, which no v2 empty state has (`direction-b-v2.html:821-823`; phone21/22 and
- * phone28 are all a bare glyph over the title), so the container is gone.
- *
- * Geometry follows `06 §2` where the container allows it: the horizontal inset is
- * the board's 34, the title is the 17/600 title role, and the body is 14 with the
- * board's 1.6 leading, left-aligned under the centred title. The board's `86px`
- * *vertical* inset is not repeated: it is how the prototype centres this block in a
- * fixed-height frame, and in the app the host hands the state a `weight(1f)` box
- * that this column already centres in (`Arrangement.Center`).
- *
- * @param icon the screen's own icon.
- */
+/** Standard centered Studio empty state with icon tile, title, copy, and optional action. */
 @Composable
 fun PiEmptyState(
     icon: ImageVector,
@@ -587,56 +507,9 @@ fun PiEmptyState(
     }
 }
 
-/** `06 §2` 空态「padding:86px 34px」: the horizontal half, the only one Compose needs. */
 private val EMPTY_STATE_INSET = 34.dp
-
-/**
- * `06 §2` 空态「padding:86px 34px」的**纵向**那一半：空态块从内容区顶下移 86dp，而不是
- * 在内容区里垂直居中。
- *
- * [PiEmptyState] 自己只做横向的 34，并把纵向这半交给宿主居中——它的 KDoc 认为 86 只是
- * 原型在固定高度画框里居中用的。`shots-v2/phone21`（还没有会话）与 `phone28`（没有条目）
- * 说明不是：两张图里那块空态离筛选行的下沿都是 ~86px，下面留着几百像素的空白，是**顶对齐**
- * 而不是居中。这个包一层 `Box` 的构件把那半个取值还回来，**只给要照稿子的那一屏用**；
- * [PiEmptyState] 本身不动，别的屏的居中原样保留。
- *
- * @param icon the screen's own icon.
- */
-@Composable
-fun PiEmptyStateTopAnchored(
-    icon: ImageVector,
-    title: String,
-    body: String,
-    modifier: Modifier = Modifier,
-) {
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        PiEmptyState(
-            icon = icon,
-            title = title,
-            body = body,
-            modifier = Modifier.padding(top = EMPTY_STATE_TOP_INSET),
-        )
-    }
-}
-
-/** `06 §2` 空态「padding:86px 34px」: the vertical half [PiEmptyStateTopAnchored] restores. */
-private val EMPTY_STATE_TOP_INSET = 86.dp
-
-/** `06 §2` 空态: the mark-to-title gap is v2's `marginTop:12`. */
-private val EMPTY_STATE_TITLE_GAP = 12.dp
-
-/** `06 §2` 空态: the screen's own icon is the board's `s=30`. */
-private val EMPTY_STATE_ICON = 30.dp
-
-/** `06 §2` 空态「正文 14/1.6」: 14 sp × 1.6, stated as leading rather than as a ratio. */
 private val EMPTY_STATE_BODY_LEADING = 22.sp
 
-/**
- * One settings row. pi's semantics are carried by [supporting]; the trailing
- * slot shows the *current value* so a group screen is readable without opening
- * anything (docs/pi-android-ui-spec.md §6.2 — six row types, this is the
- * Switch/Value pair that covers most of them).
- */
 @Composable
 fun PiSwitchRow(
     title: String,
@@ -678,47 +551,7 @@ fun PiSwitchRow(
             }
         }
         Spacer(Modifier.width(12.dp))
-        PiPillSwitch(checked = checked)
-    }
-}
-
-@Composable
-private fun PiPillSwitch(checked: Boolean) {
-    val accent = PiTheme.palette.accent
-    val track by animateColorAsState(
-        targetValue = if (checked) accent else MaterialTheme.colorScheme.surfaceContainerHighest,
-        animationSpec = tween(160),
-        label = "piSwitchTrack",
-    )
-    val border by animateColorAsState(
-        targetValue = if (checked) accent else PiTheme.palette.borderMuted.copy(alpha = 0.7f),
-        animationSpec = tween(160),
-        label = "piSwitchBorder",
-    )
-    val knobOffset by animateDpAsState(
-        targetValue = if (checked) 18.dp else 0.dp,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMediumLow,
-        ),
-        label = "piSwitchKnob",
-    )
-    Box(
-        modifier = Modifier
-            .size(width = 38.dp, height = 22.dp)
-            .clip(CircleShape)
-            .background(track)
-            .border(PiSpacing.hairlineThin, border, CircleShape)
-            .padding(2.dp),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        Box(
-            Modifier
-                .offset(x = knobOffset)
-                .size(16.dp)
-                .clip(CircleShape)
-                .background(if (checked) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant),
-        )
+        PiSwitch(checked = checked, onCheckedChange = null, enabled = enabled)
     }
 }
 

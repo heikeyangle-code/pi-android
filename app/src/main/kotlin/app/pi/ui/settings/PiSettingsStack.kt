@@ -313,7 +313,6 @@ fun PiSettingsStack(
     fun clearRoutes() {
         groupId = null
         highlightKey = null
-        other = false
         deviceCapabilities = false
         resources = false
         resourcesProject = false
@@ -405,8 +404,6 @@ fun PiSettingsStack(
             modelsInitialScoped = false
         } else if (deviceCapabilities) {
             deviceCapabilities = false
-        } else if (other) {
-            other = false
         } else if (groupId != null || highlightKey != null) {
             groupId = null
             highlightKey = null
@@ -420,15 +417,14 @@ fun PiSettingsStack(
     val currentGroup = groupId
     val routeKey: Pair<String, Int> = when {
         mcp -> "mcp" to (if (resources) 2 else 1)
-        licenses -> "licenses" to (if (other) 2 else 1)
+        licenses -> "licenses" to 1
         runtimeScreen -> "runtime" to 1
         modelFlow -> "models" to 1
-        deviceCapabilities -> "device" to (if (other) 2 else 1)
-        other -> "other" to 1
+        deviceCapabilities -> "device" to 1
         currentGroup == "tools" -> "tools" to 1
         currentGroup == "prompts" -> "prompts" to 1
         currentGroup == "appearance" -> "appearance" to 1
-        currentGroup != null -> "group:$currentGroup" to (if (resources || other) 2 else 1)
+        currentGroup != null -> "group:$currentGroup" to (if (resources) 2 else 1)
         resources -> "resources" to 1
         else -> "home" to 0
     }
@@ -515,26 +511,6 @@ fun PiSettingsStack(
                     store = DeviceCapabilityStore.get(LocalContext.current),
                     onBack = { deviceCapabilities = false },
                     contentPadding = contentPadding,
-                )
-
-                route == "other" -> OtherSettingsScreen(
-                    contentPadding = contentPadding,
-                    onBack = { other = false },
-                    onOpenTerminal = onOpenTerminal?.let { open ->
-                        {
-                            other = false
-                            open()
-                        }
-                    },
-                    onOpenDeviceCapabilities = {
-                        deviceCapabilities = true
-                    },
-                    onOpenLicenses = {
-                        licenses = true
-                    },
-                    onOpenUpdate = {
-                        updateSheetOpen = true
-                    },
                 )
 
                 route == "tools" -> ToolsScreen(
@@ -633,10 +609,12 @@ fun PiSettingsStack(
                     onOpenModels = openModelFlow,
                     onOpenRuntime = { runtimeScreen = true },
                     runtimeSummary = runtimeHomeSummary,
-                    onOpenOther = { other = true },
                     onOpenMcp = { mcp = true },
                     onOpenUpdate = { updateSheetOpen = true },
                     updateOutcome = updateOutcome,
+                    onOpenTerminal = onOpenTerminal,
+                    onOpenDeviceCapabilities = { deviceCapabilities = true },
+                    onOpenLicenses = { licenses = true },
                 )
             }
         }

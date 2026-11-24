@@ -61,7 +61,7 @@ import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
 import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiSettingsMetrics
-import app.pi.ui.settings.PiSettingsSheet
+import app.pi.ui.components.PiSheet
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlin.math.roundToInt
@@ -234,7 +234,7 @@ private fun SelectSheetBody(
         if (needle.isEmpty()) dialog.options
         else dialog.options.filter { chromeText(it).lowercase().contains(needle) }
     }
-    PiSettingsSheet(onDismiss = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) }) {
+    PiSheet(onDismiss = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) }) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -305,7 +305,7 @@ private fun EditorSheetBody(
     val lines = remember(draft) { if (draft.isEmpty()) 0 else draft.count { it == '\n' } + 1 }
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
-    PiSettingsSheet(onDismiss = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) }) {
+    PiSheet(onDismiss = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) }) {
         Column(
             Modifier
                 .fillMaxWidth()
