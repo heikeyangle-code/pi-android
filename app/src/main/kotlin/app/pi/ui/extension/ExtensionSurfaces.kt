@@ -117,7 +117,7 @@ private enum class SurfaceControlMode { Gamepad, Keyboard }
 
 /** 沉降式终端画布底色：基于当前主题 bg 与 cardBg 混合，脱离默认 M3 surfaceContainer。 */
 private fun surfaceWellBg(palette: app.pi.ui.theme.PiPalette): Color =
-    lerp(palette.bg, palette.cardBg, 0.32f)
+    lerp(palette.pageBg, palette.cardBg, 0.32f)
 
 /** 控制按钮 / 键帽底色：在卡片底色上轻提 4.5% 前景对比，层次清晰而不刺眼。 */
 private fun surfaceKeyBg(palette: app.pi.ui.theme.PiPalette): Color =
@@ -125,7 +125,7 @@ private fun surfaceKeyBg(palette: app.pi.ui.theme.PiPalette): Color =
 
 /** 悬浮卡片 / 最小化收起条底色。 */
 private fun surfaceFloatBg(palette: app.pi.ui.theme.PiPalette): Color =
-    lerp(palette.cardBg, palette.bg, 0.14f)
+    lerp(palette.cardBg, palette.pageBg, 0.14f)
 
 /**
  * 终端视口嵌套滚动护栏：

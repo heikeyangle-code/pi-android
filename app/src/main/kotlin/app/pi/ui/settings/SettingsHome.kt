@@ -228,7 +228,7 @@ fun SettingsHome(
                         PiSettingsEntryRow(
                             title = tr("应用更新", "App Update"),
                             supporting = if (hasNew && !newVer.isNullOrBlank()) {
-                                if (updateOutcome?.asset != null) {
+                                if (updateOutcome?.matchedAsset != null) {
                                     tr("发现新版本 v$newVer（当前 v$currentVer）· 点击下载安装", "New version v$newVer available (current v$currentVer) · Tap to update")
                                 } else {
                                     tr("发现新版本 v$newVer（当前 v$currentVer）· 点击查看发布说明", "New version v$newVer available (current v$currentVer) · Tap to view release")
