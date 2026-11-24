@@ -9,6 +9,7 @@ import android.view.WindowManager
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
@@ -60,6 +61,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -333,10 +335,17 @@ internal fun WorkspaceViewer(
             decorFitsSystemWindows = false,
         ),
     ) {
-        // 首帧绘制前同步清除 Dialog 默认暗幕，避免全屏查看器弹出瞬间黑闪。
+        // 首帧绘制前同步清除 Dialog 默认暗幕，并强制 Window 为 MATCH_PARENT + Gravity.FILL：
+        // Android Dialog 默认高宽是 WRAP_CONTENT + Gravity.CENTER，内嵌 WebView 渲染高页或
+        // 100vh/flex HTML 时会把整张 Dialog 居中撑爆，导致顶栏和上半屏被顶出屏幕上方。
         val dialogView = androidx.compose.ui.platform.LocalView.current
         remember(dialogView) {
             (dialogView.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window?.let { w ->
+                w.setLayout(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                )
+                w.setGravity(android.view.Gravity.FILL)
                 w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
                 w.setDimAmount(0f)
             }
@@ -344,6 +353,15 @@ internal fun WorkspaceViewer(
         }
         androidx.compose.runtime.SideEffect {
             (dialogView.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window?.let { w ->
+                if (w.attributes.width != WindowManager.LayoutParams.MATCH_PARENT ||
+                    w.attributes.height != WindowManager.LayoutParams.MATCH_PARENT
+                ) {
+                    w.setLayout(
+                        WindowManager.LayoutParams.MATCH_PARENT,
+                        WindowManager.LayoutParams.MATCH_PARENT,
+                    )
+                    w.setGravity(android.view.Gravity.FILL)
+                }
                 if ((w.attributes.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0 || w.attributes.dimAmount != 0f) {
                     w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
                     w.setDimAmount(0f)
@@ -374,7 +392,7 @@ internal fun WorkspaceViewer(
                     thickness = 0.5.dp,
                     color = PiTheme.palette.borderMuted.copy(alpha = 0.55f),
                 )
-                Box(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxWidth().weight(1f)) {
                     // 空 .html 渲染出来是一整屏白，看不出是「空」还是「坏了」。
                     val fileEmpty = remember(htmlReload, mode) { isHtml && target.file.length() == 0L }
                     val htmlEmpty = fileEmpty && mode != ViewerMode.Edit
@@ -1463,12 +1481,18 @@ private fun HtmlPreview(
             )
         }
         if (!renderProcessGone) {
+            val surfaceArgb = MaterialTheme.colorScheme.surface.toArgb()
             key(file.absolutePath, webViewGeneration) {
                 val destroyed = remember { booleanArrayOf(false) }
                 AndroidView(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxWidth().weight(1f),
                     factory = { context ->
                         WebView(context).apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
+                            setBackgroundColor(surfaceArgb)
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             settings.allowFileAccess = true
@@ -1479,7 +1503,10 @@ private fun HtmlPreview(
                             settings.allowFileAccessFromFileURLs = false
                             @Suppress("DEPRECATION")
                             settings.allowUniversalAccessFromFileURLs = false
-                            settings.builtInZoomControls = false
+                            settings.useWideViewPort = true
+                            settings.loadWithOverviewMode = true
+                            settings.layoutAlgorithm = WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING
+                            settings.builtInZoomControls = true
                             settings.displayZoomControls = false
                             webViewClient = object : WebViewClient() {
                                 // 主框架导航的去向：仅允许落在当前工作区根目录内的本地 file:// 页面；
@@ -1504,6 +1531,7 @@ private fun HtmlPreview(
                                 }
 
                                 override fun onPageFinished(view: WebView, url: String) {
+                                    view.scrollTo(0, 0)
                                     state = HtmlState.Done
                                 }
 

@@ -368,7 +368,7 @@ internal fun ProviderFormSheet(
         // ---- 吸底操作栏 ----
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            color = palette.cardBg,
             border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.45f)),
         ) {
             Row(

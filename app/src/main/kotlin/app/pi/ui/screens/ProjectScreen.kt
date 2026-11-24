@@ -1,5 +1,6 @@
 package app.pi.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -232,6 +233,21 @@ fun ProjectScreen(
     var filterText by remember(currentDir.absolutePath) { mutableStateOf("") }
     // 排序：默认最近修改在最上面；其余三种目录在文件前面。记在 rememberSaveable 里（只存序号）。
     var filterOpen by remember(currentDir.absolutePath) { mutableStateOf(false) }
+
+    // 手势/物理返回键与面包屑零冲突分工：
+    // - 侧滑返回按层级退回（收起筛选 → 回到上一级目录 → 回到项目根后再退回对话）；
+    // - 面包屑负责跨多级一键直达任意祖先目录。
+    val canStepUp = (insideWorkspace && crumbs.size > homeCrumbs.size) || (!insideWorkspace && crumbs.isNotEmpty())
+    BackHandler(enabled = true) {
+        when {
+            filterOpen -> {
+                filterOpen = false
+                filterText = ""
+            }
+            canStepUp -> crumbs = crumbs.dropLast(1)
+            else -> onBack()
+        }
+    }
     var searchWholeProject by rememberSaveable { mutableStateOf(false) }
     var recursiveHits by remember { mutableStateOf<List<WorkspaceEntry>>(emptyList()) }
     var recursiveSearching by remember { mutableStateOf(false) }
@@ -702,6 +718,14 @@ fun ProjectScreen(
                                         PiMenuItem(tr("回到项目根目录", "Go to project root")) {
                                             overflow = false
                                             crumbs = homeCrumbs
+                                        },
+                                    )
+                                }
+                                if (crumbs.isNotEmpty()) {
+                                    add(
+                                        PiMenuItem(tr("浏览容器根目录 (/)", "Browse Container Root (/)")) {
+                                            overflow = false
+                                            crumbs = emptyList()
                                         },
                                     )
                                 }

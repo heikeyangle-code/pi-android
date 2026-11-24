@@ -1433,19 +1433,29 @@ private fun ThemeImportSheet(
             }
 
             // Quick actions: Pick file / Paste clipboard
+            val actionShape = RoundedCornerShape(9.dp)
+            val sheetPalette = PiTheme.palette
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedButton(
+                Surface(
                     onClick = { openDoc.launch(arrayOf("application/json", "text/plain", "*/*")) },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    shape = actionShape,
+                    color = sheetPalette.cardBg,
+                    border = BorderStroke(PiSpacing.hairlineThin, sheetPalette.borderMuted),
                 ) {
-                    Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(tr("选择 .json 文件", "Pick .json"))
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                    ) {
+                        Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = sheetPalette.accent, modifier = Modifier.size(16.dp))
+                        Text(tr("选择 .json 文件", "Pick .json"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = sheetPalette.text)
+                    }
                 }
-                OutlinedButton(
+                Surface(
                     onClick = {
                         val cm = context.getSystemService(ClipboardManager::class.java)
                         val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
@@ -1456,11 +1466,19 @@ private fun ThemeImportSheet(
                             importError = tr("剪贴板为空", "Clipboard is empty")
                         }
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    shape = actionShape,
+                    color = sheetPalette.cardBg,
+                    border = BorderStroke(PiSpacing.hairlineThin, sheetPalette.borderMuted),
                 ) {
-                    Icon(Icons.Outlined.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(tr("粘贴剪贴板", "Paste"))
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                    ) {
+                        Icon(Icons.Outlined.ContentPaste, contentDescription = null, tint = sheetPalette.accent, modifier = Modifier.size(16.dp))
+                        Text(tr("粘贴剪贴板", "Paste"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = sheetPalette.text)
+                    }
                 }
             }
 
@@ -1515,17 +1533,23 @@ private fun ThemeImportSheet(
                 modifier = Modifier.fillMaxWidth(),
                 label = tr("主题名称（可选，默认读取 JSON 中的 name）", "Theme name (optional; defaults to JSON name)"),
                 placeholder = preview?.name ?: "my-theme",
+                height = PiNumberFieldHeight,
+                container = sheetPalette.cardBg,
+                idleBorder = sheetPalette.borderMuted,
             )
 
             PiEditorField(
                 value = rawJson,
                 onValueChange = { rawJson = it; importError = null },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 120.dp, max = 210.dp),
+                modifier = Modifier.fillMaxWidth(),
                 label = tr("主题 JSON 内容", "Theme JSON"),
                 placeholder = "{ \"name\": \"catppuccin\", \"colors\": { ... } }",
                 singleLine = false,
+                minHeight = 148.dp,
+                maxLines = 10,
+                contentPadding = PiFieldPaddingBlock,
+                container = sheetPalette.cardBg,
+                idleBorder = sheetPalette.borderMuted,
             )
 
             val shownError = importError ?: previewResult?.exceptionOrNull()?.message
@@ -1539,11 +1563,24 @@ private fun ThemeImportSheet(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline, Alignment.End),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                TextButton(onClick = onDismiss) { Text(tr("取消", "Cancel")) }
-                Button(
-                    enabled = preview != null && !importing,
+                Surface(
+                    onClick = onDismiss,
+                    modifier = Modifier.height(42.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    color = sheetPalette.cardBg,
+                    border = BorderStroke(PiSpacing.hairlineThin, sheetPalette.borderMuted),
+                ) {
+                    Box(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(tr("取消", "Cancel"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = sheetPalette.text)
+                    }
+                }
+                val canImport = preview != null && !importing
+                Surface(
                     onClick = {
                         importing = true
                         importError = null
@@ -1565,8 +1602,19 @@ private fun ThemeImportSheet(
                             }
                         }
                     },
+                    enabled = canImport,
+                    modifier = Modifier.weight(1f).height(42.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (canImport) sheetPalette.accent else sheetPalette.cardBg,
+                    border = if (canImport) null else BorderStroke(PiSpacing.hairlineThin, sheetPalette.borderMuted),
                 ) {
-                    Text(tr("导入并应用", "Import & Apply"))
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            tr("导入并应用", "Import & Apply"),
+                            style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
+                            color = if (canImport) sheetPalette.contrastOn(sheetPalette.accent) else sheetPalette.muted,
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))

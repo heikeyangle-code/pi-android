@@ -308,29 +308,41 @@ internal fun PiSettingsChip(
     enabled: Boolean = true,
 ) {
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val palette = PiTheme.palette
+    val chipShape = RoundedCornerShape(8.dp)
     val bg by animateColorAsState(
         targetValue = if (active) {
-            MaterialTheme.colorScheme.onSurface
+            palette.accent.copy(alpha = 0.14f)
         } else {
-            MaterialTheme.colorScheme.surfaceContainerHigh
+            palette.cardBg
         },
         animationSpec = tween(140),
         label = "chipBg",
     )
-    val fg = if (active) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant
+    val borderColor by animateColorAsState(
+        targetValue = if (active) {
+            palette.accent.copy(alpha = 0.48f)
+        } else {
+            palette.borderMuted.copy(alpha = 0.70f)
+        },
+        animationSpec = tween(140),
+        label = "chipBorder",
+    )
+    val fg = if (active) palette.accent else palette.text.copy(alpha = 0.82f)
     Row(
         modifier = modifier
             .alpha(if (enabled) 1f else 0.45f)
-            .height(30.dp)
-            .clip(PiShapes.badge)
+            .height(32.dp)
+            .clip(chipShape)
             .background(bg)
+            .border(if (active) 1.dp else PiSpacing.hairlineThin, borderColor, chipShape)
             .clickable(enabled = enabled) {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                 onClick()
             }
             .padding(horizontal = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap, Alignment.CenterHorizontally),
     ) {
         if (glyph != null) {
             Text(

@@ -208,11 +208,13 @@ internal fun WsBadge(
 ) {
     val palette = PiTheme.palette
     val color = stateToneColor(tone, palette)
+    val badgeShape = RoundedCornerShape(6.dp)
     Row(
         modifier = modifier
-            .clip(CircleShape)
-            .background(color.copy(alpha = 0.13f))
-            .padding(start = 7.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
+            .clip(badgeShape)
+            .background(color.copy(alpha = 0.12f))
+            .border(PiSpacing.hairlineThin, color.copy(alpha = 0.24f), badgeShape)
+            .padding(start = 6.dp, end = 7.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
     ) {
@@ -220,7 +222,7 @@ internal fun WsBadge(
             Box(
                 Modifier
                     .size(5.dp)
-                    .clip(CircleShape)
+                    .clip(RoundedCornerShape(2.dp))
                     .background(color),
             )
         }
@@ -244,25 +246,7 @@ internal fun WsBadge(
 // ------------------------------------------------------------------ 胶囊 ----
 
 /**
- * 一颗可点的小胶囊（稿子的 `Chip`）：表头动作、空态的「新建文件」用它。
- *
- * ## 两档形态，都是稿子画过的
- *
- * - **默认** —— 稿子的 `function Chip`（`workspace-final.html:485-497`）：高 26、
- *   圆角 999、`padding:0 9px`、1px `borderMuted`。
- * - **[solid]** —— 稿子空目录里那颗「+ 新建文件」（`:1531-1537`）：高 32、`padding:0 14px`、
- *   **accent 实底、无描边、字色 `var(--page)`**、图标 15、`gap:6`。它不是 chip 的选中态，
- *   是这一屏**唯一**的主按钮，所以单独一档。
- *
- * 稿子的 `Chip` 还有一个 `on` 选中态（`borderAccent` + `surf-high`）——本批之后**没有调用方**了
- * （段头那颗改走 `WsSectionAction`、空目录那颗改走 [solid]），所以连同它的两个分支一并删掉，
- * 不留没有调用方的形态（`07` D38.2 如无必要勿增实体）；将来真要"选中的胶囊"，照
- * `06 §2` 补回来即可，几何数值仍在上面这份 KDoc 里。
- *
- * 字号取 14 + SemiBold（`PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold)`）而不是
- * 稿子的 `t13 w6`：本 App 的系统字角色里没有 13sp 这一档（`PiTextStyles` 是 12/14，5 档是
- * 12/13/14/15/17 但 13 只给了等宽），而**按钮标签**在本项目里的既有角色就是 14 + 字重
- * （`ui/components/PiDialog.PiDialogAction`）。
+ * 紧凑动作按钮：统一圆角 8dp 轻盈层次，告别高饱和大药丸。
  */
 @Composable
 internal fun WsChip(
@@ -274,61 +258,42 @@ internal fun WsChip(
     glyphIcon: ImageVector? = null,
 ) {
     val palette = PiTheme.palette
-    val contentColor = if (solid) palette.pageBg else palette.text
+    val chipShape = RoundedCornerShape(8.dp)
+    val contentColor = if (solid) palette.accent else palette.text.copy(alpha = 0.88f)
+    val bgColor = if (solid) palette.accent.copy(alpha = 0.15f) else palette.cardBg
+    val borderColor = if (solid) palette.accent.copy(alpha = 0.42f) else palette.borderMuted.copy(alpha = 0.65f)
     Row(
         modifier = modifier
-            .height(if (solid) WS_SOLID_BUTTON_HEIGHT else PiSettingsMetrics.chipHeight)
-            .clip(CircleShape)
-            .then(
-                if (solid) {
-                    Modifier
-                } else {
-                    Modifier.border(
-                        PiSettingsMetrics.hairline,
-                        palette.borderMuted,
-                        CircleShape,
-                    )
-                },
-            )
-            .background(if (solid) palette.accent else Color.Transparent)
+            .height(if (solid) 30.dp else 28.dp)
+            .clip(chipShape)
+            .background(bgColor)
+            .border(if (solid) 1.dp else PiSpacing.hairlineThin, borderColor, chipShape)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(
-                horizontal = if (solid) {
-                    WS_SOLID_BUTTON_PADDING
-                } else {
-                    PiSettingsMetrics.chipPaddingHorizontal
-                },
-            ),
+            .padding(horizontal = if (solid) 11.dp else 9.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(
-            if (solid) WS_SOLID_BUTTON_GAP else PiSettingsMetrics.badgeGap,
-        ),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         if (glyphIcon != null) {
             Icon(
                 glyphIcon,
                 contentDescription = null,
-                modifier = Modifier.size(
-                    if (solid) WS_SOLID_BUTTON_ICON else PiSettingsMetrics.searchIconSize,
-                ),
-                tint = if (solid) contentColor else palette.muted,
+                modifier = Modifier.size(15.dp),
+                tint = if (solid) palette.accent else palette.muted,
             )
         }
         if (glyph != null) {
             Text(
                 glyph,
                 style = PiTheme.text.monoSmall,
-                color = if (solid) contentColor else palette.muted,
+                color = if (solid) palette.accent else palette.muted,
                 maxLines = 1,
             )
         }
         Text(
             text,
-            style = if (solid) {
-                PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold)
-            } else {
-                PiTheme.text.meta
-            },
+            style = PiTheme.text.meta.copy(
+                fontWeight = if (solid) FontWeight.SemiBold else FontWeight.Medium,
+            ),
             color = contentColor,
             maxLines = 1,
         )

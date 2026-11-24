@@ -57,7 +57,7 @@ import app.pi.ui.theme.contrastOn
 
 internal val ModelsCardPadding: Dp = 14.dp
 internal val ModelsCardShape = RoundedCornerShape(16.dp)
-private val ModelsButtonShape = RoundedCornerShape(12.dp)
+private val ModelsButtonShape = RoundedCornerShape(10.dp)
 
 @Composable
 internal fun ModelsCard(
@@ -80,14 +80,14 @@ internal fun ModelsCard(
             modifier = base,
             shape = ModelsCardShape,
             border = BorderStroke(0.5.dp, border),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            color = PiTheme.palette.cardBg,
         ) { content() }
     } else {
         Surface(
             modifier = base,
             shape = ModelsCardShape,
             border = BorderStroke(0.5.dp, border),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            color = PiTheme.palette.cardBg,
         ) { content() }
     }
 }
@@ -426,7 +426,7 @@ internal fun LabeledField(
             singleLine = singleLine,
             height = if (singleLine) PiNumberFieldHeight else null,
             minHeight = if (singleLine) null else 80.dp,
-            container = MaterialTheme.colorScheme.surfaceContainer,
+            container = PiTheme.palette.pageBg.copy(alpha = 0.55f),
             idleBorder = PiTheme.palette.borderMuted.copy(alpha = 0.72f),
             visualTransformation = if (secret && !revealed) PasswordVisualTransformation() else VisualTransformation.None,
             trailing = if (secret || trailing != null) {
@@ -480,7 +480,7 @@ internal fun PrimaryAction(
     fullWidth: Boolean = false,
 ) {
     val palette = PiTheme.palette
-    val shape = if (fullWidth) ModelsButtonShape else RoundedCornerShape(50)
+    val shape = RoundedCornerShape(10.dp)
     Box(
         modifier = modifier
             .then(if (fullWidth) Modifier.fillMaxWidth().heightIn(min = 42.dp) else Modifier.heightIn(min = 36.dp))
@@ -509,7 +509,7 @@ internal fun SecondaryAction(
     enabled: Boolean = true,
     fullWidth: Boolean = false,
 ) {
-    val shape = if (fullWidth) ModelsButtonShape else RoundedCornerShape(50)
+    val shape = RoundedCornerShape(10.dp)
     Box(
         modifier = modifier
             .then(if (fullWidth) Modifier.fillMaxWidth().heightIn(min = 40.dp) else Modifier.heightIn(min = 36.dp))
@@ -539,7 +539,7 @@ internal fun DestructiveAction(
     enabled: Boolean = true,
     fullWidth: Boolean = false,
 ) {
-    val shape = if (fullWidth) ModelsButtonShape else RoundedCornerShape(50)
+    val shape = RoundedCornerShape(10.dp)
     val err = PiTheme.palette.error
     Box(
         modifier = modifier

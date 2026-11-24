@@ -32,6 +32,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.KeyboardHide
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -48,6 +50,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -64,6 +67,8 @@ import app.pi.ui.terminal.TerminalPalette
 import app.pi.ui.terminal.TerminalPane
 import app.pi.ui.terminal.TerminalPreferences
 import app.pi.ui.terminal.TerminalViewRef
+import app.pi.ui.terminal.hideSoftKeyboard
+import app.pi.ui.terminal.showSoftKeyboard
 import app.pi.ui.terminal.toggleSoftKeyboard
 import app.pi.ui.theme.PiMonoFamily
 import app.pi.ui.theme.PiTheme
@@ -192,6 +197,32 @@ private fun TerminalTabHeader(
             }
         }
 
+        // 一键收起 / 弹出软键盘（响应真实 IME 状态，直接走 WindowInsetsControllerCompat，无菜单焦点竞争）
+        val density = LocalDensity.current
+        val imeVisible = WindowInsets.ime.getBottom(density) > 0
+        HeaderIconButton(
+            contentDescription = if (imeVisible) {
+                tr("收起软键盘", "Hide keyboard")
+            } else {
+                tr("弹出软键盘", "Show keyboard")
+            },
+            onClick = {
+                val view = viewHolder.view
+                if (imeVisible) {
+                    hideSoftKeyboard(context, view)
+                } else if (view != null) {
+                    showSoftKeyboard(context, view)
+                }
+            },
+        ) {
+            Icon(
+                imageVector = if (imeVisible) Icons.Filled.KeyboardHide else Icons.Filled.Keyboard,
+                contentDescription = null,
+                tint = if (imeVisible) palette.accent else palette.foreground.copy(alpha = 0.88f),
+                modifier = Modifier.size(19.dp),
+            )
+        }
+
         // 新建标签
         HeaderIconButton(
             contentDescription = tr("新建终端标签", "New terminal tab"),
@@ -256,9 +287,15 @@ private fun TerminalTabHeader(
                             },
                         )
                         add(
-                            PiMenuItem(tr("显示 / 隐藏软键盘", "Toggle keyboard")) {
+                            PiMenuItem(
+                                if (imeVisible) {
+                                    tr("收起软键盘", "Hide keyboard")
+                                } else {
+                                    tr("弹出软键盘", "Show keyboard")
+                                },
+                            ) {
                                 menuOpen = false
-                                toggleSoftKeyboard(context, viewHolder.view)
+                                toggleSoftKeyboard(context, viewHolder.view, fromMenu = true)
                             },
                         )
                         add(

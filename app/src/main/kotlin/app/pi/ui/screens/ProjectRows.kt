@@ -71,6 +71,7 @@ import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
 import app.pi.ui.components.PiType
 import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateChip
 import app.pi.ui.theme.StateTone
@@ -820,14 +821,14 @@ internal fun WorkspaceHeroCard(
     onOpenTrust: () -> Unit,
 ) {
     val palette = PiTheme.palette
-    val cardShape = RoundedCornerShape(16.dp)
+    val cardShape = RoundedCornerShape(14.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 6.dp)
             .clip(cardShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .border(1.dp, palette.borderMuted.copy(alpha = 0.55f), cardShape)
+            .background(palette.cardBg)
+            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), cardShape)
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -838,8 +839,8 @@ internal fun WorkspaceHeroCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(palette.accent.copy(alpha = 0.14f)),
                 contentAlignment = Alignment.Center,
             ) {
@@ -847,7 +848,7 @@ internal fun WorkspaceHeroCard(
                     imageVector = Icons.Filled.FolderOpen,
                     contentDescription = null,
                     tint = palette.accent,
-                    modifier = Modifier.size(22.dp),
+                    modifier = Modifier.size(20.dp),
                 )
             }
             Column(
@@ -931,12 +932,12 @@ internal fun ProjectConfigQuickCard(
     onClick: () -> Unit,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(12.dp)
     Column(
         modifier = modifier
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .border(1.dp, palette.borderMuted.copy(alpha = 0.45f), shape)
+            .background(palette.cardBg)
+            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), shape)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 11.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -967,32 +968,32 @@ private fun HeroActionPill(
     onClick: () -> Unit,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(9.dp)
     Row(
         modifier = modifier
             .height(36.dp)
             .clip(shape)
-            .background(if (primary) palette.accent.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh)
+            .background(if (primary) palette.accent.copy(alpha = 0.14f) else palette.pageBg.copy(alpha = 0.45f))
             .border(
-                width = 1.dp,
-                color = if (primary) palette.accent.copy(alpha = 0.35f) else palette.borderMuted.copy(alpha = 0.45f),
+                width = if (primary) 1.dp else PiSpacing.hairlineThin,
+                color = if (primary) palette.accent.copy(alpha = 0.42f) else palette.borderMuted.copy(alpha = 0.65f),
                 shape = shape,
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp),
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = if (primary) palette.accent else palette.text,
+            tint = if (primary) palette.accent else palette.text.copy(alpha = 0.88f),
             modifier = Modifier.size(15.dp),
         )
         Text(
             text = label,
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-            color = if (primary) palette.accent else palette.text,
+            color = if (primary) palette.accent else palette.text.copy(alpha = 0.88f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -1011,7 +1012,12 @@ internal fun WorkspacePathBar(
     onGo: (Int) -> Unit,
     onSetAsProject: () -> Unit,
 ) {
+    val palette = PiTheme.palette
     val scroll = rememberScrollState()
+    val atRoot = inside && crumbs.size == homeSize
+    val canStepUp = (inside && crumbs.size > homeSize) || (!inside && crumbs.isNotEmpty())
+    val barShape = RoundedCornerShape(10.dp)
+
     LaunchedEffect(crumbs) {
         delay(60)
         scroll.animateScrollTo(scroll.maxValue)
@@ -1024,46 +1030,58 @@ internal fun WorkspacePathBar(
                 end = PiSettingsMetrics.pageHorizontal,
                 top = 4.dp,
                 bottom = 4.dp,
-            ),
+            )
+            .clip(barShape)
+            .background(palette.cardBg)
+            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.50f), barShape)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        // 子目录或外部路径内提供一键返回上一级（不把沙盒底层 /workspace/pi/workspaces 暴露成杂乱下拉菜单；
+        // 高级用户仍可通过右上角 ⋮ →「浏览容器根目录 (/)」访问完整 rootfs）。
+        if (canStepUp) {
+            PathBarIconButton(
+                icon = Icons.Filled.ArrowUpward,
+                description = tr("返回上一级目录", "Up one folder"),
+                accent = true,
+                onClick = { onGo(crumbs.size - 1) },
+            )
+        } else {
+            Box(
+                modifier = Modifier.size(28.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.FolderOpen,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                    tint = palette.accent.copy(alpha = 0.85f),
+                )
+            }
+        }
+
+        if (!atRoot) {
+            PathBarIconButton(
+                icon = Icons.Filled.Home,
+                description = tr("回到项目根目录", "Back to project root"),
+                accent = false,
+                onClick = onHome,
+            )
+        }
+
         Row(
             modifier = Modifier
                 .weight(1f)
                 .horizontalScroll(scroll),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // 上层目录跳转按钮（任何层都可用，随时向上浏览到整个容器或设备目录）。
-            if (crumbs.isNotEmpty()) {
-                var upMenu by remember { mutableStateOf(false) }
-                Box {
-                    PathBarIconButton(Icons.Filled.ArrowUpward, tr("上层目录", "Parent directories"), { upMenu = true })
-                    if (upMenu) PiMenu(
-                        expanded = true,
-                        onDismiss = { upMenu = false },
-                        placement = PiMenuPlacement.Below,
-                        items = (crumbs.size - 1 downTo 0).map { keep ->
-                            val label = if (keep == 0) rootLabel else crumbs[keep - 1]
-                            PiMenuItem(if (keep == crumbs.size - 1) tr("$label（上一级）", "$label (Up)") else label) {
-                                upMenu = false
-                                onGo(keep)
-                            }
-                        },
-                    )
-                }
-            }
-            val atRoot = inside && crumbs.size == homeSize
-            // 回到当前项目根目录
-            if (!atRoot) {
-                PathBarIconButton(Icons.Filled.Home, tr("回到项目根目录", "Back to project root"), onHome)
-            }
             val sep: @Composable () -> Unit = {
                 Text(
                     "›",
                     modifier = Modifier.padding(horizontal = 5.dp),
                     style = PiTheme.text.monoSmall,
-                    color = PiTheme.palette.muted,
+                    color = palette.muted.copy(alpha = 0.7f),
                     maxLines = 1,
                 )
             }
@@ -1108,16 +1126,33 @@ internal fun WorkspacePathBar(
 }
 
 @Composable
-private fun PathBarIconButton(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
+private fun PathBarIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    accent: Boolean,
+    onClick: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    val shape = RoundedCornerShape(7.dp)
     Box(
         Modifier
-            .padding(start = 4.dp)
-            .size(36.dp)
-            .clip(CircleShape)
+            .size(30.dp)
+            .clip(shape)
+            .background(if (accent) palette.accent.copy(alpha = 0.12f) else palette.pageBg.copy(alpha = 0.55f))
+            .border(
+                PiSpacing.hairlineThin,
+                if (accent) palette.accent.copy(alpha = 0.32f) else palette.borderMuted.copy(alpha = 0.55f),
+                shape,
+            )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = description, modifier = Modifier.size(18.dp), tint = PiTheme.palette.muted)
+        Icon(
+            icon,
+            contentDescription = description,
+            modifier = Modifier.size(16.dp),
+            tint = if (accent) palette.accent else palette.muted,
+        )
     }
 }
 

@@ -1,6 +1,9 @@
 package app.pi.ui.terminal
 
 import android.content.Context
+import android.app.Activity
+import android.content.ContextWrapper
+import android.view.View
 import android.graphics.Typeface
 import android.util.Log
 import android.util.TypedValue
@@ -34,7 +37,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,6 +52,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.res.ResourcesCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import app.pi.R
 import app.pi.i18n.tr
 import app.pi.ui.theme.PiMonoFamily
@@ -94,6 +102,8 @@ fun TerminalPane(
             .getOrDefault(TerminalBarKey.defaultRows)
     }
 
+    val latestPalette by rememberUpdatedState(palette)
+
     LaunchedEffect(palette) {
         PiTerminalManager.applyPalette(palette)
     }
@@ -107,7 +117,7 @@ fun TerminalPane(
 
     DisposableEffect(Unit) {
         onDispose {
-            PiTerminalManager.attachView(null, palette)
+            PiTerminalManager.attachView(null, latestPalette)
             viewHolder.view = null
         }
     }
@@ -133,7 +143,6 @@ fun TerminalPane(
 
             override fun onSingleTapUp(e: MotionEvent) {
                 val view = viewHolder.view ?: return
-                view.requestFocus()
                 showSoftKeyboard(context, view)
             }
 
@@ -165,7 +174,7 @@ fun TerminalPane(
             override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession): Boolean = false
 
             override fun onEmulatorSet() {
-                PiTerminalManager.applyPalette(palette)
+                PiTerminalManager.applyPalette(latestPalette)
             }
 
             override fun logError(tag: String?, message: String?) {
@@ -215,12 +224,17 @@ fun TerminalPane(
                         context.resources.displayMetrics,
                     ).roundToInt().coerceAtLeast(12)
                 }
+                val bgArgb = palette.background.toArgb()
+                var lastBgArgb by remember { mutableIntStateOf(0) }
+                var lastAttachedSession by remember { mutableStateOf<TerminalSession?>(null) }
+                var lastAttachedPalette by remember { mutableStateOf<TerminalPalette?>(null) }
 
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
-                        TerminalView(ctx, null).apply {
-                            setBackgroundColor(palette.background.toArgb())
+                        PiTerminalView(ctx).apply {
+                            setBackgroundColor(bgArgb)
+                            lastBgArgb = bgArgb
                             isFocusable = true
                             isFocusableInTouchMode = true
                             setTerminalViewClient(viewClient)
@@ -233,15 +247,23 @@ fun TerminalPane(
                             this.keepScreenOn = keepScreenOn
                             attachSession(activeTab.session)
                             viewHolder.view = this
+                            lastAttachedSession = activeTab.session
+                            lastAttachedPalette = palette
                             PiTerminalManager.attachView(this, palette)
                             post { requestFocus() }
                         }
                     },
                     update = { view ->
                         viewHolder.view = view
-                        view.setBackgroundColor(palette.background.toArgb())
-                        view.keepScreenOn = keepScreenOn
-                        if (view.currentSession !== activeTab.session) {
+                        if (lastBgArgb != bgArgb) {
+                            view.setBackgroundColor(bgArgb)
+                            lastBgArgb = bgArgb
+                        }
+                        if (view.keepScreenOn != keepScreenOn) {
+                            view.keepScreenOn = keepScreenOn
+                        }
+                        val sessionChanged = view.currentSession !== activeTab.session
+                        if (sessionChanged) {
                             view.attachSession(activeTab.session)
                         }
                         if (view.tag != textSizePx) {
@@ -249,7 +271,13 @@ fun TerminalPane(
                             view.setTypeface(typeface)
                             view.tag = textSizePx
                         }
-                        PiTerminalManager.attachView(view, palette)
+                        // 仅在会话或主题真实变化时才重新绑定与刷新，避免吐司淡出 / Ctrl 切换 / 标题更新
+                        // 触发 Compose 重组后无谓调用 onScreenUpdated() 导致终端画面闪烁乱跳。
+                        if (sessionChanged || lastAttachedSession !== activeTab.session || lastAttachedPalette != palette) {
+                            lastAttachedSession = activeTab.session
+                            lastAttachedPalette = palette
+                            PiTerminalManager.attachView(view, palette)
+                        }
                     },
                 )
             } else if (spawning) {
@@ -291,9 +319,9 @@ fun TerminalPane(
                 val msg = toastMessage ?: return@AnimatedVisibility
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
+                        .clip(RoundedCornerShape(8.dp))
                         .background(palette.chromeBg.copy(alpha = 0.95f))
-                        .border(0.5.dp, palette.border, RoundedCornerShape(999.dp))
+                        .border(0.5.dp, palette.border, RoundedCornerShape(8.dp))
                         .padding(horizontal = 12.dp, vertical = 5.dp),
                 ) {
                     Text(
@@ -485,15 +513,100 @@ private fun TerminalEmptyOrErrorState(
     }
 }
 
-internal fun showSoftKeyboard(context: Context, view: TerminalView) {
-    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
-    imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+/**
+ * 合并软键盘弹出/收起动画期间的高频纯高度 `onSizeChanged` 回调：
+ * `WindowInsets.ime` 动画每帧都会改高度，若每帧都直接发 `TIOCSWINSZ + SIGWINCH`，
+ * Bash/Zsh/Vim/Pi TUI 会在 250ms 内收到二三十次重排信号，造成提示符重复与画面乱跳。
+ * 首次布局与宽度变化（旋转/分屏）立刻生效，仅对连续纯高度变化做 110ms 防抖合并。
+ */
+private class PiTerminalView(context: Context) : TerminalView(context, null) {
+    private var hasLaidOut = false
+    private var pendingResize: Runnable? = null
+    private var deferredOldW = 0
+    private var deferredOldH = 0
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        if (w <= 0 || h <= 0) return
+        if (!hasLaidOut || oldw <= 0 || oldh <= 0 || w != oldw) {
+            pendingResize?.let { removeCallbacks(it) }
+            pendingResize = null
+            hasLaidOut = true
+            super.onSizeChanged(w, h, oldw, oldh)
+            return
+        }
+        if (pendingResize == null) {
+            deferredOldW = oldw
+            deferredOldH = oldh
+        } else {
+            removeCallbacks(pendingResize)
+        }
+        val targetW = w
+        val targetH = h
+        val task = Runnable {
+            pendingResize = null
+            if (isAttachedToWindow) {
+                super.onSizeChanged(targetW, targetH, deferredOldW, deferredOldH)
+            }
+        }
+        pendingResize = task
+        postDelayed(task, 110L)
+    }
+
+    override fun onDetachedFromWindow() {
+        pendingResize?.let { removeCallbacks(it) }
+        pendingResize = null
+        super.onDetachedFromWindow()
+    }
 }
 
-internal fun toggleSoftKeyboard(context: Context, view: TerminalView?) {
-    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
-    if (view != null) {
-        view.requestFocus()
-        imm.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0)
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+internal fun isSoftKeyboardVisible(view: View?): Boolean {
+    if (view == null) return false
+    return ViewCompat.getRootWindowInsets(view)
+        ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+}
+
+internal fun showSoftKeyboard(context: Context, view: TerminalView) {
+    view.requestFocus()
+    val window = context.findActivity()?.window
+    if (window != null) {
+        WindowInsetsControllerCompat(window, view).show(WindowInsetsCompat.Type.ime())
+    }
+    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+    imm?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+}
+
+internal fun hideSoftKeyboard(context: Context, view: TerminalView?) {
+    val activity = context.findActivity()
+    val target = view ?: activity?.currentFocus ?: activity?.window?.decorView ?: return
+    target.clearFocus()
+    val window = activity?.window
+    if (window != null) {
+        WindowInsetsControllerCompat(window, target).hide(WindowInsetsCompat.Type.ime())
+    }
+    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+    imm?.hideSoftInputFromWindow(target.windowToken, 0)
+}
+
+internal fun toggleSoftKeyboard(context: Context, view: TerminalView?, fromMenu: Boolean = false) {
+    val target = view ?: return
+    val visibleNow = isSoftKeyboardVisible(target)
+    val runToggle = Runnable {
+        if (visibleNow) {
+            hideSoftKeyboard(context, target)
+        } else {
+            showSoftKeyboard(context, target)
+        }
+    }
+    if (fromMenu) {
+        // 等待弹出菜单窗口完成销毁，避免焦点回流抢占收起软键盘的调用。
+        target.postDelayed(runToggle, 80L)
+    } else {
+        runToggle.run()
     }
 }

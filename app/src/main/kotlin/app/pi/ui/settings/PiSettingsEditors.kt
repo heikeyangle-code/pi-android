@@ -1392,9 +1392,22 @@ internal fun PiEditorField(
     val focused by interaction.collectIsFocusedAsState()
     val effectiveFocus = focusRequester ?: remember { FocusRequester() }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val effectiveMinHeight = when {
+        height != null -> null
+        minHeight != null -> minHeight
+        singleLine -> 44.dp
+        else -> 108.dp
+    }
+    val effectivePadding = if (!singleLine && contentPadding == PiFieldPaddingSingleLine) {
+        PiFieldPaddingBlock
+    } else if (singleLine && height == null && contentPadding == PiFieldPaddingSingleLine) {
+        PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+    } else {
+        contentPadding
+    }
     val innerMinHeight = when {
         singleLine -> null
-        minHeight != null -> (minHeight - 20.dp).coerceAtLeast(24.dp)
+        effectiveMinHeight != null -> (effectiveMinHeight - 20.dp).coerceAtLeast(24.dp)
         height != null -> (height - 20.dp).coerceAtLeast(24.dp)
         else -> null
     }
@@ -1412,11 +1425,11 @@ internal fun PiEditorField(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(if (height != null) Modifier.height(height) else Modifier)
-                .then(if (minHeight != null) Modifier.heightIn(min = minHeight) else Modifier)
+                .then(if (effectiveMinHeight != null) Modifier.heightIn(min = effectiveMinHeight) else Modifier)
                 .clip(PiFieldShape)
                 .background(container)
                 .border(
-                    PiSettingsMetrics.hairline,
+                    if (focused) 1.dp else PiSpacing.hairlineThin,
                     if (focused) PiTheme.palette.borderAccent else idleBorder,
                     PiFieldShape,
                 )
@@ -1428,7 +1441,7 @@ internal fun PiEditorField(
                     runCatching { effectiveFocus.requestFocus() }
                     keyboard?.show()
                 }
-                .padding(contentPadding),
+                .padding(effectivePadding),
             verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
         ) {

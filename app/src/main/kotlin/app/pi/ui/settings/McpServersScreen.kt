@@ -401,17 +401,20 @@ internal fun McpServersScreen(
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             PiSettingsChip(
                                 text = if (checking) tr("检测中…", "Checking…") else tr("检测连接", "Check"),
                                 active = status != null,
                                 enabled = !checking,
+                                modifier = Modifier.weight(1f),
                                 onClick = { runCheck() },
                             )
                             PiSettingsChip(
                                 text = tr("添加服务", "Add Server"),
+                                active = true,
+                                modifier = Modifier.weight(1f),
                                 onClick = {
                                     editSaveError = null
                                     editing = Editing(null, PiMcpConfig.Draft(http = true, url = "https://"))
@@ -419,6 +422,7 @@ internal fun McpServersScreen(
                             )
                             PiSettingsChip(
                                 text = tr("导入 JSON", "Import JSON"),
+                                modifier = Modifier.weight(1f),
                                 onClick = { importing = true },
                             )
                         }
@@ -1082,9 +1086,9 @@ private fun McpServerRow(
 private fun McpBadgePill(text: String, tint: Color) {
     Box(
         modifier = Modifier
-            .clip(PiShapes.badge)
+            .clip(RoundedCornerShape(6.dp))
             .background(tint.copy(alpha = 0.14f))
-            .padding(horizontal = PiSpacing.small, vertical = PiSpacing.hairline * 2),
+            .padding(horizontal = 7.dp, vertical = 2.dp),
     ) {
         Text(
             text = text,

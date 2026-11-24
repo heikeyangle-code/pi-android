@@ -794,17 +794,11 @@ fun PiRoot() {
             // *navigation* back (search → group → out), not an overlay back, and
             // it is enabled only while an inner level is open, which the overlay
             // covers anyway.
-            // 目的地级返回：没有覆盖层时，工作区退回对话（工作区没有内部层级）。
-            //
-            // **优先级靠条件互斥，不靠组合顺序。** 这一条要求 `overlayState == null`，
-            // 而下面那条覆盖层 handler 要求 `!= null`，两者永远不会同时启用；设置页
-            // 内部那一栈由 `PiSettingsStack` 自己的 handler 管（内层 → 上一级 → 首页 →
-            // 对话），它在 `when (current)` 分支里组合得更早，覆盖层开着时也会被下面
-            // 这条先接到（组合顺序在后 → `OnBackPressedDispatcher` 的 LIFO）。
-            BackHandler(enabled = overlayState == null && current == PiDestination.Workbench) {
-                openChat()
-            }
-
+            // 工作区与设置页都自带内部返回栈：
+            // - `ProjectScreen`：关闭筛选 → 回到上一层目录 → 已在项目根时退回对话；
+            // - `PiSettingsStack`：内层 → 上一级 → 首页 → 对话；
+            // 两者都在 `when (dest)` 分支里组合得更早，覆盖层开着时下面这条 handler
+            // 会因组合顺序在后（`OnBackPressedDispatcher` LIFO）优先接管返回键。
             BackHandler(enabled = overlayState != null) { closeOverlay() }
 
             // Mounted once, above the destination switch, because an extension

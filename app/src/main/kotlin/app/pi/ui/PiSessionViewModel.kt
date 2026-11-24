@@ -3647,11 +3647,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { auth.logout(target) }
                 .onSuccess {
                     refreshModels()
-                    pushNotice(tr("已退出「$target」的登录凭据。", "Logged out of "$target"."), Notice.Tone.Info)
+                    pushNotice(tr("已退出「$target」的登录凭据。", "Logged out of \"$target\"."), Notice.Tone.Info)
                 }
                 .onFailure { err ->
                     pushNotice(
-                        err.message ?: tr("退出「$target」登录失败。", "Failed to log out of "$target"."),
+                        err.message ?: tr("退出「$target」登录失败。", "Failed to log out of \"$target\"."),
                         Notice.Tone.Error,
                     )
                 }

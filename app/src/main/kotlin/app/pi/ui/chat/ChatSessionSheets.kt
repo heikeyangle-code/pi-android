@@ -1008,7 +1008,7 @@ internal fun LogoutPickerSheet(
                                                     providers = providers.filterNot { it.id == provider.id }
                                                     session.refreshModels()
                                                     session.notifyUser(
-                                                        tr("已退出「${provider.name}」的登录凭据。", "Logged out of "${provider.name}"."),
+                                                        tr("已退出「${provider.name}」的登录凭据。", "Logged out of \"${provider.name}\"."),
                                                     )
                                                 }
                                                 .onFailure { err ->

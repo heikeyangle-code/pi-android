@@ -85,23 +85,43 @@ object PiTerminalManager {
         get() = tabs.firstOrNull { it.id == activeTabId } ?: tabs.lastOrNull()
 
     private var attachedViewRef: WeakReference<TerminalView>? = null
+    private var lastAttachedSessionRef: WeakReference<TerminalSession>? = null
     private var lastPalette: TerminalPalette? = null
     private var appContext: Context? = null
     private var fontLoaded = false
 
     fun attachView(view: TerminalView?, palette: TerminalPalette) {
-        attachedViewRef = if (view != null) WeakReference(view) else null
+        if (view == null) {
+            attachedViewRef = null
+            lastAttachedSessionRef = null
+            return
+        }
+        val currentSession = activeTab?.session
+        val sameView = attachedViewRef?.get() === view
+        val sameSession = lastAttachedSessionRef?.get() === currentSession
+        val samePalette = lastPalette == palette
+        if (sameView && sameSession && samePalette) return
+        attachedViewRef = WeakReference(view)
+        lastAttachedSessionRef = if (currentSession != null) WeakReference(currentSession) else null
         lastPalette = palette
-        palette.applyTo(activeTab?.session?.emulator)
-        view?.onScreenUpdated()
+        if (!samePalette || !sameSession) {
+            palette.applyTo(currentSession?.emulator)
+        }
+        view.onScreenUpdated()
     }
 
     fun applyPalette(palette: TerminalPalette) {
+        val changed = lastPalette != palette
         lastPalette = palette
+        var applied = false
         for (tab in tabs) {
-            palette.applyTo(tab.session.emulator)
+            val emu = tab.session.emulator ?: continue
+            palette.applyTo(emu)
+            applied = true
         }
-        attachedViewRef?.get()?.onScreenUpdated()
+        if (changed || applied) {
+            attachedViewRef?.get()?.onScreenUpdated()
+        }
     }
 
     fun ensureFontLoaded(context: Context) {
