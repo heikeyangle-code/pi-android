@@ -104,7 +104,7 @@ internal fun McpEditSheet(
     var showProblem by remember(initial) { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var advanced by remember(initial) { mutableStateOf(draft.hasAdvanced()) }
-    val problem = PiMcpConfig.validate(draft, otherNames)
+    val problem = PiMcpConfig.check(draft, otherNames)
     val fieldBg = palette.pageBg.copy(alpha = 0.55f)
     val fieldBorder = palette.borderMuted.copy(alpha = 0.75f)
 
@@ -847,7 +847,7 @@ internal fun McpImportSheet(
                                     color = palette.text,
                                 )
                                 Text(
-                                    entry.summary,
+                                    if (entry.isHttp) "HTTP" else "STDIO",
                                     style = PiTheme.text.monoSmall,
                                     color = palette.muted,
                                     maxLines = 1,

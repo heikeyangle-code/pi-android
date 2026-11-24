@@ -4,6 +4,8 @@ import android.content.Context
 import android.app.Activity
 import android.content.ContextWrapper
 import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.graphics.Typeface
 import android.util.Log
 import android.util.TypedValue
@@ -232,30 +234,35 @@ fun TerminalPane(
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
-                        PiTerminalView(ctx).apply {
+                        PiTerminalHostFrame(ctx).apply {
                             setBackgroundColor(bgArgb)
                             lastBgArgb = bgArgb
-                            isFocusable = true
-                            isFocusableInTouchMode = true
-                            setTerminalViewClient(viewClient)
-                            // 必须先 setTextSize 再 setTypeface（Termux TerminalView.setTypeface 依赖 mRenderer 非空）
-                            setTextSize(textSizePx)
-                            setTypeface(typeface)
-                            tag = textSizePx
-                            setTerminalCursorBlinkerRate(550)
-                            setTerminalCursorBlinkerState(true, true)
-                            this.keepScreenOn = keepScreenOn
-                            attachSession(activeTab.session)
-                            viewHolder.view = this
-                            lastAttachedSession = activeTab.session
-                            lastAttachedPalette = palette
-                            PiTerminalManager.attachView(this, palette)
-                            post { requestFocus() }
+                            terminalView.apply {
+                                setBackgroundColor(bgArgb)
+                                isFocusable = true
+                                isFocusableInTouchMode = true
+                                setTerminalViewClient(viewClient)
+                                // 必须先 setTextSize 再 setTypeface（Termux TerminalView.setTypeface 依赖 mRenderer 非空）
+                                setTextSize(textSizePx)
+                                setTypeface(typeface)
+                                tag = textSizePx
+                                setTerminalCursorBlinkerRate(550)
+                                setTerminalCursorBlinkerState(true, true)
+                                this.keepScreenOn = keepScreenOn
+                                attachSession(activeTab.session)
+                                viewHolder.view = this
+                                lastAttachedSession = activeTab.session
+                                lastAttachedPalette = palette
+                                PiTerminalManager.attachView(this, palette)
+                                post { requestFocus() }
+                            }
                         }
                     },
-                    update = { view ->
+                    update = { host ->
+                        val view = host.terminalView
                         viewHolder.view = view
                         if (lastBgArgb != bgArgb) {
+                            host.setBackgroundColor(bgArgb)
                             view.setBackgroundColor(bgArgb)
                             lastBgArgb = bgArgb
                         }
@@ -514,47 +521,74 @@ private fun TerminalEmptyOrErrorState(
 }
 
 /**
- * 合并软键盘弹出/收起动画期间的高频纯高度 `onSizeChanged` 回调：
- * `WindowInsets.ime` 动画每帧都会改高度，若每帧都直接发 `TIOCSWINSZ + SIGWINCH`，
- * Bash/Zsh/Vim/Pi TUI 会在 250ms 内收到二三十次重排信号，造成提示符重复与画面乱跳。
- * 首次布局与宽度变化（旋转/分屏）立刻生效，仅对连续纯高度变化做 110ms 防抖合并。
+ * 承载 Termux `final class TerminalView` 的防抖容器：
+ * `WindowInsets.ime` 弹出/收起动画期间每帧都会改变容器高度，若每帧直接把新高度传给
+ * `TerminalView`，会连发二三十次 `TIOCSWINSZ + SIGWINCH`，导致 Shell 提示符重复、TUI 乱跳。
+ * 首次布局或宽度变化（横竖屏/分屏）立即提交尺寸；连续纯高度变化先保持已提交高度并做
+ * 110ms 防抖合并，等键盘动画停稳后一次性重排 `TerminalView`。
  */
-private class PiTerminalView(context: Context) : TerminalView(context, null) {
-    private var hasLaidOut = false
-    private var pendingResize: Runnable? = null
-    private var deferredOldW = 0
-    private var deferredOldH = 0
+private class PiTerminalHostFrame(context: Context) : FrameLayout(context) {
+    val terminalView = TerminalView(context, null)
 
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+    private var committedWidth = 0
+    private var committedHeight = 0
+    private var latestHeight = 0
+    private var pendingCommit: Runnable? = null
+
+    init {
+        addView(
+            terminalView,
+            LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+        )
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val w = MeasureSpec.getSize(widthMeasureSpec)
+        val h = MeasureSpec.getSize(heightMeasureSpec)
+        setMeasuredDimension(w, h)
         if (w <= 0 || h <= 0) return
-        if (!hasLaidOut || oldw <= 0 || oldh <= 0 || w != oldw) {
-            pendingResize?.let { removeCallbacks(it) }
-            pendingResize = null
-            hasLaidOut = true
-            super.onSizeChanged(w, h, oldw, oldh)
-            return
-        }
-        if (pendingResize == null) {
-            deferredOldW = oldw
-            deferredOldH = oldh
-        } else {
-            removeCallbacks(pendingResize)
-        }
-        val targetW = w
-        val targetH = h
-        val task = Runnable {
-            pendingResize = null
-            if (isAttachedToWindow) {
-                super.onSizeChanged(targetW, targetH, deferredOldW, deferredOldH)
+
+        val immediate = committedWidth <= 0 || committedHeight <= 0 || w != committedWidth
+        if (immediate) {
+            pendingCommit?.let { removeCallbacks(it) }
+            pendingCommit = null
+            committedWidth = w
+            committedHeight = h
+            latestHeight = h
+        } else if (h != committedHeight) {
+            latestHeight = h
+            pendingCommit?.let { removeCallbacks(it) }
+            val task = Runnable {
+                pendingCommit = null
+                if (isAttachedToWindow && latestHeight > 0 && committedHeight != latestHeight) {
+                    committedHeight = latestHeight
+                    requestLayout()
+                }
             }
+            pendingCommit = task
+            postDelayed(task, 110L)
+        } else {
+            // 回弹回已提交高度时取消待定重排
+            pendingCommit?.let { removeCallbacks(it) }
+            pendingCommit = null
+            latestHeight = h
         }
-        pendingResize = task
-        postDelayed(task, 110L)
+
+        terminalView.measure(
+            MeasureSpec.makeMeasureSpec(committedWidth, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(committedHeight, MeasureSpec.EXACTLY),
+        )
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        if (committedWidth > 0 && committedHeight > 0) {
+            terminalView.layout(0, 0, committedWidth, committedHeight)
+        }
     }
 
     override fun onDetachedFromWindow() {
-        pendingResize?.let { removeCallbacks(it) }
-        pendingResize = null
+        pendingCommit?.let { removeCallbacks(it) }
+        pendingCommit = null
         super.onDetachedFromWindow()
     }
 }
