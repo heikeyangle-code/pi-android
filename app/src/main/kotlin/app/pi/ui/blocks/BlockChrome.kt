@@ -2,6 +2,7 @@ package app.pi.ui.blocks
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -403,17 +404,31 @@ internal fun AccentStripe(
  */
 @Composable
 internal fun CardChip(text: String, color: Color, modifier: Modifier = Modifier) {
-    Text(
-        text = text,
+    val shape = RoundedCornerShape(6.dp)
+    Row(
         modifier = modifier
-            .clip(PiShapes.badge)
-            .background(color.copy(alpha = 0.16f))
-            .padding(horizontal = PiSpacing.inline, vertical = PiSpacing.tiny),
-        style = PiTheme.text.monoSmall,
-        color = color,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
+            .clip(shape)
+            .background(color.copy(alpha = 0.09f))
+            .border(0.5.dp, color.copy(alpha = 0.24f), shape)
+            .padding(horizontal = 7.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .width(2.dp)
+                .height(10.dp)
+                .clip(RoundedCornerShape(1.dp))
+                .background(color.copy(alpha = 0.82f)),
+        )
+        Text(
+            text = text,
+            style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 @Composable

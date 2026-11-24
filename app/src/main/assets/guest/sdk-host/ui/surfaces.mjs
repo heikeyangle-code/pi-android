@@ -625,37 +625,64 @@ export class Surfaces {
     return true;
   }
 
-  /** App → 组件鼠标/点击事件（`Component.handleMouse`）。 */
+  /** App → 组件鼠标/点击/滚轮事件（`Component.handleMouse`，未处理 wheel 时按官方键位回退 ↑/↓）。 */
   mouse(id, rawEvent) {
     const surface = this.byId.get(id);
-    if (!surface || surface.closed || typeof surface.component?.handleMouse !== "function") return false;
-    const x = Math.max(0, Math.floor(Number(rawEvent?.x ?? 0)));
-    const y = Math.max(0, Math.floor(Number(rawEvent?.y ?? 0)));
-    const event = {
-      type: typeof rawEvent?.type === "string" ? rawEvent.type : "click",
-      button: typeof rawEvent?.button === "string" ? rawEvent.button : "left",
-      x,
-      y,
-      screenX: x,
-      screenY: y,
-      width: Math.max(1, Math.floor(Number(rawEvent?.width ?? surface.overrideWidth ?? this.width))),
-      height: Math.max(1, Math.floor(Number(rawEvent?.height ?? surface.overrideHeight ?? this.height))),
-      shift: Boolean(rawEvent?.shift),
-      alt: Boolean(rawEvent?.alt),
-      ctrl: Boolean(rawEvent?.ctrl),
-      ...(Number.isFinite(rawEvent?.wheelDelta) ? { wheelDelta: Number(rawEvent.wheelDelta) } : {}),
-      ...(Number.isFinite(rawEvent?.clickCount) ? { clickCount: Number(rawEvent.clickCount) } : { clickCount: 1 }),
-    };
-    let result;
-    try {
-      result = surface.component.handleMouse(event);
-    } catch (error) {
-      process.stderr.write(`[host] handleMouse failed: ${error?.stack ?? error}\n`);
-      return false;
+    if (!surface || surface.closed) return false;
+    const eventType = typeof rawEvent?.type === "string" ? rawEvent.type : "click";
+    const wheelDelta = Number.isFinite(rawEvent?.wheelDelta) ? Number(rawEvent.wheelDelta) : undefined;
+    let handled = false;
+    if (typeof surface.component?.handleMouse === "function") {
+      const x = Math.max(0, Math.floor(Number(rawEvent?.x ?? 0)));
+      const y = Math.max(0, Math.floor(Number(rawEvent?.y ?? 0)));
+      const event = {
+        type: eventType,
+        button: typeof rawEvent?.button === "string" ? rawEvent.button : "left",
+        x,
+        y,
+        screenX: x,
+        screenY: y,
+        width: Math.max(1, Math.floor(Number(rawEvent?.width ?? surface.overrideWidth ?? this.width))),
+        height: Math.max(1, Math.floor(Number(rawEvent?.height ?? surface.overrideHeight ?? this.height))),
+        shift: Boolean(rawEvent?.shift),
+        alt: Boolean(rawEvent?.alt),
+        ctrl: Boolean(rawEvent?.ctrl),
+        ...(wheelDelta !== undefined ? { wheelDelta } : {}),
+        ...(Number.isFinite(rawEvent?.clickCount) ? { clickCount: Number(rawEvent.clickCount) } : { clickCount: 1 }),
+      };
+      let result;
+      try {
+        result = surface.component.handleMouse(event);
+      } catch (error) {
+        process.stderr.write(`[host] handleMouse failed: ${error?.stack ?? error}\n`);
+        return false;
+      }
+      const explicitHandled = Boolean(result && (result.handled || result.focus || result.capture || "target" in result));
+      if (eventType === "wheel") {
+        const prevKey = surface.frameKey;
+        if (result?.focus && surface.mode === "custom") this.#setFocusId(surface.id);
+        if (!surface.closed && result?.render !== false && (explicitHandled || result === undefined)) {
+          this.paint(surface);
+        }
+        // wheel 返回 { handled: true } 或实际改变了画面（void handleMouse）才算已处理；否则视为未处理，交给 ↑/↓ 回退。
+        handled = explicitHandled || (result === undefined && surface.frameKey !== prevKey);
+      } else {
+        handled = result === undefined ? true : explicitHandled;
+        if (result?.focus && surface.mode === "custom") this.#setFocusId(surface.id);
+        if (!surface.closed && result?.render !== false) this.paint(surface);
+      }
     }
-    const handled = result === undefined ? true : Boolean(result && (result.handled || result.focus || result.capture || "target" in result));
-    if (result?.focus && surface.mode === "custom") this.#setFocusId(surface.id);
-    if (!surface.closed && result?.render !== false) this.paint(surface);
+    // 手机触屏滑屏发来 wheel，但组件不实现 handleMouse 或仅处理 click/press 未处理 wheel 时，
+    // 自动回退到终端 ↑/↓ 键滚动（让 BTW / SelectList / SettingsList 等虚拟视口都能自然跟手滑动）。
+    if (!handled && eventType === "wheel" && wheelDelta && wheelDelta !== 0 && typeof surface.component?.handleInput === "function") {
+      const key = wheelDelta < 0 ? "\x1b[A" : "\x1b[B";
+      const steps = Math.min(Math.max(1, Math.abs(Math.trunc(wheelDelta))), 6);
+      for (let i = 0; i < steps; i++) {
+        if (surface.closed) break;
+        this.input(id, key);
+      }
+      return true;
+    }
     return handled;
   }
 

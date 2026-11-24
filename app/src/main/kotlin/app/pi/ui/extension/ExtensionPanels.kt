@@ -42,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -689,7 +690,7 @@ internal fun ExtensionPanelCard(
     val wide = remember(shown) { shown.any { isPreformatted(it) } }
 
     BlockCard(
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = palette.cardBg,
         modifier = modifier
             .then(
                 when {
@@ -700,7 +701,7 @@ internal fun ExtensionPanelCard(
             ),
         borderColor = if (onInteract != null) palette.borderAccent.copy(alpha = 0.30f) else palette.borderMuted.copy(alpha = 0.45f),
         padding = BlockCardRowPadding,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(10.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
             if (caption != null || canExpand || onInteract != null || onToggleHide != null || onHide != null) {
@@ -849,15 +850,20 @@ private fun GeometricAnsiLines(
         cw to ch
     }
     val maxCols = remember(lines) { lines.maxOfOrNull { visibleColumns(it) }?.coerceAtLeast(1) ?: 1 }
-    Column(modifier = modifier.horizontalScroll(rememberScrollState())) {
-        lines.forEach { line ->
-            TerminalGridRow(
-                line = line,
-                cellWidthPx = cellMetrics.first,
-                cellHeightPx = cellMetrics.second,
-                monoStyle = monoStyle,
-                minCols = maxCols,
-            )
+    Box(
+        modifier = modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            lines.forEach { line ->
+                TerminalGridRow(
+                    line = line,
+                    cellWidthPx = cellMetrics.first,
+                    cellHeightPx = cellMetrics.second,
+                    monoStyle = monoStyle,
+                    minCols = maxCols,
+                )
+            }
         }
     }
 }
@@ -881,7 +887,7 @@ private fun InteractPill(
 ) {
     val palette = PiTheme.palette
     val haptic = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(999.dp)
+    val shape = RoundedCornerShape(7.dp)
     Row(
         modifier = Modifier
             .heightIn(min = 28.dp)
@@ -915,12 +921,13 @@ private fun InteractPill(
 private fun VisibilityTogglePill(hidden: Boolean, onClick: () -> Unit) {
     val palette = PiTheme.palette
     val haptic = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(999.dp)
+    val shape = RoundedCornerShape(7.dp)
+    val neutralBg = remember(palette) { lerp(palette.cardBg, palette.text, 0.05f) }
     Row(
         modifier = Modifier
-            .heightIn(min = 28.dp)
+            .heightIn(min = 26.dp)
             .clip(shape)
-            .background(if (!hidden) palette.accent.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceContainerHigh)
+            .background(if (!hidden) palette.accent.copy(alpha = 0.11f) else neutralBg)
             .border(
                 PiSpacing.hairlineThin,
                 if (!hidden) palette.accent.copy(alpha = 0.34f) else palette.borderMuted.copy(alpha = 0.5f),
@@ -953,12 +960,13 @@ private fun VisibilityTogglePill(hidden: Boolean, onClick: () -> Unit) {
 private fun HideWidgetPill(onClick: () -> Unit) {
     val palette = PiTheme.palette
     val haptic = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(999.dp)
+    val shape = RoundedCornerShape(7.dp)
+    val neutralBg = remember(palette) { lerp(palette.cardBg, palette.text, 0.05f) }
     Row(
         modifier = Modifier
-            .heightIn(min = 28.dp)
+            .heightIn(min = 26.dp)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f))
+            .background(neutralBg)
             .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.45f), shape)
             .clickable(role = Role.Button) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)

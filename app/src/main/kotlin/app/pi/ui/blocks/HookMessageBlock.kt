@@ -1,18 +1,31 @@
 package app.pi.ui.blocks
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
 import app.pi.protocol.HookMessage
 import app.pi.ui.render.PiMarkdownText
@@ -20,10 +33,9 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
- * `hook-message`: an extension-injected
- * custom message. It must be unmistakably *not* the user and *not* the model, so
- * it gets the `customMessageBg` surface, a `customMessageLabel` stripe and the
- * mono `customType` label — three channels at once.
+ * 扩展自定义消息（`custom_message` / `registerMessageRenderer`）：
+ * 采用一体化精简卡片（柔和顶栏 + 细竖色标 + 清晰分割线 + 干净正文画布），
+ * 既保留 Pi 主题的 `customMessageBg` / `customMessageLabel` 语义色，又避免厚重默认 M3 色块与圆药丸。
  */
 @Composable
 fun HookMessageBlock(
@@ -32,19 +44,14 @@ fun HookMessageBlock(
     defaultExpanded: Boolean = false,
 ) {
     val palette = PiTheme.palette
-    // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
-    // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
-    // row, exactly as pi re-applies expansion to all of its children.
-    var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(defaultExpanded) }
-    // 扩展用 `registerMessageRenderer` 给这个 customType 注册了渲染器就按它画（pi 的
-    // `CustomMessageComponent` 同样优先走渲染器，没有才是 markdown）。行由宿主按 `expanded` 渲染。
+    var expanded by rememberSaveable(item.key, defaultExpanded) { mutableStateOf(defaultExpanded) }
     val messageRenderer = app.pi.ui.extension.LocalMessageRenderer.current
     val rendered by produceState<List<String>?>(null, item.key, item.markdown, item.details, expanded, messageRenderer) {
         value = messageRenderer?.render(item, expanded) ?: value
     }
     val renderedLines = rendered
     val collapsible = renderedLines != null || item.markdown.length > 240 || item.markdown.count { it == '\n' } > 4
-    val copyBody = androidx.compose.runtime.remember(renderedLines, item.markdown) {
+    val copyBody = remember(renderedLines, item.markdown) {
         if (renderedLines != null) {
             app.pi.ui.extension.trimEmptyEdgeLines(app.pi.ui.extension.panelRows(renderedLines))
                 .joinToString("\n") { app.pi.ui.extension.chromeText(it) }
@@ -52,56 +59,87 @@ fun HookMessageBlock(
             item.markdown
         }
     }
+    val cardShape = RoundedCornerShape(10.dp)
+    val bodyBg = remember(palette) { lerp(palette.cardBg, palette.customMessageBg, 0.22f) }
+    val headerBg = remember(palette) { lerp(palette.cardBg, palette.customMessageBg, 0.44f) }
+    val borderColor = remember(palette) {
+        lerp(palette.borderMuted, palette.customMessageLabel, 0.18f).copy(alpha = 0.56f)
+    }
 
     ToolActionMenu(command = null, output = copyBody, fullOutputPath = null) {
         BlockColumn(modifier) {
-            BlockCard(
-                color = palette.customMessageBg,
-                borderColor = palette.customMessageLabel.copy(alpha = 0.22f),
-            ) {
-                // F28: the card's content is the target (pi's rule — see
-                // `ToggleContent`); `enabled` keeps a short message from toggling into
-                // nothing.
-                ToggleContent(
-                    expanded = expanded,
-                    onToggle = { expanded = !expanded },
-                    enabled = collapsible,
+            SelectableContent {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(cardShape)
+                        .background(bodyBg)
+                        .border(0.5.dp, borderColor, cardShape),
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                    ToggleContent(
+                        expanded = expanded,
+                        onToggle = { expanded = !expanded },
+                        enabled = collapsible,
                     ) {
-                        Box(modifier = Modifier.weight(1f)) {
-                            CardChip(
-                                text = item.customType.ifEmpty { "extension" },
-                                color = palette.customMessageLabel,
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(headerBg)
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(2.5.dp)
+                                    .height(12.dp)
+                                    .clip(RoundedCornerShape(1.5.dp))
+                                    .background(palette.customMessageLabel.copy(alpha = 0.85f)),
                             )
+                            Text(
+                                text = item.customType.ifEmpty { "extension" },
+                                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+                                color = palette.customMessageLabel,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (collapsible) ExpandLabel(expanded)
                         }
-                        if (collapsible) ExpandLabel(expanded)
-                    }
-                    if (renderedLines != null) {
-                        app.pi.ui.extension.RenderedAnsiBlock(
-                            lines = renderedLines,
-                            expanded = expanded,
-                            collapsedLimit = COLLAPSED_MESSAGE_LINES,
-                            modifier = Modifier.padding(top = PiSpacing.tiny),
-                            expandHint = { hidden -> tr("还有 $hidden 行，点击展开", "$hidden more lines, tap to expand") },
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(0.5.dp)
+                                .background(palette.borderMuted.copy(alpha = 0.36f)),
                         )
-                    } else if (expanded || !collapsible) {
-                        PiMarkdownText(
-                            markdown = item.markdown.ifEmpty { tr("（空消息）", "(Empty message)") },
-                            modifier = Modifier.fillMaxWidth(),
-                            textColor = palette.customMessageText,
-                            immediate = expanded,
-                        )
-                    } else {
-                        ProseText(
-                            text = item.markdown.ifEmpty { tr("（空消息）", "(Empty message)") },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = palette.customMessageText,
-                            maxLines = COLLAPSED_MESSAGE_LINES,
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                        ) {
+                            if (renderedLines != null) {
+                                app.pi.ui.extension.RenderedAnsiBlock(
+                                    lines = renderedLines,
+                                    expanded = expanded,
+                                    collapsedLimit = COLLAPSED_MESSAGE_LINES,
+                                    expandHint = { hidden -> tr("还有 $hidden 行，点击展开", "$hidden more lines, tap to expand") },
+                                )
+                            } else if (expanded || !collapsible) {
+                                PiMarkdownText(
+                                    markdown = item.markdown.ifEmpty { tr("（空消息）", "(Empty message)") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textColor = palette.customMessageText,
+                                    immediate = expanded,
+                                )
+                            } else {
+                                ProseText(
+                                    text = item.markdown.ifEmpty { tr("（空消息）", "(Empty message)") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = palette.customMessageText,
+                                    maxLines = COLLAPSED_MESSAGE_LINES,
+                                )
+                            }
+                        }
                     }
                 }
             }

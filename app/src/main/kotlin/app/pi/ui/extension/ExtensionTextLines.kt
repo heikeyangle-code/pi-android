@@ -73,10 +73,19 @@ internal fun isPreformatted(raw: String): Boolean {
 internal fun visibleColumns(raw: String): Int {
     val text = stripAnsiControls(raw).trimEnd()
     var columns = 0
+    var prevWidth = 0
     var i = 0
     while (i < text.length) {
         val cp = text.codePointAt(i)
-        columns += codePointWidth(cp)
+        if (cp == 0xFE0F && prevWidth == 1) {
+            // Emoji Variation Selector-16 promotes preceding symbol (e.g. ⚠️ / ℹ️) to 2 cells.
+            columns += 1
+            prevWidth = 2
+        } else {
+            val w = codePointWidth(cp)
+            columns += w
+            if (w > 0) prevWidth = w
+        }
         i += Character.charCount(cp)
     }
     return columns
@@ -195,9 +204,19 @@ private fun isWideCodePoint(cp: Int): Boolean = when {
     cp in 0xFE30..0xFE6F -> true // CJK compatibility forms / fullwidth variants
     cp in 0xFF00..0xFF60 -> true // fullwidth forms
     cp in 0xFFE0..0xFFE6 -> true // fullwidth signs
-    cp in 0x1F300..0x1F5FF || cp in 0x1F600..0x1F64F -> true // emoji
-    cp in 0x1F680..0x1F6FF || cp in 0x1F900..0x1F9FF -> true // transport / supplemental
-    cp in 0x1FA70..0x1FAFF -> true // symbols and pictographs ext A
+    // BMP Unicode Emoji_Presentation=Yes (e.g. ⏳⌛⌚✅❌⚡✨⭐⭕⬛⬜), keeping chess pieces (U+2654..U+265F) at 1 col
+    cp in 0x231A..0x231B || cp in 0x23E9..0x23EC || cp == 0x23F0 || cp == 0x23F3 -> true
+    cp in 0x25FD..0x25FE || cp in 0x2614..0x2615 || cp in 0x2648..0x2653 -> true
+    cp == 0x267F || cp == 0x2693 || cp == 0x26A1 || cp in 0x26AA..0x26AB -> true
+    cp in 0x26BD..0x26BE || cp in 0x26C4..0x26C5 || cp == 0x26CE || cp == 0x26D4 -> true
+    cp == 0x26EA || cp in 0x26F2..0x26F3 || cp == 0x26F5 || cp == 0x26FA || cp == 0x26FD -> true
+    cp == 0x2705 || cp in 0x270A..0x270B || cp == 0x2728 || cp == 0x274C || cp == 0x274E -> true
+    cp in 0x2753..0x2755 || cp == 0x2757 || cp in 0x2795..0x2797 || cp == 0x27B0 || cp == 0x27BF -> true
+    cp in 0x2B1B..0x2B1C || cp == 0x2B50 || cp == 0x2B55 -> true
+    cp == 0x1F004 || cp == 0x1F0CF || cp == 0x1F18E || cp in 0x1F191..0x1F19A -> true
+    cp in 0x1F1E6..0x1F1FF || cp in 0x1F201..0x1F251 -> true
+    cp in 0x1F300..0x1F6FF || cp in 0x1F7E0..0x1F7EB || cp in 0x1F900..0x1F9FF -> true // emoji / geometric / supplemental
+    cp in 0x1FA00..0x1FAFF -> true // symbols and pictographs ext A
     cp in 0x20000..0x3FFFD -> true // CJK ext B and beyond (astral planes)
     else -> false
 }
@@ -229,7 +248,7 @@ internal fun inferSurfaceTitle(lines: List<String>): String? {
         val segments = clean.split('│', '┃', '║', '|')
         for (seg in segments) {
             val plain = seg.trim().trim(*TITLE_BORDER_CHARS).trim()
-            if (plain.length !in 2..36) continue
+            if (plain.length !in 2..72) continue
             // 至少包含 2 个字母或汉字，跳过 `. . . . .` 棋盘格、纯数字或装饰线
             var readableChars = 0
             var dotLikeChars = 0

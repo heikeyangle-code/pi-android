@@ -1228,6 +1228,57 @@ try {
     );
     mockSurfaces.close(surf.id);
 
+    // Pi 1.6.0 handleMouse undefined = unhandled; unhandled wheel falls back to arrow keys.
+    const receivedInputs = [];
+    const wheelFallbackSurf = await mockSurfaces.mount({
+      mode: "custom",
+      overlay: true,
+      build: () => ({
+        render: () => ["line1", "line2"],
+        handleMouse: (ev) => (ev.type === "click" ? { handled: true } : ev.type === "move" ? { handled: false } : undefined),
+        handleInput: (data) => receivedInputs.push(data),
+      }),
+    });
+    const clickHandled = mockSurfaces.mouse(wheelFallbackSurf.id, { type: "click", x: 1, y: 0 });
+    const moveHandled = mockSurfaces.mouse(wheelFallbackSurf.id, { type: "move", x: 1, y: 0 });
+    const wheelDownHandled = mockSurfaces.mouse(wheelFallbackSurf.id, { type: "wheel", x: 1, y: 0, wheelDelta: 2 });
+    const wheelUpHandled = mockSurfaces.mouse(wheelFallbackSurf.id, { type: "wheel", x: 1, y: 0, wheelDelta: -1 });
+    expect(
+      "Surfaces.mouse 遵循 Pi 1.6.0 handleMouse 返回 undefined=未处理，且未处理的 wheel 自动回退 ↑/↓",
+      clickHandled === true &&
+        moveHandled === false &&
+        wheelDownHandled === true &&
+        wheelUpHandled === true &&
+        JSON.stringify(receivedInputs) === JSON.stringify(["\x1b[B", "\x1b[B", "\x1b[A"]),
+      JSON.stringify({ clickHandled, moveHandled, wheelDownHandled, wheelUpHandled, receivedInputs }),
+    );
+    mockSurfaces.close(wheelFallbackSurf.id);
+
+    const nativeWheelCalls = [];
+    const nativeWheelInputs = [];
+    const nativeWheelSurf = await mockSurfaces.mount({
+      mode: "custom",
+      overlay: true,
+      build: () => ({
+        render: () => ["line1"],
+        handleMouse: (ev) => {
+          if (ev.type === "wheel") {
+            nativeWheelCalls.push(ev.wheelDelta);
+            return { handled: true };
+          }
+          return undefined;
+        },
+        handleInput: (data) => nativeWheelInputs.push(data),
+      }),
+    });
+    mockSurfaces.mouse(nativeWheelSurf.id, { type: "wheel", x: 0, y: 0, wheelDelta: -3 });
+    expect(
+      "Surfaces.mouse 在组件原生处理 wheel 时不再重复触发 ↑/↓ 回退",
+      JSON.stringify(nativeWheelCalls) === "[-3]" && nativeWheelInputs.length === 0,
+      JSON.stringify({ nativeWheelCalls, nativeWheelInputs }),
+    );
+    mockSurfaces.close(nativeWheelSurf.id);
+
     const exportJsonlPath = join(h.root, "exported-session.jsonl");
     const ej = await h.call("session.export", { outputPath: exportJsonlPath });
     expect(

@@ -7,6 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -112,7 +113,12 @@ internal fun buildTerminalGridRow(
                         val lastIdx = cells.lastIndex
                         val prev = cells[lastIdx]
                         if (prev.glyph.isNotEmpty()) {
-                            cells[lastIdx] = prev.copy(glyph = prev.glyph + text.substring(i, i + charCount))
+                            val promoted = cp == 0xFE0F && prev.colSpan == 1
+                            cells[lastIdx] = prev.copy(
+                                glyph = prev.glyph + text.substring(i, i + charCount),
+                                colSpan = if (promoted) 2 else prev.colSpan,
+                            )
+                            if (promoted) col += 1
                         }
                     }
                 }
@@ -195,13 +201,8 @@ internal fun TerminalGridRow(
 
     Canvas(
         modifier = modifier
-            .then(
-                if (rowData.totalCols > minCols) {
-                    Modifier.width(rowWidthDp)
-                } else {
-                    Modifier.fillMaxWidth()
-                },
-            )
+            .widthIn(min = rowWidthDp)
+            .fillMaxWidth()
             .height(rowHeightDp),
     ) {
         val cells = rowData.cells
@@ -545,7 +546,7 @@ private fun drawBoxDrawing(
         ARM_LIGHT, ARM_HEAVY -> {
             linePaint.strokeWidth = strokeFor(armL)
             val endX = if (hasDblV && armR == ARM_NONE) cx - dblGap else cx + linePaint.strokeWidth * 0.5f
-            canvas.drawLine(left, cy, endX.coerceAtMost(right), cy, linePaint)
+            canvas.drawLine(left - 0.5f, cy, endX.coerceAtMost(right + 0.5f), cy, linePaint)
         }
         ARM_DOUBLE -> {
             linePaint.strokeWidth = lightW
@@ -560,7 +561,7 @@ private fun drawBoxDrawing(
         ARM_LIGHT, ARM_HEAVY -> {
             linePaint.strokeWidth = strokeFor(armR)
             val startX = if (hasDblV && armL == ARM_NONE) cx + dblGap else cx - linePaint.strokeWidth * 0.5f
-            canvas.drawLine(startX.coerceAtLeast(left), cy, right, cy, linePaint)
+            canvas.drawLine(startX.coerceAtLeast(left - 0.5f), cy, right + 0.5f, cy, linePaint)
         }
         ARM_DOUBLE -> {
             linePaint.strokeWidth = lightW
@@ -575,7 +576,7 @@ private fun drawBoxDrawing(
         ARM_LIGHT, ARM_HEAVY -> {
             linePaint.strokeWidth = strokeFor(armU)
             val endY = if (hasDblH && armD == ARM_NONE) cy - dblGap else cy + linePaint.strokeWidth * 0.5f
-            canvas.drawLine(cx, 0f, cx, endY.coerceAtMost(h), linePaint)
+            canvas.drawLine(cx, -0.5f, cx, endY.coerceAtMost(h + 0.5f), linePaint)
         }
         ARM_DOUBLE -> {
             linePaint.strokeWidth = lightW
@@ -590,7 +591,7 @@ private fun drawBoxDrawing(
         ARM_LIGHT, ARM_HEAVY -> {
             linePaint.strokeWidth = strokeFor(armD)
             val startY = if (hasDblH && armU == ARM_NONE) cy + dblGap else cy - linePaint.strokeWidth * 0.5f
-            canvas.drawLine(cx, startY.coerceAtLeast(0f), cx, h, linePaint)
+            canvas.drawLine(cx, startY.coerceAtLeast(-0.5f), cx, h + 0.5f, linePaint)
         }
         ARM_DOUBLE -> {
             linePaint.strokeWidth = lightW

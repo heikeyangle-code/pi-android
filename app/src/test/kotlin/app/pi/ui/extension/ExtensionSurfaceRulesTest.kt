@@ -92,6 +92,10 @@ class ExtensionSurfaceRulesTest {
         assertEquals(2, terminalCharWidth('中'.code))
         assertEquals(2, terminalCharWidth(0x1F600)) // grinning face emoji
         assertEquals(0, terminalCharWidth(0x0301)) // combining acute accent
+        assertEquals(2, terminalCharWidth(0x23F3)) // ⏳ hourglass emoji presentation
+        assertEquals(2, terminalCharWidth(0x2705)) // ✅ check mark emoji
+        assertEquals(2, terminalCharWidth(0x26A1)) // ⚡ high voltage emoji
+        assertEquals(2, visibleColumns("⚠️")) // U+26A0 + FE0F promoted to 2 cols
     }
 
     @Test
@@ -130,6 +134,10 @@ class ExtensionSurfaceRulesTest {
         assertEquals("TETRIS", inferSurfaceTitle(tetrisLines))
         assertEquals("Chess", inferSurfaceTitle(listOf("╭──── Chess ────╮")))
         assertNull(inferSurfaceTitle(listOf("┌──────────┐", "│ . . . .  │")))
+        assertEquals(
+            "BTW · local · hidden thread preserved",
+            inferSurfaceTitle(listOf("┌────────────────────────────────────────┐", "│ BTW · local · hidden thread preserved │", "│ 1 exchange · streaming · ↑462 ↓0      │")),
+        )
     }
 
     @Test

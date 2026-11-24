@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -47,6 +48,8 @@ import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.KeyboardReturn
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -56,7 +59,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -75,9 +77,15 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
@@ -106,6 +114,31 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 private enum class SurfaceControlMode { Gamepad, Keyboard }
+
+/** 沉降式终端画布底色：基于当前主题 bg 与 cardBg 混合，脱离默认 M3 surfaceContainer。 */
+private fun surfaceWellBg(palette: app.pi.ui.theme.PiPalette): Color =
+    lerp(palette.bg, palette.cardBg, 0.32f)
+
+/** 控制按钮 / 键帽底色：在卡片底色上轻提 4.5% 前景对比，层次清晰而不刺眼。 */
+private fun surfaceKeyBg(palette: app.pi.ui.theme.PiPalette): Color =
+    lerp(palette.cardBg, palette.text, 0.048f)
+
+/** 悬浮卡片 / 最小化收起条底色。 */
+private fun surfaceFloatBg(palette: app.pi.ui.theme.PiPalette): Color =
+    lerp(palette.cardBg, palette.bg, 0.14f)
+
+/**
+ * 终端视口嵌套滚动护栏：
+ * 当视口内容支持原生垂直滚动时，吃掉到达顶/底后的余量滚动，防止在画布内滑动阅读时
+ * 误把整个底部弹层拖拽关闭（顶栏把手区域仍可正常下滑最小化）。
+ */
+private val ViewportScrollAbsorber = object : NestedScrollConnection {
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
+        Offset(0f, available.y)
+
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity =
+        Velocity(0f, available.y)
+}
 
 /**
  * 扩展自绘交互表面（`ctx.ui.custom()` / `tui.showOverlay()`）——手机端全能力适配版：
@@ -150,12 +183,12 @@ fun ExtensionSurfaceHost(
                 .padding(bottom = minimizedBottomPadding),
             contentAlignment = Alignment.BottomEnd,
         ) {
-            val pillShape = RoundedCornerShape(999.dp)
+            val pillShape = RoundedCornerShape(10.dp)
             Row(
                 modifier = Modifier
                     .shadow(elevation = 3.dp, shape = pillShape, clip = false)
                     .clip(pillShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .background(surfaceKeyBg(palette))
                     .border(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.50f), pillShape)
                     .clickable(role = Role.Button, onClickLabel = tr("恢复扩展界面", "Restore extension surface"), onClick = onRestore)
                     .padding(start = 12.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
@@ -186,7 +219,7 @@ fun ExtensionSurfaceHost(
                     modifier = Modifier
                         .size(28.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .background(surfaceKeyBg(palette))
                         .clickable(role = Role.Button, onClickLabel = tr("关闭扩展面板", "Close extension panel")) { onClose(id) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -281,12 +314,12 @@ fun ExtensionFloatingOverlayCard(
         contentAlignment = alignment,
     ) {
         if (collapsed) {
-            val pillShape = RoundedCornerShape(999.dp)
+            val pillShape = RoundedCornerShape(10.dp)
             Row(
                 modifier = Modifier
                     .shadow(elevation = 3.dp, shape = pillShape, clip = false)
                     .clip(pillShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.97f))
+                    .background(surfaceFloatBg(palette).copy(alpha = 0.97f))
                     .border(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.45f), pillShape)
                     .clickable(role = Role.Button, onClickLabel = tr("展开扩展悬浮层", "Restore floating HUD")) {
                         collapsed = false
@@ -319,7 +352,7 @@ fun ExtensionFloatingOverlayCard(
                     modifier = Modifier
                         .size(28.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .background(surfaceKeyBg(palette))
                         .clickable(role = Role.Button, onClickLabel = tr("关闭悬浮层", "Close overlay")) { onClose(id) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -339,7 +372,7 @@ fun ExtensionFloatingOverlayCard(
                 .widthIn(min = 196.dp, max = 312.dp)
                 .shadow(elevation = 3.dp, shape = cardShape, clip = false)
                 .clip(cardShape)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.97f))
+                .background(surfaceFloatBg(palette).copy(alpha = 0.97f))
                 .border(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.40f), cardShape)
                 .then(
                     if (onExpand != null) {
@@ -386,7 +419,7 @@ fun ExtensionFloatingOverlayCard(
                     modifier = Modifier
                         .size(28.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .background(surfaceKeyBg(palette))
                         .clickable(role = Role.Button, onClickLabel = tr("收起悬浮层", "Collapse floating HUD")) {
                             collapsed = true
                         },
@@ -403,7 +436,7 @@ fun ExtensionFloatingOverlayCard(
                     modifier = Modifier
                         .size(28.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .background(surfaceKeyBg(palette))
                         .clickable(role = Role.Button, onClickLabel = tr("关闭悬浮层", "Close overlay")) { onClose(id) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -633,16 +666,27 @@ private fun SurfaceSheetBody(
     val effectiveCols = if (measuredCols > 0) measuredCols else naturalCols
     val effectiveRows = if (measuredRows > 0) measuredRows else 24
     val needsHorizontalScroll = remember(maxContentCols, effectiveCols) { maxContentCols > effectiveCols }
-    val needsVerticalScroll = remember(rows.size, effectiveRows, useFullHeight) {
-        if (useFullHeight) rows.size > effectiveRows else rows.size > COMPACT_VIEWPORT_SCROLL_ROWS
+    val availViewportHeightPx = (viewportHeightPx - viewportPadVPx).coerceAtLeast(0)
+    // 以实测像素高度为准判断溢出（软键盘弹起压缩视口高度时也能立刻启用原生滚动，不再被硬编码行数卡死）。
+    val needsVerticalScroll = remember(rows.size, effectiveRows, useFullHeight, availViewportHeightPx, lineHeightPx) {
+        if (availViewportHeightPx > 0) {
+            rows.size * lineHeightPx > availViewportHeightPx + 2f
+        } else if (useFullHeight) {
+            rows.size > effectiveRows
+        } else {
+            rows.size > COMPACT_VIEWPORT_SCROLL_ROWS
+        }
     }
-    // 纯键盘组件在视口未溢出时开启「连续滑屏走格」；支持鼠标的组件优先保留触控直点与滚轮
+    // 纯 2D 游戏手柄模式（无文本光标、非鼠标、无溢出）保留四向连续滑屏走格；
+    // 其余所有交互式虚拟视口组件（如 BTW / 列表 / 日志 / 编辑器，无论是否处于键盘模式或是否声明 handleMouse）
+    // 一律开启「手指自然上下滑动滚动」——先发 wheel 给组件，组件未处理时宿主自动回退 ↑/↓！
     val swipeToArrowsEnabled = interactive &&
         !supportsMouse &&
+        !hasTextCursor &&
         controlMode == SurfaceControlMode.Gamepad &&
         !needsHorizontalScroll &&
         !needsVerticalScroll
-    val wheelEnabled = interactive && supportsMouse && !needsVerticalScroll
+    val touchScrollEnabled = interactive && !needsVerticalScroll && !swipeToArrowsEnabled
 
     val latestOnInput by rememberUpdatedState(onInput)
     val latestOnMouse by rememberUpdatedState(onMouse)
@@ -691,13 +735,14 @@ private fun SurfaceSheetBody(
                         SurfaceMetaBadge(text = tr("${stackCount}层", "${stackCount}L"), tint = palette.accent)
                     }
                 }
+                val iconBtnShape = RoundedCornerShape(8.dp)
                 if (onMinimize != null) {
                     Box(
                         modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), CircleShape)
+                            .size(32.dp)
+                            .clip(iconBtnShape)
+                            .background(surfaceKeyBg(palette))
+                            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.42f), iconBtnShape)
                             .clickable(role = Role.Button, onClickLabel = tr("最小化去对话", "Minimize to chat"), onClick = onMinimize),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -712,10 +757,10 @@ private fun SurfaceSheetBody(
                 val closeLabel = tr("关闭", "Close")
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                        .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), CircleShape)
+                        .size(32.dp)
+                        .clip(iconBtnShape)
+                        .background(surfaceKeyBg(palette))
+                        .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.42f), iconBtnShape)
                         .clickable(role = Role.Button, onClickLabel = closeLabel, onClick = onClose),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -740,10 +785,10 @@ private fun SurfaceSheetBody(
                         append("${effectiveCols}×${rows.size.coerceAtLeast(1)}")
                         when {
                             !interactive -> append(tr(" · 只读", " · Read-only"))
-                            supportsMouse -> append(tr(" · 触屏", " · Touch"))
-                            hasTextCursor -> append(tr(" · 文本", " · Text"))
-                            swipeToArrowsEnabled -> append(tr(" · 滑屏", " · Swipe"))
-                            else -> append(tr(" · 手柄", " · Pad"))
+                            touchScrollEnabled -> append(tr(" · 滑屏滚动", " · Touch scroll"))
+                            swipeToArrowsEnabled -> append(tr(" · 滑屏操控", " · Swipe"))
+                            needsVerticalScroll -> append(tr(" · 可滑动", " · Scroll"))
+                            else -> append(tr(" · 交互", " · Active"))
                         }
                     },
                     style = PiTheme.text.monoSmall,
@@ -774,8 +819,9 @@ private fun SurfaceSheetBody(
                     )
                 }
                 SurfaceToolbarPill(
-                    label = if (soundMuted) tr("静音", "Mute") else tr("音效", "Bell"),
-                    active = !soundMuted,
+                    label = if (soundMuted) tr("已静音", "Muted") else tr("提示音", "Bell"),
+                    active = soundMuted,
+                    leadingIcon = if (soundMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
                     onClick = onToggleSound,
                 )
                 if (rows.isNotEmpty()) {
@@ -825,7 +871,8 @@ private fun SurfaceSheetBody(
 
         // ---- 沉降式终端 Cell Grid 视口 ----
         val swipeStepPx = with(density) { 28.dp.toPx() }
-        val wheelStepPx = with(density) { 26.dp.toPx() }
+        val wheelStepPx = with(density) { 18.dp.toPx() }
+        val viewportShape = RoundedCornerShape(10.dp)
         val viewportModifier = Modifier
             .fillMaxWidth()
             .then(
@@ -835,9 +882,10 @@ private fun SurfaceSheetBody(
                     Modifier.heightIn(min = 120.dp, max = 440.dp)
                 },
             )
-            .clip(PiShapes.card)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), PiShapes.card)
+            .clip(viewportShape)
+            .background(surfaceWellBg(palette))
+            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.45f), viewportShape)
+            .nestedScroll(ViewportScrollAbsorber)
             .onSizeChanged { size ->
                 viewportWidthPx = size.width
                 viewportHeightPx = size.height
@@ -873,18 +921,21 @@ private fun SurfaceSheetBody(
                             }
                         }
                     }
-                    wheelEnabled -> Modifier.pointerInput(surfaceId, wheelStepPx, effectiveCols, rows.size) {
+                    touchScrollEnabled -> Modifier.pointerInput(surfaceId, wheelStepPx, effectiveCols, rows.size) {
                         var accY = 0f
-                        detectDragGestures(
+                        // 仅拦截垂直拖拽，保留水平滚动自由；同时消费事件避免 ModalBottomSheet 误触发下滑收起。
+                        detectVerticalDragGestures(
                             onDragStart = { accY = 0f },
                             onDragEnd = { accY = 0f },
                             onDragCancel = { accY = 0f },
                         ) { change, dragAmount ->
                             change.consume()
-                            accY += dragAmount.y
-                            while (abs(accY) >= wheelStepPx) {
-                                val delta = if (accY > 0f) -1 else 1
-                                accY += if (accY > 0f) -wheelStepPx else wheelStepPx
+                            accY += dragAmount
+                            if (abs(accY) >= wheelStepPx) {
+                                val steps = (abs(accY) / wheelStepPx).toInt().coerceIn(1, 4)
+                                // 自然触屏方向：手指上滑 (accY < 0) 向下看内容 (+steps)；手指下滑 (accY > 0) 向上翻历史 (-steps)
+                                val delta = if (accY > 0f) -steps else steps
+                                accY += if (accY > 0f) -steps * wheelStepPx else steps * wheelStepPx
                                 val col = (change.position.x / charWidthPx).toInt().coerceIn(0, (effectiveCols - 1).coerceAtLeast(0))
                                 val row = (change.position.y / lineHeightPx).toInt().coerceIn(0, (rows.size - 1).coerceAtLeast(0))
                                 latestOnMouse(surfaceId, col, row, effectiveCols, rows.size.coerceAtLeast(1), "wheel", delta)
@@ -917,7 +968,7 @@ private fun SurfaceSheetBody(
                             line = line,
                             rowIndex = rowIndex,
                             totalRows = rows.size,
-                            measuredCols = effectiveCols,
+                            measuredCols = if (needsHorizontalScroll) maxOf(effectiveCols, maxContentCols) else effectiveCols,
                             charWidthPx = charWidthPx,
                             lineHeightPx = lineHeightPx,
                             monoStyle = monoStyle,
@@ -942,7 +993,7 @@ private fun SurfaceSheetBody(
                             line = line,
                             rowIndex = rowIndex,
                             totalRows = rows.size,
-                            measuredCols = effectiveCols,
+                            measuredCols = if (needsHorizontalScroll) maxOf(effectiveCols, maxContentCols) else effectiveCols,
                             charWidthPx = charWidthPx,
                             lineHeightPx = lineHeightPx,
                             monoStyle = monoStyle,
@@ -1070,7 +1121,7 @@ private fun QuickLegendChip(
     Row(
         modifier = Modifier
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .background(surfaceKeyBg(palette))
             .border(PiSpacing.hairline, palette.borderMuted, shape)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 5.dp),
@@ -1197,7 +1248,7 @@ private fun SurfaceControlDock(
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .background(surfaceKeyBg(palette))
                         .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), RoundedCornerShape(10.dp)),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -1226,7 +1277,7 @@ private fun SurfaceControlDock(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .background(surfaceWellBg(palette))
                     .border(1.dp, palette.accent.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
                     .padding(start = 8.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1236,7 +1287,7 @@ private fun SurfaceControlDock(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(7.dp))
-                        .background(if (liveTyping) palette.accent.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .background(if (liveTyping) palette.accent.copy(alpha = 0.16f) else surfaceKeyBg(palette))
                         .clickable(role = Role.Button) {
                             liveTyping = !liveTyping
                             liveField = TextFieldValue(LIVE_SENTINEL, TextRange(1))
@@ -1387,7 +1438,7 @@ private fun SurfaceControlDock(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(PiShapes.cardInner)
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .background(surfaceWellBg(palette))
                     .border(PiSpacing.hairline, palette.borderMuted, PiShapes.cardInner)
                     .padding(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1497,8 +1548,8 @@ private fun RepeatableKeySurface(
     val shape = RoundedCornerShape(10.dp)
     val bg = when {
         pressed -> palette.accent.copy(alpha = 0.24f)
-        subtle -> MaterialTheme.colorScheme.surfaceContainerLow
-        else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        subtle -> surfaceWellBg(palette)
+        else -> surfaceKeyBg(palette)
     }
     val border = if (pressed) palette.accent.copy(alpha = 0.7f) else palette.borderMuted.copy(alpha = 0.55f)
     Box(
@@ -1562,7 +1613,7 @@ private fun GamepadActionButton(
         pressed -> palette.accent.copy(alpha = 0.26f)
         primary -> palette.accent.copy(alpha = 0.16f)
         active -> palette.selectedBg
-        else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        else -> surfaceKeyBg(palette)
     }
     val border = when {
         pressed || primary -> palette.accent.copy(alpha = 0.55f)
@@ -1683,7 +1734,7 @@ private fun DockActionButton(
     val bg = when {
         primary -> palette.accent.copy(alpha = 0.16f)
         active -> palette.selectedBg
-        else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        else -> surfaceKeyBg(palette)
     }
     val border = when {
         primary -> palette.accent.copy(alpha = 0.50f)
@@ -1733,7 +1784,7 @@ private fun SecondaryKeyChip(label: String, danger: Boolean = false, onClick: ()
     Box(
         modifier = Modifier
             .clip(shape)
-            .background(if (danger) palette.toolErrorBg else MaterialTheme.colorScheme.surfaceContainerHigh)
+            .background(if (danger) palette.toolErrorBg else surfaceKeyBg(palette))
             .border(
                 PiSpacing.hairlineThin,
                 if (danger) palette.error.copy(alpha = 0.4f) else palette.borderMuted.copy(alpha = 0.55f),
@@ -1767,7 +1818,7 @@ private fun MiniInputButton(
     val bg = when {
         !enabled -> Color.Transparent
         primary -> palette.accent.copy(alpha = 0.16f)
-        else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        else -> surfaceKeyBg(palette)
     }
     val fg = when {
         !enabled -> palette.dim
@@ -1808,19 +1859,19 @@ private fun SurfaceToolbarPill(
     onClick: () -> Unit,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(999.dp)
+    val shape = RoundedCornerShape(7.dp)
     Row(
         modifier = Modifier
-            .heightIn(min = 28.dp)
+            .heightIn(min = 26.dp)
             .clip(shape)
-            .background(if (active) palette.accent.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceContainerHigh)
+            .background(if (active) palette.accent.copy(alpha = 0.13f) else surfaceKeyBg(palette))
             .border(
                 PiSpacing.hairlineThin,
-                if (active) palette.accent.copy(alpha = 0.45f) else palette.borderMuted.copy(alpha = 0.55f),
+                if (active) palette.accent.copy(alpha = 0.42f) else palette.borderMuted.copy(alpha = 0.40f),
                 shape,
             )
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 9.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -1843,7 +1894,7 @@ private fun SurfaceToolbarPill(
 
 @Composable
 private fun SurfaceMetaBadge(text: String, tint: Color) {
-    val shape = RoundedCornerShape(999.dp)
+    val shape = RoundedCornerShape(6.dp)
     Box(
         modifier = Modifier
             .clip(shape)
