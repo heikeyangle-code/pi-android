@@ -58,6 +58,12 @@ enum class ChatAction {
 
     /** 菜单用：查看当前生效的系统提示词（由对话顶栏 ⋯ 命令中心直达）。 */
     ViewSystemPrompt,
+    /** `/changelog`：直读官方 SDK CHANGELOG.md 并原生渲染更新日志面板。 */
+    ShowChangelog,
+    /** `/trust`：就地弹出官方 ProjectTrustHost 项目信任决策弹窗。 */
+    ShowTrust,
+    /** `/logout [provider]`：就地一键移除服务商登录凭据。 */
+    Logout,
 
     /** pi 有这个命令，这个客户端做不了：点一下说明原因（[UNSUPPORTED_BUILTIN_REASONS]），不假装。 */
     Unsupported,
@@ -212,7 +218,7 @@ val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
         "Duplicate the current session at the current position",
     ),
     "trust" to ClientBuiltin(
-        ChatAction.OpenSettings,
+        ChatAction.ShowTrust,
         "保存项目信任决定",
         "Save project trust decision for future sessions",
     ),
@@ -224,9 +230,15 @@ val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
         completes = true,
     ),
     "logout" to ClientBuiltin(
-        ChatAction.OpenSettings,
+        ChatAction.Logout,
         "移除模型服务商登录",
         "Remove provider authentication",
+        argumentHint = "[provider]",
+    ),
+    "changelog" to ClientBuiltin(
+        ChatAction.ShowChangelog,
+        "查看 Pi 版本更新日志",
+        "Show changelog",
     ),
     "new" to ClientBuiltin(ChatAction.NewSession, "开始新会话", "Start a new session"),
     "compact" to ClientBuiltin(ChatAction.Compact, "手动压缩会话上下文", "Manually compact the session context"),
@@ -245,10 +257,6 @@ val UNSUPPORTED_BUILTIN_REASONS: Map<String, Pair<String, String>> = mapOf(
     "share" to (
         "分享需要把会话上传到 Radius 或用 gh 建 gist，本应用没有这条路；要把会话交出去请用 /export。" to
             "Sharing requires Radius or gh gist, which is not available on Android. Use /export instead."
-        ),
-    "changelog" to (
-        "更新日志是终端里的文本面板；本应用的版本变化看应用自己的更新说明。" to
-            "Changelog is a terminal-only view; check the app's release notes for changes."
         ),
     "hotkeys" to (
         "快捷键列表对触屏没有意义。" to

@@ -32,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.semantics.Role
@@ -85,6 +86,7 @@ fun ExtensionUiHost(
         session.state.map { it.toExtensionHostSlice() }.distinctUntilChanged()
     }.collectAsStateWithLifecycle(initialValue = session.state.value.toExtensionHostSlice())
     val hostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
     val bellMuted = ExtensionSound.muted
     var lastHandledBellSeq by remember { mutableStateOf(hostSlice.bellSeq) }
     var minimizedSurfaceId by remember { mutableStateOf<String?>(null) }
@@ -108,7 +110,7 @@ fun ExtensionUiHost(
     LaunchedEffect(hostSlice.bellSeq) {
         if (hostSlice.bellSeq > lastHandledBellSeq) {
             lastHandledBellSeq = hostSlice.bellSeq
-            ExtensionSound.playBell()
+            ExtensionSound.playBell(context)
         }
     }
 

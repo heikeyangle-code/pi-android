@@ -291,6 +291,9 @@ object PiThemeLoader {
         val entry = discover(agentDir, workspace, configured, extraThemes).firstOrNull { it.name == name }
         val file = entry?.path?.let(::File)
         if (file == null || !file.isFile) {
+            if (name == "app") {
+                return PiResolvedTheme.fallback(systemDark)
+            }
             return PiResolvedTheme.fallback(systemDark).copy(
                 setting = raw,
                 error = tr("找不到主题「$name」", "Theme \"$name\" not found"),

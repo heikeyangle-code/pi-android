@@ -235,7 +235,7 @@ internal fun PiSessionViewModel.resolveCwdMissingContinueImpl() {
         }
         is CwdMissingAction.Import -> {
             val api = this.api ?: run {
-                runCatching { action.stagedFile.delete() }
+                runCatching { action.stagedFile?.delete() }
                 fail(tr("引擎还没有就绪，请重试导入。", "Engine is not ready yet; retry import."))
                 return
             }
@@ -255,7 +255,7 @@ internal fun PiSessionViewModel.resolveCwdMissingContinueImpl() {
                 } catch (error: Throwable) {
                     fail(SessionImport.failureSentence((error as? HostCommandException)?.reason ?: error.message))
                 } finally {
-                    runCatching { action.stagedFile.delete() }
+                    runCatching { action.stagedFile?.delete() }
                     releaseBusy(token)
                 }
             }
@@ -270,7 +270,7 @@ internal fun PiSessionViewModel.resolveCwdMissingForkImpl() {
         is CwdMissingAction.Switch -> forkSessionToCurrentWorkspace(action.summary)
         is CwdMissingAction.Import -> {
             val api = this.api ?: run {
-                runCatching { action.stagedFile.delete() }
+                runCatching { action.stagedFile?.delete() }
                 fail(tr("引擎还没有就绪，请重试导入。", "Engine is not ready yet; retry import."))
                 return
             }
@@ -291,7 +291,7 @@ internal fun PiSessionViewModel.resolveCwdMissingForkImpl() {
                 } catch (error: Throwable) {
                     fail(error.message ?: tr("分支会话失败", "Failed to branch session"))
                 } finally {
-                    runCatching { action.stagedFile.delete() }
+                    runCatching { action.stagedFile?.delete() }
                     releaseBusy(token)
                 }
             }
@@ -303,7 +303,7 @@ internal fun PiSessionViewModel.dismissCwdMissingImpl() {
     val prompt = _cwdMissing.value ?: return
     _cwdMissing.value = null
     if (prompt.action is CwdMissingAction.Import) {
-        runCatching { prompt.action.stagedFile.delete() }
+        runCatching { prompt.action.stagedFile?.delete() }
     }
 }
 
@@ -449,6 +449,61 @@ internal fun PiSessionViewModel.importSessionImpl(source: Uri) {
             if (!deferCleanup) {
                 runCatching { stagedFile?.delete() }
             }
+            releaseBusy(importToken)
+        }
+    }
+}
+
+/**
+ * `/import <path>`：直接把用户输入的 guest 路径（支持相对当前工作区路径或绝对路径）交给官方 `session.import`。
+ */
+internal fun PiSessionViewModel.importSessionPathImpl(rawPath: String) {
+    val api = this.api ?: run {
+        fail(tr("引擎还没有就绪，等它启动完成后再导入。", "Engine is not ready yet; wait for startup to finish before importing."))
+        return
+    }
+    val trimmed = rawPath.trim().trim('"', '\'')
+    if (trimmed.isEmpty()) return
+    val resolved = if (trimmed.startsWith("/")) {
+        trimmed
+    } else {
+        "${guestWorkspace().trimEnd('/')}/$trimmed"
+    }
+    val displayName = resolved.substringAfterLast('/').ifBlank { resolved }
+    viewModelScope.launch {
+        val importToken = claimBusy(tr("导入会话", "Importing session"))
+        try {
+            val result = try {
+                api.importSessionFile(resolved, cwd = guestWorkspace())
+            } catch (error: HostCommandException) {
+                if (error.code == "cwd_missing") {
+                    val issue = ((error.details as? JsonObject)?.get("issue") as? JsonPrimitive)
+                        ?.takeIf { it.isString }?.content
+                    _cwdMissing.value = CwdMissingPrompt(
+                        reason = error.reason,
+                        issue = issue,
+                        action = CwdMissingAction.Import(
+                            stagedFile = null,
+                            guestPath = resolved,
+                            displayName = displayName,
+                        ),
+                    )
+                    return@launch
+                }
+                throw error
+            }
+            if (result.cancelled) {
+                pushNotice(tr("扩展取消了导入会话", "An extension cancelled importing the session"), Notice.Tone.Warning)
+            } else {
+                afterSessionReplaced()
+                requestNav(NavRequest.Chat)
+                pushNotice(tr("已导入会话：$displayName", "Imported session: $displayName"), Notice.Tone.Info)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            fail(SessionImport.failureSentence((error as? HostCommandException)?.reason ?: error.message))
+        } finally {
             releaseBusy(importToken)
         }
     }

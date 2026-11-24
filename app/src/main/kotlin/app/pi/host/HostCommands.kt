@@ -477,8 +477,28 @@ class HostCommands(
         return AutocompleteApplyResult(lines = nextLines, cursorLine = nextLine, cursorCol = nextCol)
     }
 
-    suspend fun uiPalette(palette: Map<String, String>) {
-        client.call("ui.palette", obj { put("palette", JsonObject(palette.mapValues { JsonPrimitive(it.value) })) })
+    data class ChangelogResult(
+        val version: String,
+        val markdown: String,
+        val path: String?,
+        val truncated: Boolean,
+    )
+
+    suspend fun changelog(): ChangelogResult {
+        val res = client.callObject("catalog.changelog")
+        return ChangelogResult(
+            version = res.str("version").orEmpty(),
+            markdown = res.str("markdown").orEmpty(),
+            path = res.str("path"),
+            truncated = (res["truncated"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() == true,
+        )
+    }
+
+    suspend fun uiPalette(palette: Map<String, String>, name: String? = null) {
+        client.call("ui.palette", obj {
+            put("palette", JsonObject(palette.mapValues { JsonPrimitive(it.value) }))
+            name?.takeIf { it.isNotBlank() }?.let { put("name", JsonPrimitive(it)) }
+        })
     }
 
     /** 触发扩展通过 `pi.registerShortcut(shortcut, ...)` 注册的快捷键动作。 */

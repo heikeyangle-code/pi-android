@@ -59,8 +59,9 @@ function isLightHex(hex) {
   return (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) > 140;
 }
 
-export function createTheme(initial = DEFAULT_PALETTE) {
+export function createTheme(initial = DEFAULT_PALETTE, initialName) {
   let palette = { ...DEFAULT_PALETTE, ...initial };
+  let themeName = typeof initialName === "string" && initialName.trim() ? initialName.trim() : (isLightHex(palette.pageBg ?? palette.userMessageBg ?? palette.selectedBg) ? "light" : "dark");
   const resolveToken = (name) => {
     if (palette[name]) return palette[name];
     if (name === "toolDiffAdded") return palette.diffAdded;
@@ -88,7 +89,9 @@ export function createTheme(initial = DEFAULT_PALETTE) {
     return ansi ? `${ansi}${text}${RESET_BG}` : String(text);
   };
   const real = {
-    name: "app",
+    get name() {
+      return themeName;
+    },
     get appearance() {
       return isLightHex(palette.pageBg ?? palette.userMessageBg ?? palette.selectedBg) ? "light" : "dark";
     },
@@ -138,13 +141,23 @@ export function createTheme(initial = DEFAULT_PALETTE) {
   return {
     theme,
     /** App 主题变化时调用：整体换色板，下一次渲染生效。 */
-    setPalette(next) {
+    setPalette(next, name) {
+      if (typeof name === "string" && name.trim()) themeName = name.trim();
       if (!next || typeof next !== "object") return;
       palette = { ...palette, ...next };
       // 双向兼容 diffAdded / toolDiffAdded 键名
       if (next.diffAdded && !next.toolDiffAdded) palette.toolDiffAdded = next.diffAdded;
       if (next.diffRemoved && !next.toolDiffRemoved) palette.toolDiffRemoved = next.diffRemoved;
       if (next.diffContext && !next.toolDiffContext) palette.toolDiffContext = next.diffContext;
+      if (!name) {
+        const bgHex = palette.pageBg ?? palette.userMessageBg ?? palette.selectedBg;
+        if (themeName === "dark" || themeName === "light" || themeName === "app") {
+          themeName = isLightHex(bgHex) ? "light" : "dark";
+        }
+      }
+    },
+    setName(name) {
+      if (typeof name === "string" && name.trim()) themeName = name.trim();
     },
     getPalette: () => ({ ...palette }),
   };

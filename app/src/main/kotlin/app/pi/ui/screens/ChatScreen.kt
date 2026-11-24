@@ -1354,12 +1354,13 @@ internal fun ChatBody(
         )
     }
     val themePalette = PiTheme.palette
+    val activeTheme by session.theme.collectAsStateWithLifecycle()
     // 键是「引擎在不在」而不是引擎状态本身：Busy/Ready 每个回合都在切，推色板会让宿主重绘全部表面。
     val engineUp = state.engine == app.pi.engine.PiEngineSession.EngineState.Ready ||
         state.engine == app.pi.engine.PiEngineSession.EngineState.Busy
-    LaunchedEffect(themePalette, engineUp) {
+    LaunchedEffect(themePalette, activeTheme.name, engineUp) {
         if (engineUp) {
-            session.pushExtensionPalette(themePalette.toExtensionPalette())
+            session.pushExtensionPalette(themePalette.toExtensionPalette(), activeTheme.name)
         }
     }
 
@@ -1483,16 +1484,13 @@ internal fun ChatBody(
             // *guest*, which the app's own reader has no entry point for. So the
             // picker opens — and the argument is **said to be ignored** rather than
             // dropped in silence, which is the one option that is never acceptable.
+            // `/import [path]`：带路径参数时直传官方 `session.import`（支持相对当前工作区或绝对路径）；无参数则开系统文件选择器。
             ChatAction.ImportSession -> {
                 if (args.isNotBlank()) {
-                    session.notifyUser(
-                        tr(
-                            "本应用改用文件选择器导入，参数「$args」被忽略：请在选择器里挑那个 .jsonl 文件。",
-                            "This app imports via the file picker; argument \"$args\" was ignored. Please select the .jsonl file in the picker.",
-                        ),
-                    )
+                    session.importSessionPath(args.trim())
+                } else {
+                    importPicker.launch("*/*")
                 }
-                importPicker.launch("*/*")
             }
             // 以下都是 pi 的内建命令在手机上的做法：打开对应的界面，或直接执行。每一项都和
             // 「⋯」菜单 / 顶栏里的同名入口走同一个函数，不另起一套。
@@ -1504,8 +1502,6 @@ internal fun ChatBody(
                             if (args.isNotBlank()) "hub:models:${args.trim()}" else "hub:models",
                         ),
                     )
-                    "logout" -> session.requestNav(NavRequest.SettingsFocus("hub:models"))
-                    "trust" -> session.requestNav(NavRequest.SettingsFocus("hub:resources:project"))
                     else -> {
                         command?.let { CLIENT_BUILTINS[it.name]?.note }?.let { session.notifyUser(it) }
                         onOpenSettings()
@@ -1570,6 +1566,13 @@ internal fun ChatBody(
             }
             ChatAction.ToolsSheet -> sheet = ChatSheet.Tools
             ChatAction.ViewSystemPrompt -> sheet = ChatSheet.SystemPrompt
+            ChatAction.ShowChangelog -> sheet = ChatSheet.Changelog
+            ChatAction.ShowTrust -> session.openProjectTrustPrompt()
+            ChatAction.Logout -> if (args.isNotBlank()) {
+                session.logoutProvider(args.trim())
+            } else {
+                sheet = ChatSheet.Logout
+            }
             ChatAction.Unsupported ->
                 session.notifyUser(unsupportedReason(command?.name.orEmpty()), warning = true)
         }

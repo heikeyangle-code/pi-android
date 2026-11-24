@@ -46,15 +46,20 @@ internal fun ProjectTrustHost(session: PiSessionViewModel) {
     var error by remember(state.cwd) { mutableStateOf<String?>(null) }
     var busy by remember(state.cwd) { mutableStateOf(false) }
 
+    val options = if (state.undecided) {
+        PiProjectTrust.promptOptions(state)
+    } else {
+        PiProjectTrust.adjustments(state)
+    }
     PiSettingsDialog(
         onDismissRequest = { if (!busy) session.dismissTrustPrompt() },
-        title = tr("信任这个项目吗？", "Trust this project?"),
+        title = if (state.undecided) tr("信任这个项目吗？", "Trust this project?") else tr("项目信任设置", "Project Trust"),
         sub = state.cwd,
         body = PiProjectTrust.explanation(state),
         content = {
             Column {
                 TrustOptionList(
-                    options = PiProjectTrust.promptOptions(state),
+                    options = options,
                     enabled = !busy,
                     onPick = { option ->
                         busy = true
@@ -99,14 +104,14 @@ internal fun TrustOptionList(
                 color = if (option.grants) {
                     palette.accent.copy(alpha = 0.10f)
                 } else {
-                    MaterialTheme.colorScheme.surfaceContainerLow
+                    palette.cardBg
                 },
                 border = BorderStroke(
-                    width = 1.dp,
+                    width = PiSpacing.hairlineThin,
                     color = if (option.grants) {
-                        palette.accent.copy(alpha = 0.38f)
+                        palette.accent.copy(alpha = 0.44f)
                     } else {
-                        MaterialTheme.colorScheme.outlineVariant
+                        palette.borderMuted
                     },
                 ),
             ) {

@@ -5,6 +5,7 @@ import { withState } from "../state.mjs";
 import { sanitizeRenderedLine } from "../ui/surfaces.mjs";
 
 import { pathToFileURL } from "node:url";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -403,6 +404,26 @@ export function register(reg, { controller }) {
     }
     return c;
   };
+
+  // 官方 `/changelog`：直读官方 SDK 包目录下的 CHANGELOG.md 与 sdk.VERSION。
+  reg.add("catalog.changelog", () => {
+    const version = typeof controller.sdk.VERSION === "string" ? controller.sdk.VERSION : "";
+    const pkgDir = typeof controller.sdk.getPackageDir === "function"
+      ? controller.sdk.getPackageDir()
+      : controller.cfg.piDir;
+    const changelogPath = join(pkgDir, "CHANGELOG.md");
+    if (!existsSync(changelogPath)) {
+      return { version, markdown: "", path: changelogPath, truncated: false };
+    }
+    const raw = readFileSync(changelogPath, "utf8");
+    const MAX_BYTES = 96 * 1024;
+    if (raw.length > MAX_BYTES) {
+      const cut = raw.lastIndexOf("\n## ", MAX_BYTES);
+      const end = cut > 4096 ? cut : MAX_BYTES;
+      return { version, markdown: raw.slice(0, end).trimEnd(), path: changelogPath, truncated: true };
+    }
+    return { version, markdown: raw, path: changelogPath, truncated: false };
+  });
 
   reg.add("render.tool", (args) => {
     const s = controller.requireSession();

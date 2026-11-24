@@ -1,6 +1,8 @@
 package app.pi.ui.extension
 
+import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.AudioFormat
 import android.media.AudioTrack
 import androidx.compose.runtime.getValue
@@ -58,8 +60,14 @@ internal object ExtensionSound {
         muted = !muted
     }
 
-    fun playBell() {
+    fun playBell(context: Context? = null) {
         if (muted) return
+        if (context != null) {
+            val mode = runCatching {
+                (context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.ringerMode
+            }.getOrNull()
+            if (mode == AudioManager.RINGER_MODE_SILENT || mode == AudioManager.RINGER_MODE_VIBRATE) return
+        }
         val now = System.currentTimeMillis()
         val prev = lastPlayedMs.get()
         if (now - prev < MIN_INTERVAL_MS) return

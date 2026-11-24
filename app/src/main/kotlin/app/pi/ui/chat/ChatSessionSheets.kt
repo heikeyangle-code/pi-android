@@ -58,6 +58,11 @@ import app.pi.i18n.tr
 import app.pi.protocol.PiResponses
 import app.pi.protocol.QueueMode
 import app.pi.ui.PiSessionViewModel
+import kotlinx.coroutines.launch
+import app.pi.ui.render.PiMarkdownText
+import app.pi.host.HostCommands
+import app.pi.host.HostAuth
+import androidx.compose.runtime.rememberCoroutineScope
 import app.pi.ui.components.PiDialog
 import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
@@ -116,7 +121,7 @@ fun SessionToolsSheet(
                     tone = palette.warning,
                     onPick = onSteeringMode,
                 )
-                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                HorizontalDivider(thickness = PiSpacing.hairlineThin, color = palette.borderMuted.copy(alpha = 0.7f))
                 QueueModeRow(
                     title = tr("后续消息（Follow-up）", "Follow-up Messages"),
                     supporting = tr("整轮回复结束后顺序投递", "Delivered in order after the current turn completes"),
@@ -134,14 +139,14 @@ fun SessionToolsSheet(
                     checked = state.meta.autoCompaction,
                     onCheckedChange = onAutoCompaction,
                 )
-                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                HorizontalDivider(thickness = PiSpacing.hairlineThin, color = palette.borderMuted.copy(alpha = 0.7f))
                 PiSwitchRow(
                     title = tr("自动退避重试", "Auto-Retry"),
                     supporting = tr("遇到限流或网络抖动时自动重试", "Retry automatically on rate limits or transient errors"),
                     checked = state.meta.autoRetry,
                     onCheckedChange = onAutoRetry,
                 )
-                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                HorizontalDivider(thickness = PiSpacing.hairlineThin, color = palette.borderMuted.copy(alpha = 0.7f))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -193,8 +198,9 @@ private fun QueueModeRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .clip(RoundedCornerShape(9.dp))
+                .background(PiTheme.palette.pageBg.copy(alpha = 0.55f))
+                .border(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.7f), RoundedCornerShape(9.dp))
                 .padding(3.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -238,9 +244,9 @@ private fun SessionGridTile(
     Surface(
         onClick = onClick,
         modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = RoundedCornerShape(12.dp),
+        color = PiTheme.palette.cardBg,
+        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
@@ -334,9 +340,9 @@ fun ForkPickerSheet(
                                 onDismiss()
                             },
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(13.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerLow,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            shape = RoundedCornerShape(11.dp),
+                            color = palette.cardBg,
+                            border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
                         ) {
                             Row(
                                 modifier = Modifier
@@ -403,9 +409,9 @@ fun RenameSessionDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(44.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                .border(1.dp, palette.borderAccent.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(10.dp))
+                .background(palette.cardBg)
+                .border(1.dp, palette.accent.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
                 .padding(start = 12.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -632,9 +638,9 @@ internal fun ActiveSystemPromptSheet(
                         val active = selectedSection == id
                         Surface(
                             onClick = { selectedSection = id },
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (active) palette.accent else MaterialTheme.colorScheme.surfaceContainer,
-                            border = if (active) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (active) palette.accent else palette.cardBg,
+                            border = if (active) null else BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
                         ) {
                             Text(
                                 text = label,
@@ -699,6 +705,331 @@ internal fun ActiveSystemPromptSheet(
                                 style = PiTheme.text.monoSmall,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+/**
+ * `/changelog`：直读官方 Pi SDK `CHANGELOG.md` 与 `VERSION` 并用应用内 Markdown 管线渲染。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ChangelogSheet(
+    session: PiSessionViewModel,
+    onDismiss: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    var loading by remember { mutableStateOf(true) }
+    var result by remember { mutableStateOf<HostCommands.ChangelogResult?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(session) {
+        loading = true
+        error = null
+        val cmds = session.hostCommands()
+        if (cmds == null) {
+            error = tr(
+                "引擎未运行：启动后即可读取当前内置 Pi SDK 的官方更新日志。",
+                "Engine is not running. Start it to read the bundled Pi SDK changelog.",
+            )
+        } else {
+            runCatching { cmds.changelog() }
+                .onSuccess { result = it }
+                .onFailure { error = it.message ?: tr("读取更新日志失败", "Failed to read changelog") }
+        }
+        loading = false
+    }
+
+    PiSheet(onDismiss = onDismiss, fullHeight = true) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = PiSpacing.pageHorizontal)
+                .padding(bottom = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = tr("Pi 更新日志", "Pi Changelog"),
+                        style = PiType.title,
+                        color = palette.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    val ver = result?.version.orEmpty()
+                    if (ver.isNotEmpty()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            MiniBadge("Pi SDK v$ver", palette.accent)
+                            if (result?.truncated == true) {
+                                MiniBadge(tr("已展示最新版本", "Latest entries"), palette.muted)
+                            }
+                        }
+                    }
+                }
+                SheetActionPill(
+                    text = tr("关闭", "Close"),
+                    primary = false,
+                    onClick = onDismiss,
+                )
+            }
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                shape = RoundedCornerShape(12.dp),
+                color = palette.cardBg,
+                border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
+            ) {
+                when {
+                    loading -> Box(
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = tr("正在读取官方更新日志…", "Loading official changelog…"),
+                            style = PiTheme.text.meta,
+                            color = palette.muted,
+                        )
+                    }
+                    error != null -> Box(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    ) {
+                        Text(
+                            text = error.orEmpty(),
+                            style = PiTheme.text.meta,
+                            color = palette.warning,
+                        )
+                    }
+                    result?.markdown.isNullOrBlank() -> Box(
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = tr("当前内置 SDK 包未附带 CHANGELOG.md。", "No CHANGELOG.md found in the bundled SDK package."),
+                            style = PiTheme.text.meta,
+                            color = palette.muted,
+                        )
+                    }
+                    else -> Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                    ) {
+                        PiMarkdownText(
+                            markdown = result?.markdown.orEmpty(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * `/logout`：就地列出当前已配置登录凭据的服务商，支持一键退出，无需跳转离屏。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun LogoutPickerSheet(
+    session: PiSessionViewModel,
+    onManageProviders: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    val scope = rememberCoroutineScope()
+    var loading by remember { mutableStateOf(true) }
+    var providers by remember { mutableStateOf<List<HostAuth.Provider>>(emptyList()) }
+    var busyId by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(session) {
+        loading = true
+        error = null
+        val auth = session.hostAuth()
+        if (auth == null) {
+            error = tr("引擎未运行，暂时无法读取登录状态。", "Engine is not running; cannot read provider login status.")
+        } else {
+            runCatching { auth.providers().filter { it.configured } }
+                .onSuccess { providers = it }
+                .onFailure { error = it.message ?: tr("读取服务商列表失败", "Failed to load providers") }
+        }
+        loading = false
+    }
+
+    PiSheet(onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSpacing.pageHorizontal)
+                .padding(bottom = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = tr("退出服务商登录", "Log Out Provider"),
+                        style = PiType.title,
+                        color = palette.text,
+                    )
+                    Text(
+                        text = tr("点按即可移除本地保存的 OAuth 令牌或 API Key", "Tap to remove locally stored OAuth tokens or API keys"),
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                    )
+                }
+                SheetActionPill(
+                    text = tr("供应商管理", "Providers"),
+                    primary = false,
+                    onClick = {
+                        onDismiss()
+                        onManageProviders()
+                    },
+                )
+            }
+
+            when {
+                loading -> Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = palette.cardBg,
+                    border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
+                ) {
+                    Text(
+                        text = tr("正在读取已登录的服务商…", "Loading signed-in providers…"),
+                        modifier = Modifier.padding(16.dp),
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                    )
+                }
+                error != null -> Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = palette.cardBg,
+                    border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
+                ) {
+                    Text(
+                        text = error.orEmpty(),
+                        modifier = Modifier.padding(16.dp),
+                        style = PiTheme.text.meta,
+                        color = palette.warning,
+                    )
+                }
+                providers.isEmpty() -> Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = palette.cardBg,
+                    border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
+                ) {
+                    Text(
+                        text = tr("当前没有已保存登录凭据的服务商。", "No providers currently have saved login credentials."),
+                        modifier = Modifier.padding(16.dp),
+                        style = PiTheme.text.prose,
+                        color = palette.muted,
+                    )
+                }
+                else -> Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 380.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    providers.forEach { provider ->
+                        val signingOut = busyId == provider.id
+                        val badgeLabel = when {
+                            provider.usingSubscription -> tr("订阅", "Subscription")
+                            provider.usingOAuth -> "OAuth"
+                            else -> "API Key"
+                        }
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(11.dp),
+                            color = palette.cardBg,
+                            border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        Text(
+                                            text = provider.name,
+                                            style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+                                            color = palette.text,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        MiniBadge(badgeLabel, palette.accent)
+                                    }
+                                    Text(
+                                        text = provider.id,
+                                        style = PiTheme.text.monoSmall,
+                                        color = palette.dim,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Surface(
+                                    onClick = {
+                                        if (busyId != null) return@Surface
+                                        val auth = session.hostAuth() ?: return@Surface
+                                        busyId = provider.id
+                                        scope.launch {
+                                            runCatching { auth.logout(provider.id) }
+                                                .onSuccess {
+                                                    providers = providers.filterNot { it.id == provider.id }
+                                                    session.refreshModels()
+                                                    session.notifyUser(
+                                                        tr("已退出「${provider.name}」的登录凭据。", "Logged out of "${provider.name}"."),
+                                                    )
+                                                }
+                                                .onFailure { err ->
+                                                    error = err.message ?: tr("退出登录失败", "Failed to log out")
+                                                }
+                                            busyId = null
+                                        }
+                                    },
+                                    enabled = busyId == null,
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = palette.error.copy(alpha = 0.12f),
+                                    border = BorderStroke(PiSpacing.hairlineThin, palette.error.copy(alpha = 0.40f)),
+                                ) {
+                                    Text(
+                                        text = if (signingOut) tr("退出中…", "Signing out…") else tr("退出登录", "Log Out"),
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                        color = palette.error,
+                                    )
+                                }
+                            }
                         }
                     }
                 }

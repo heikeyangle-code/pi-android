@@ -77,7 +77,8 @@ export function register(reg, { controller, hub, surfaces, ui, themeHandle }) {
   // App 主题换了：整体换色板，同步官方组件明暗主题，已挂载的表面全部重绘。
   reg.add("ui.palette", (args) => {
     if (typeof args.palette !== "object" || args.palette === null) throw new HostError(ERR.BAD_ARGS, "palette 必须是对象");
-    themeHandle.setPalette(args.palette);
+    const name = typeof args.name === "string" && args.name.trim() ? args.name.trim() : undefined;
+    themeHandle.setPalette(args.palette, name);
     const bgHex = args.palette.pageBg ?? args.palette.userMessageBg ?? args.palette.cardBg;
     if (typeof bgHex === "string") {
       controller.syncOfficialTheme?.(isLightHex(bgHex) ? "light" : "dark");

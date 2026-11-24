@@ -980,7 +980,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     sealed interface CwdMissingAction {
         data class Switch(val summary: SessionSummary, val guestPath: String) : CwdMissingAction
-        data class Import(val stagedFile: File, val guestPath: String, val displayName: String) : CwdMissingAction
+        data class Import(val stagedFile: File?, val guestPath: String, val displayName: String) : CwdMissingAction
     }
 
     data class CwdMissingPrompt(val reason: String, val issue: String?, val action: CwdMissingAction)
@@ -3610,20 +3610,62 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 用户通过 `/trust` 主动弹出官方项目信任弹窗（无论是否已表态均可就地管理）。 */
+    fun openProjectTrustPrompt() {
+        val c = session?.commands ?: run {
+            pushNotice(tr("引擎未运行，暂时无法读取项目信任状态。", "Engine is not running; cannot read project trust."), Notice.Tone.Warning)
+            return
+        }
+        viewModelScope.launch {
+            val st = runCatching { app.pi.packages.PiProjectTrust.parse(c.trustState().data) }.getOrNull()
+            if (st != null) {
+                _trustPrompt.value = st
+            } else {
+                pushNotice(tr("读取项目信任状态失败。", "Failed to read project trust status."), Notice.Tone.Error)
+            }
+        }
+    }
+
     /** 先不决定：这次不再问（下次开这个项目还会问）。 */
     fun dismissTrustPrompt() { _trustPrompt.value = null }
 
     /** 宿主命令入口（引擎没起来为 null）。资源 / 信任这类「问宿主」的界面用它，不自己开 guest 进程。 */
     fun hostCommands(): app.pi.host.HostCommands? = session?.commands
 
+    /** 宿主认证入口（引擎没起来为 null），供 `/logout` 等就地管理登录态使用。 */
+    fun hostAuth(): app.pi.host.HostAuth? = session?.auth
+
+    /** `/logout <provider>`：就地调用官方 `auth.logout` 移除指定服务商登录凭据。 */
+    fun logoutProvider(providerId: String) {
+        val auth = hostAuth() ?: run {
+            pushNotice(tr("引擎未运行，暂时无法退出登录。", "Engine is not running; cannot log out."), Notice.Tone.Warning)
+            return
+        }
+        val target = providerId.trim()
+        if (target.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { auth.logout(target) }
+                .onSuccess {
+                    refreshModels()
+                    pushNotice(tr("已退出「$target」的登录凭据。", "Logged out of "$target"."), Notice.Tone.Info)
+                }
+                .onFailure { err ->
+                    pushNotice(
+                        err.message ?: tr("退出「$target」登录失败。", "Failed to log out of "$target"."),
+                        Notice.Tone.Error,
+                    )
+                }
+        }
+    }
+
     /**
-     * 把 App 当前色板交给宿主，让扩展组件的 `theme.fg(...)` 跟着 App 主题走。
+     * 把 App 当前色板与主题名交给宿主，让扩展组件的 `theme.fg(...)` 与 `theme.name` 跟着 App 主题走。
      * 宿主进程重启后色板回到默认，所以界面在引擎每次就绪时再推一次。失败不打扰用户：
      * 最坏只是扩展组件用默认暗色。
      */
-    fun pushExtensionPalette(palette: Map<String, String>) {
+    fun pushExtensionPalette(palette: Map<String, String>, themeName: String? = null) {
         val commands = hostCommands() ?: return
-        viewModelScope.launch { runCatching { commands.uiPalette(palette) } }
+        viewModelScope.launch { runCatching { commands.uiPalette(palette, themeName) } }
     }
 
     private var renderInvalidateJob: Job? = null
@@ -4697,6 +4739,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun resolveCwdMissingFork() = resolveCwdMissingForkImpl()
     fun dismissCwdMissing() = dismissCwdMissingImpl()
     fun importSession(source: Uri) = importSessionImpl(source)
+    fun importSessionPath(rawPath: String) = importSessionPathImpl(rawPath)
     fun forkFrom(entryId: String) = forkFromImpl(entryId)
     fun forkFromMessage(key: String, ordinal: Int, text: String) = forkFromMessageImpl(key, ordinal, text)
     fun cloneSession() = cloneSessionImpl()

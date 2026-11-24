@@ -1179,6 +1179,31 @@ try {
       mc.ok && Array.isArray(mc.data?.items),
       JSON.stringify(mc.data),
     );
+    const lc = await h.call("catalog.commandCompletions", { name: "login", prefix: "" });
+    expect(
+      "catalog.commandCompletions 为内置 /login 通过 getProviders() 返回服务商补全",
+      lc.ok && Array.isArray(lc.data?.items) && lc.data.items.length > 0,
+      JSON.stringify(lc.data),
+    );
+    const cl = await h.call("catalog.changelog");
+    expect(
+      "catalog.changelog 直读官方 SDK CHANGELOG.md 与 VERSION",
+      cl.ok && typeof cl.data?.version === "string" && cl.data.version.length > 0 && typeof cl.data?.markdown === "string" && cl.data.markdown.length > 100,
+      JSON.stringify({ ok: cl.ok, version: cl.data?.version, len: cl.data?.markdown?.length }),
+    );
+    const { createTheme } = await import(
+      new URL("../../app/src/main/assets/guest/sdk-host/ui/theme.mjs", import.meta.url).href
+    );
+    const th = createTheme();
+    const defaultName = th.theme.name;
+    th.setPalette({ pageBg: "#ffffff", text: "#111111" }, "catppuccin-latte");
+    const namedAfter = th.theme.name;
+    th.setName("tokyo-night");
+    expect(
+      "ui/theme.mjs 动态维护 theme.name（不再硬编码为 app）",
+      defaultName === "dark" && namedAfter === "catppuccin-latte" && th.theme.name === "tokyo-night",
+      JSON.stringify({ defaultName, namedAfter, finalName: th.theme.name }),
+    );
   }
 
   // ---- 7.9 Pi 1.6.0 扩展元数据、blockedKind 与 JSONL 导出回归检查 --------

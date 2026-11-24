@@ -348,11 +348,13 @@ fun ExtensionFloatingOverlayCard(
                     color = palette.accent,
                     maxLines = 1,
                 )
+                val hudBtnShape = RoundedCornerShape(8.dp)
                 Box(
                     modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
+                        .size(32.dp)
+                        .clip(hudBtnShape)
                         .background(surfaceKeyBg(palette))
+                        .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.5f), hudBtnShape)
                         .clickable(role = Role.Button, onClickLabel = tr("关闭悬浮层", "Close overlay")) { onClose(id) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -415,11 +417,13 @@ fun ExtensionFloatingOverlayCard(
                         maxLines = 1,
                     )
                 }
+                val hudBtnShape = RoundedCornerShape(8.dp)
                 Box(
                     modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
+                        .size(32.dp)
+                        .clip(hudBtnShape)
                         .background(surfaceKeyBg(palette))
+                        .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.5f), hudBtnShape)
                         .clickable(role = Role.Button, onClickLabel = tr("收起悬浮层", "Collapse floating HUD")) {
                             collapsed = true
                         },
@@ -429,14 +433,15 @@ fun ExtensionFloatingOverlayCard(
                         imageVector = Icons.Filled.Remove,
                         contentDescription = tr("收起", "Collapse"),
                         tint = palette.muted,
-                        modifier = Modifier.size(15.dp),
+                        modifier = Modifier.size(16.dp),
                     )
                 }
                 Box(
                     modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
+                        .size(32.dp)
+                        .clip(hudBtnShape)
                         .background(surfaceKeyBg(palette))
+                        .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.5f), hudBtnShape)
                         .clickable(role = Role.Button, onClickLabel = tr("关闭悬浮层", "Close overlay")) { onClose(id) },
                     contentAlignment = Alignment.Center,
                 ) {

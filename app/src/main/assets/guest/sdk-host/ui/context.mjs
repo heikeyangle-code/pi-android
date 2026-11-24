@@ -56,7 +56,7 @@ const BASE_AUTOCOMPLETE_PROVIDER = {
 
 const AUTOCOMPLETE_TIMEOUT_MS = 1500;
 
-export function createUiContext({ hub, surfaces, theme, flags }) {
+export function createUiContext({ hub, surfaces, theme, themeHandle = null, flags }) {
   const state = {
     editorText: "",
     statuses: new Map(),
@@ -316,6 +316,7 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
       }
       try {
         sm.setTheme(name);
+        themeHandle?.setName?.(name);
         const flushed = typeof sm.flush === "function" ? sm.flush() : null;
         if (flushed && typeof flushed.then === "function") {
           flushed

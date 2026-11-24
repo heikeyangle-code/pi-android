@@ -9,6 +9,8 @@ import androidx.compose.ui.platform.LocalContext
 import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.chat.ActiveSystemPromptSheet
+import app.pi.ui.chat.ChangelogSheet
+import app.pi.ui.chat.LogoutPickerSheet
 import app.pi.ui.chat.ContextSheet
 import app.pi.ui.chat.ForkPickerSheet
 import app.pi.ui.chat.ModelPickerSheet
@@ -18,7 +20,7 @@ import app.pi.ui.chat.SessionToolsSheet
 import app.pi.ui.chat.ThinkingPickerSheet
 
 /** Which bottom sheet the chat screen has open, if any. */
-internal enum class ChatSheet { Model, Thinking, Tools, Stats, Context, Fork, Rename, SystemPrompt }
+internal enum class ChatSheet { Model, Thinking, Tools, Stats, Context, Fork, Rename, SystemPrompt, Changelog, Logout }
 
 /**
  * 聊天页所有底部弹层的唯一出口：[sheet] 说开哪一个，[onSheet] 是切换/关闭。
@@ -96,6 +98,15 @@ internal fun ChatSheetHost(
         ChatSheet.SystemPrompt -> ActiveSystemPromptSheet(
             session = session,
             onEditPrompt = { session.requestNav(NavRequest.SettingsFocus("hub:prompts")) },
+            onDismiss = { onSheet(null) },
+        )
+        ChatSheet.Changelog -> ChangelogSheet(
+            session = session,
+            onDismiss = { onSheet(null) },
+        )
+        ChatSheet.Logout -> LogoutPickerSheet(
+            session = session,
+            onManageProviders = { session.requestNav(NavRequest.SettingsFocus("hub:models")) },
             onDismiss = { onSheet(null) },
         )
 

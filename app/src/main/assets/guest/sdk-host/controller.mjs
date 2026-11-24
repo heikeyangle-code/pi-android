@@ -588,6 +588,9 @@ export class Controller {
       shutdownHandler: () => {
         this.shutdownRequested = true;
       },
+      abortHandler: () => {
+        void session.abort().catch(() => {});
+      },
       onError: (err) => hub.emit("ext.error", { extensionPath: err.extensionPath, event: err.event, error: err.error }),
     };
     const bind = () => session.bindExtensions(bindings);
@@ -638,17 +641,25 @@ export class Controller {
     return {
       waitForIdle: () => this.session.waitForIdle(),
       newSession: async (options) => runtime.newSession(options),
-      fork: async (entryId, forkOptions) => ({ cancelled: (await runtime.fork(entryId, forkOptions)).cancelled }),
-      navigateTree: async (targetId, options) => ({
-        cancelled: (
-          await this.session.navigateTree(targetId, {
-            summarize: options?.summarize,
-            customInstructions: options?.customInstructions,
-            replaceInstructions: options?.replaceInstructions,
-            label: options?.label,
-          })
-        ).cancelled,
-      }),
+      fork: async (entryId, forkOptions) => {
+        const res = await runtime.fork(entryId, forkOptions);
+        if (!res.cancelled && typeof res.selectedText === "string" && res.selectedText.length > 0) {
+          this.ui.context.setEditorText(res.selectedText);
+        }
+        return { cancelled: res.cancelled };
+      },
+      navigateTree: async (targetId, options) => {
+        const res = await this.session.navigateTree(targetId, {
+          summarize: options?.summarize,
+          customInstructions: options?.customInstructions,
+          replaceInstructions: options?.replaceInstructions,
+          label: options?.label,
+        });
+        if (!res.cancelled && typeof res.editorText === "string" && res.editorText.length > 0) {
+          this.ui.context.setEditorText(res.editorText);
+        }
+        return { cancelled: res.cancelled };
+      },
       switchSession: async (sessionPath, options) => runtime.switchSession(sessionPath, options),
       reload: async () => {
         await this.reloadSession();

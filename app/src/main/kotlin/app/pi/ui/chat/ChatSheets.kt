@@ -104,8 +104,9 @@ fun ModelPickerSheet(
                 Box(
                     modifier = Modifier
                         .size(32.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(palette.cardBg)
+                        .border(PiSpacing.hairlineThin, palette.borderMuted, RoundedCornerShape(8.dp))
                         .clickable(enabled = !busy, onClickLabel = tr("刷新模型目录", "Refresh models"), onClick = onRefresh),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -127,12 +128,12 @@ fun ModelPickerSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(42.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(palette.cardBg)
                     .border(
-                        width = 1.dp,
-                        color = if (filter.isNotEmpty()) palette.borderAccent.copy(alpha = 0.65f) else MaterialTheme.colorScheme.outlineVariant,
-                        shape = RoundedCornerShape(12.dp),
+                        width = if (filter.isNotEmpty()) 1.dp else PiSpacing.hairlineThin,
+                        color = if (filter.isNotEmpty()) palette.accent.copy(alpha = 0.55f) else palette.borderMuted,
+                        shape = RoundedCornerShape(10.dp),
                     )
                     .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -188,9 +189,9 @@ fun ModelPickerSheet(
             if (shown.isEmpty()) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    shape = RoundedCornerShape(12.dp),
+                    color = palette.cardBg,
+                    border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
                 ) {
                     Column(
                         modifier = Modifier.padding(14.dp),
@@ -251,8 +252,9 @@ fun ModelPickerSheet(
                                     Text(
                                         "${inGroup.size}",
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(999.dp))
-                                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(palette.cardBg)
+                                            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
                                             .padding(horizontal = 6.dp, vertical = 1.dp),
                                         style = PiTheme.text.monoSmall,
                                         color = palette.dim,
@@ -310,11 +312,11 @@ private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: (
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(13.dp),
-        color = if (selected) palette.accent.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(11.dp),
+        color = if (selected) palette.accent.copy(alpha = 0.10f) else palette.cardBg,
         border = BorderStroke(
-            width = if (selected) 1.5.dp else 1.dp,
-            color = if (selected) palette.accent.copy(alpha = 0.65f) else MaterialTheme.colorScheme.outlineVariant,
+            width = if (selected) 1.dp else PiSpacing.hairlineThin,
+            color = if (selected) palette.accent.copy(alpha = 0.55f) else palette.borderMuted,
         ),
     ) {
         Row(
@@ -453,11 +455,11 @@ fun ThinkingPickerSheet(
                             onDismiss()
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(13.dp),
-                        color = if (selected) levelColor.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceContainerLow,
+                        shape = RoundedCornerShape(11.dp),
+                        color = if (selected) levelColor.copy(alpha = 0.11f) else palette.cardBg,
                         border = BorderStroke(
-                            width = if (selected) 1.5.dp else 1.dp,
-                            color = if (selected) levelColor else MaterialTheme.colorScheme.outlineVariant,
+                            width = if (selected) 1.dp else PiSpacing.hairlineThin,
+                            color = if (selected) levelColor.copy(alpha = 0.65f) else palette.borderMuted,
                         ),
                     ) {
                         Row(
@@ -519,11 +521,11 @@ private fun PersistTogglePill(persistAsDefault: Boolean, onToggle: () -> Unit) {
     val palette = PiTheme.palette
     Surface(
         onClick = onToggle,
-        shape = RoundedCornerShape(999.dp),
-        color = if (persistAsDefault) palette.accent.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(8.dp),
+        color = if (persistAsDefault) palette.accent.copy(alpha = 0.14f) else palette.cardBg,
         border = BorderStroke(
-            width = 1.dp,
-            color = if (persistAsDefault) palette.accent.copy(alpha = 0.55f) else Color.Transparent,
+            width = if (persistAsDefault) 1.dp else PiSpacing.hairlineThin,
+            color = if (persistAsDefault) palette.accent.copy(alpha = 0.50f) else palette.borderMuted,
         ),
     ) {
         Row(
@@ -559,9 +561,9 @@ internal fun SheetCardSection(title: String, content: @Composable () -> Unit) {
         )
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            shape = RoundedCornerShape(12.dp),
+            color = PiTheme.palette.cardBg,
+            border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted),
         ) {
             Column(Modifier.fillMaxWidth()) { content() }
         }
@@ -579,8 +581,9 @@ internal fun SheetActionPill(
     Surface(
         onClick = onClick,
         modifier = modifier,
-        shape = RoundedCornerShape(999.dp),
-        color = if (primary) palette.accent else MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(9.dp),
+        color = if (primary) palette.accent else palette.cardBg,
+        border = if (primary) null else BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
     ) {
         Box(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -602,7 +605,7 @@ internal fun MiniBadge(text: String, tone: Color) {
     Text(
         text = text,
         modifier = Modifier
-            .clip(RoundedCornerShape(7.dp))
+            .clip(RoundedCornerShape(6.dp))
             .background(tone.copy(alpha = 0.13f))
             .padding(horizontal = 6.dp, vertical = 1.5.dp),
         style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
