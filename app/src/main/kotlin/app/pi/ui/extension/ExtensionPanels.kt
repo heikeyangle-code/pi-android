@@ -174,7 +174,9 @@ fun ExtensionWidgetStack(
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
     val mono = PiTheme.text.monoSmall
-    val charPx = remember(measurer, mono) { measurer.measure("0", mono).size.width.coerceAtLeast(1) }
+    val charPx = remember(measurer, mono) {
+        (measurer.measure("0123456789", mono).size.width / 10f).coerceAtLeast(1f)
+    }
     val chromePx = with(density) { (PiSpacing.composerPageMargin * 2 + CARD_SIDE_PADDING * 2 + 2.dp).roundToPx() }
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -183,7 +185,7 @@ fun ExtensionWidgetStack(
                 Modifier
                     .fillMaxWidth()
                     .height(0.dp)
-                    .onSizeChanged { size -> onColumns(columnsFor(size.width, chromePx, charPx)) },
+                    .onSizeChanged { size -> onColumns(columnsForFloat(size.width, chromePx, charPx)) },
             )
         }
         if (widgets.isEmpty()) return@Column
@@ -850,20 +852,19 @@ private fun GeometricAnsiLines(
         cw to ch
     }
     val maxCols = remember(lines) { lines.maxOfOrNull { visibleColumns(it) }?.coerceAtLeast(1) ?: 1 }
-    Box(
-        modifier = modifier.fillMaxWidth(),
-        contentAlignment = Alignment.Center,
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
     ) {
-        Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            lines.forEach { line ->
-                TerminalGridRow(
-                    line = line,
-                    cellWidthPx = cellMetrics.first,
-                    cellHeightPx = cellMetrics.second,
-                    monoStyle = monoStyle,
-                    minCols = maxCols,
-                )
-            }
+        lines.forEach { line ->
+            TerminalGridRow(
+                line = line,
+                cellWidthPx = cellMetrics.first,
+                cellHeightPx = cellMetrics.second,
+                monoStyle = monoStyle,
+                minCols = maxCols,
+            )
         }
     }
 }

@@ -969,7 +969,6 @@ internal fun ChatBody(
     // 现在流式增长、Markdown 异步落地、图片解码、软键盘升降、扩展面板展开/收起都走同一条非阻塞观测链。
     val latestRevision by rememberUpdatedState(state.revision)
     val latestRenderedCount by rememberUpdatedState(renderedItems.size)
-    val latestStreaming by rememberUpdatedState(state.streaming)
     LaunchedEffect(listState, sessionKey) {
         snapshotFlow {
             val info = listState.layoutInfo
@@ -1894,10 +1893,7 @@ internal fun ChatBody(
                             listState = listState,
                             index = sliceIndex,
                             isFollowing = { following },
-                            onPauseFollow = { pauseTail() },
                             onEvictHeight = { RowHeightCache.shared.evict(item.key) },
-                            // 静止态展开任意卡、或流式态展开非末尾卡时立即暂停跟随，绝不把用户刚点开的卡拖走。
-                            shouldPauseOnExpand = { !latestStreaming || sliceIndex < latestRenderedCount - 1 },
                         )
                     }
                     CompositionLocalProvider(

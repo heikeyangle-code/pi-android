@@ -432,6 +432,17 @@ fun PiSettingsStack(
         resources -> "resources" to 1
         else -> "home" to 0
     }
+    val settingsFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val settingsKeyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    var routeInitialized by remember { mutableStateOf(false) }
+    LaunchedEffect(routeKey) {
+        if (routeInitialized) {
+            settingsFocusManager.clearFocus(force = true)
+            settingsKeyboard?.hide()
+        } else {
+            routeInitialized = true
+        }
+    }
     Box(Modifier.fillMaxSize()) {
         AnimatedContent(
             targetState = routeKey,

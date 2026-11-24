@@ -514,30 +514,25 @@ internal class TranscriptRowAnchor(
     private val listState: LazyListState,
     private val index: Int,
     private val isFollowing: () -> Boolean,
-    private val onPauseFollow: () -> Unit = {},
     private val onEvictHeight: () -> Unit = {},
-    private val shouldPauseOnExpand: () -> Boolean = { true },
 ) {
     /**
      * Called by [toggleContent] right before a row expands or collapses.
      *
      * - Always evicts the cached row height so a recycled row never inherits a stale floor.
-     * - On **expand**: pauses tail follow when appropriate so `TailFollow` never yanks the viewport
-     *   away from the card the reader just tapped to inspect.
-     * - On **collapse**: if the row's top was scrolled above the viewport (`offset < 0`), pauses follow
-     *   and anchors this row's top at `offset = 0` so `LazyColumn` does not skip past the collapsed card.
+     * - While tail-follow is active (`isFollowing()`), stands down completely: expanding or
+     *   collapsing a tool card / thinking block without dragging the list must never pause
+     *   follow or fight `TailFollow` with a competing scroll request, so subsequent output
+     *   continues to be followed seamlessly.
+     * - While tail-follow is paused (`!isFollowing()`), on **collapse** if the row's top was
+     *   scrolled above the viewport (`offset < 0`), anchors this row's top at `offset = 0` so
+     *   `LazyColumn` does not skip past the collapsed card.
      */
     fun onBeforeToggle(expanding: Boolean) {
         onEvictHeight()
-        if (expanding) {
-            if (isFollowing() && shouldPauseOnExpand()) {
-                onPauseFollow()
-            }
-            return
-        }
+        if (expanding || isFollowing()) return
         val row = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index } ?: return
         if (row.offset < 0) {
-            if (isFollowing()) onPauseFollow()
             listState.requestScrollToItem(index, 0)
         }
     }

@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
@@ -85,12 +84,18 @@ fun MessageActionTarget(
     content: @Composable () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
+    var selectOpen by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val actions = LocalMessageActions.current
     Box(
         modifier.combinedClickable(
             onClickLabel = null,
             onLongClickLabel = tr("消息操作", "Message actions"),
             onLongClick = {
+                focusManager.clearFocus(force = true)
+                keyboard?.hide()
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 open = true
             },
@@ -105,7 +110,19 @@ fun MessageActionTarget(
             role = role,
             text = text,
             onEditAndFork = onEditAndFork,
+            onOpenSelect = {
+                open = false
+                selectOpen = true
+            },
             onDismiss = { open = false },
+        )
+    }
+    if (selectOpen) {
+        MessageTextSelectDialog(
+            role = role,
+            text = text,
+            actions = actions,
+            onDismiss = { selectOpen = false },
         )
     }
 }
@@ -121,7 +138,7 @@ enum class MessageRole(val wire: String) {
         }
 }
 
-private enum class Mode { Menu, Select, Label }
+private enum class Mode { Menu, Label }
 
 @Composable
 private fun MessageActionSheet(
@@ -129,10 +146,12 @@ private fun MessageActionSheet(
     role: MessageRole,
     text: String,
     onEditAndFork: (() -> Unit)?,
+    onOpenSelect: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val actions = LocalMessageActions.current
     val clipboard = LocalClipboardManager.current
+    val haptic = LocalHapticFeedback.current
     val palette = PiTheme.palette
     var mode by remember { mutableStateOf(Mode.Menu) }
 
@@ -164,7 +183,7 @@ private fun MessageActionSheet(
                         )
                     }
 
-                    // 高频 3/4 列快捷操作网格
+                    // 高频 3 列快捷操作网格
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -176,14 +195,15 @@ private fun MessageActionSheet(
                             modifier = Modifier.weight(1f),
                         ) {
                             clipboard.setText(AnnotatedString(text))
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onDismiss()
                         }
                         MessageQuickTile(
                             icon = Icons.Filled.SelectAll,
-                            label = tr("选择文字", "Select text"),
+                            label = tr("选择复制", "Select & copy"),
                             tint = palette.mdLink,
                             modifier = Modifier.weight(1f),
-                        ) { mode = Mode.Select }
+                        ) { onOpenSelect() }
                         if (actions != null) {
                             MessageQuickTile(
                                 icon = Icons.Filled.FormatQuote,
@@ -192,6 +212,7 @@ private fun MessageActionSheet(
                                 modifier = Modifier.weight(1f),
                             ) {
                                 actions.quote(quoted(text))
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onDismiss()
                             }
                         }
@@ -242,27 +263,6 @@ private fun MessageActionSheet(
                                 onDismiss()
                             }
                         }
-                    }
-                }
-
-                Mode.Select -> {
-                    Text(tr("自由选择文字", "Select text"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
-                    SelectionContainer {
-                        Text(
-                            text,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = PiSpacing.unit * SELECT_MAX_UNITS)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                                .verticalScroll(rememberScrollState())
-                                .padding(12.dp),
-                            style = PiTheme.text.prose,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        SheetActionPill(text = tr("返回", "Back"), primary = false, onClick = { mode = Mode.Menu })
                     }
                 }
 
@@ -428,4 +428,3 @@ private fun MessageSheetDivider() {
 }
 
 private const val PREVIEW_LINES = 3
-private const val SELECT_MAX_UNITS = 14

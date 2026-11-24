@@ -234,4 +234,93 @@ class TailFollowTest {
         assertTrue(beforeMeasure.following)
         assertNull(beforeMeasure.pin)
     }
+
+    @Test
+    fun `expanding and collapsing cards without touch-scrolling keeps tail-follow armed`() {
+        val follow = TailFollow(initiallyFollowing = true)
+        // Settled at bottom with 10 items.
+        val settled = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 10,
+                viewport = TailViewport(
+                    totalItems = 10,
+                    firstVisibleIndex = 6,
+                    firstVisibleOffsetPx = 120,
+                    lastVisibleIndex = 9,
+                    lastVisibleOffsetPx = 1180,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = true,
+                ),
+            ),
+        )
+        assertTrue(settled.following)
+        assertNull(settled.pin)
+
+        // User taps an earlier tool/thinking card (item 7) to expand it (+350px) without dragging.
+        // Tail item 9 shifts down by 350px, pushing it below contentEndPx (1580).
+        val afterExpand = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 10,
+                viewport = TailViewport(
+                    totalItems = 10,
+                    firstVisibleIndex = 6,
+                    firstVisibleOffsetPx = 120,
+                    lastVisibleIndex = 9,
+                    lastVisibleOffsetPx = 1530,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = false,
+                ),
+            ),
+        )
+        assertTrue(afterExpand.following)
+        assertEquals(TailPin(index = 6, offsetPx = 470), afterExpand.pin)
+
+        // User collapses that card again without dragging -> anchor shifts back up while still at bottom.
+        val afterCollapse = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 10,
+                viewport = TailViewport(
+                    totalItems = 10,
+                    firstVisibleIndex = 6,
+                    firstVisibleOffsetPx = 120,
+                    lastVisibleIndex = 9,
+                    lastVisibleOffsetPx = 1180,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = true,
+                ),
+            ),
+        )
+        assertTrue(afterCollapse.following)
+        assertNull(afterCollapse.pin)
+
+        // Subsequent streaming output arrives -> MUST still follow automatically!
+        val nextStream = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 11,
+                viewport = TailViewport(
+                    totalItems = 11,
+                    firstVisibleIndex = 6,
+                    firstVisibleOffsetPx = 120,
+                    lastVisibleIndex = 9,
+                    lastVisibleOffsetPx = 1180,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = false,
+                ),
+            ),
+        )
+        assertTrue(nextStream.following)
+        assertEquals(TailPin(index = 10, offsetPx = PIN_TO_END_PX), nextStream.pin)
+    }
 }

@@ -103,6 +103,12 @@ internal fun ChatTopBar(
     var commandCenterOpen by remember { mutableStateOf(false) }
     val palette = PiTheme.palette
     val wideScreen = LocalConfiguration.current.screenWidthDp >= 520
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val hideIme = {
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+    }
 
     val hairlineColor = palette.borderMuted.copy(alpha = 0.55f)
     Column(
@@ -131,7 +137,10 @@ internal fun ChatTopBar(
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             PiTopBarIcon(
-                onClick = onOpenSessions,
+                onClick = {
+                    hideIme()
+                    onOpenSessions()
+                },
                 contentDescription = tr("打开会话列表", "Open sessions"),
                 icon = Icons.Filled.Menu,
             )
@@ -150,7 +159,10 @@ internal fun ChatTopBar(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
-                    .clickable(onClickLabel = tr("打开会话列表", "Open sessions"), onClick = onOpenSessions)
+                    .clickable(onClickLabel = tr("打开会话列表", "Open sessions")) {
+                        hideIme()
+                        onOpenSessions()
+                    }
                     .padding(horizontal = 4.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -182,13 +194,19 @@ internal fun ChatTopBar(
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 PiTopBarIcon(
-                    onClick = { onAction(ChatAction.NewSession) },
+                    onClick = {
+                        hideIme()
+                        onAction(ChatAction.NewSession)
+                    },
                     contentDescription = tr("新建会话", "New session"),
                     icon = Icons.Filled.Add,
                 )
                 Box {
                     PiTopBarIcon(
-                        onClick = onOpenTerminal,
+                        onClick = {
+                            hideIme()
+                            onOpenTerminal()
+                        },
                         contentDescription = if (terminalRunningCount > 0) {
                             tr("打开终端（$terminalRunningCount 个运行中）", "Open terminal ($terminalRunningCount running)")
                         } else {
@@ -209,7 +227,10 @@ internal fun ChatTopBar(
                     }
                 }
                 PiTopBarIcon(
-                    onClick = onOpenWorkspace,
+                    onClick = {
+                        hideIme()
+                        onOpenWorkspace()
+                    },
                     contentDescription = tr("项目与文件", "Project & Files"),
                     icon = Icons.Filled.FolderOpen,
                 )
@@ -222,7 +243,10 @@ internal fun ChatTopBar(
                     )
                 }
                 PiTopBarIcon(
-                    onClick = { commandCenterOpen = true },
+                    onClick = {
+                        hideIme()
+                        commandCenterOpen = true
+                    },
                     contentDescription = tr("更多操作", "More actions"),
                     icon = Icons.Filled.MoreHoriz,
                 )

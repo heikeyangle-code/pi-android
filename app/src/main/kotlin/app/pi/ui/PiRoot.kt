@@ -63,16 +63,26 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import android.content.Context
+import android.view.inputmethod.InputMethodManager
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import app.pi.R
 import app.pi.i18n.piStr
 import app.pi.i18n.tr
@@ -432,13 +442,46 @@ fun PiRoot() {
     val current = PiDestination.entries.firstOrNull { it.name == destinationName }
         ?: PiDestination.Chat
 
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val rootView = LocalView.current
+    val density = LocalDensity.current
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
+    var suppressStaleImePadding by remember { mutableStateOf(false) }
+    LaunchedEffect(imeBottomPx) {
+        if (imeBottomPx == 0 && suppressStaleImePadding) {
+            suppressStaleImePadding = false
+        }
+    }
+    LaunchedEffect(suppressStaleImePadding) {
+        if (suppressStaleImePadding) {
+            delay(450L)
+            suppressStaleImePadding = false
+        }
+    }
+    val dismissIme: () -> Unit = {
+        if (imeBottomPx > 0) suppressStaleImePadding = true
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+        rootView.windowToken?.let { token ->
+            val imm = rootView.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.hideSoftInputFromWindow(token, 0)
+        }
+    }
+    val latestDismissIme by rememberUpdatedState(dismissIme)
+
     // 目的地之间的跳转 lambda，`remember` 一次定死 identity。
     //
     // 底栏拆掉之后，工作区/设置只剩两条门：会话页顶栏的图标，和对话页「⋯」菜单。
     // 两条门都要能跳，所以这两个 lambda 在这里定义、往里传，而不是在各个屏里现写 ——
     // 这些屏的参数按 `===` 比较（strong skipping），而这个组合每收到一次 `UiState`
     // 发布就重组一次（流式期间约 200ms），字面量 lambda 会让整屏跟着重算。
-    val openChat: () -> Unit = remember { { destinationName = PiDestination.Chat.name } }
+    val openChat: () -> Unit = remember {
+        {
+            latestDismissIme()
+            destinationName = PiDestination.Chat.name
+        }
+    }
 
     // The one overlay (the session list — with pi's `/tree` as its second view — and
     // the terminal) is **not** a destination: it belongs to whatever session is on
@@ -490,7 +533,12 @@ fun PiRoot() {
      * 经点下去的 `SessionTree` 会在 ✕ 之后才轮到 —— 那正是用户看到的"点出去 1 秒内又
      * 被拉回来"）。之后只有**新的**手势能再把它举起来。
      */
-    val closeOverlay: () -> Unit = remember { { session.closeOverlay() } }
+    val closeOverlay: () -> Unit = remember {
+        {
+            latestDismissIme()
+            session.closeOverlay()
+        }
+    }
 
     // 会话列表是覆盖层，不是目的地：从它的顶栏点工作区/设置时，只换目的地会把新屏
     // 盖在覆盖层下面，用户得先返回一次才看得到（「点设置划两下返回才进去」）。
@@ -498,12 +546,14 @@ fun PiRoot() {
     // 幂等的，对话页顶栏那两枚图标也走同一个 lambda。
     val openWorkspace: () -> Unit = remember {
         {
+            latestDismissIme()
             closeOverlay()
             destinationName = PiDestination.Workbench.name
         }
     }
     val openSettings: () -> Unit = remember {
         {
+            latestDismissIme()
             closeOverlay()
             destinationName = PiDestination.Settings.name
         }
@@ -517,6 +567,7 @@ fun PiRoot() {
     // 都得跟着重算。
     val openChatFromOverlay: () -> Unit = remember {
         {
+            latestDismissIme()
             closeOverlay()
             destinationName = PiDestination.Chat.name
         }
@@ -550,11 +601,20 @@ fun PiRoot() {
     }.collectAsStateWithLifecycle(initialValue = session.state.value.models)
     val overlayState by session.overlay.collectAsStateWithLifecycle()
     var pendingTerminalCwd by remember { mutableStateOf<String?>(null) }
+    var navImeInitialized by remember { mutableStateOf(false) }
+    LaunchedEffect(current, overlayState?.slot) {
+        if (navImeInitialized) {
+            latestDismissIme()
+        } else {
+            navImeInitialized = true
+        }
+    }
     val (navRequest, navSeq) = navEvent
     LaunchedEffect(navRequest, navSeq) {
         // **先领处理权，再执行。** 请求的身份是 navSeq：关掉覆盖层时
         // discardPendingNav() 已把高水位推过去，排队到现在才跑到的请求在这里被拒。
         if (navRequest == null || !session.claimNav(navSeq)) return@LaunchedEffect
+        latestDismissIme()
         when (navRequest) {
             // The session list is an overlay, so the request only raises the
             // layer; it must not also move the destination. Landing on 对话
@@ -616,10 +676,12 @@ fun PiRoot() {
     // 它们没有悬浮输入框，也不该为了对话页的布局改自己的 inset。
     // 对话页与全屏终端页各自接管 IME ∪ navigationBars，避免 Scaffold 的 imePadding() 与
     // contentPadding.calculateBottomPadding() 叠加在软键盘上方留出多余空白带。
+    // 切屏瞬间若上一页软键盘尚在收起动画中（suppressStaleImePadding），暂缓挂载 Scaffold.imePadding()，
+    // 彻底避免目标页（如设置页）先被退场中的输入法顶起、再猛地落回原位。
     val ownIme = (current == PiDestination.Chat && overlayState == null) ||
         overlayState?.slot == OverlaySlot.Terminal
     Scaffold(
-        modifier = if (ownIme) Modifier else Modifier.imePadding(),
+        modifier = if (ownIme || suppressStaleImePadding) Modifier else Modifier.imePadding(),
     ) { padding ->
         Box(Modifier.fillMaxSize()) {
             AnimatedContent(
@@ -652,6 +714,7 @@ fun PiRoot() {
                             contentPadding = padding,
                             session = session,
                             onOpenSessions = {
+                                latestDismissIme()
                                 session.raiseOverlay(OverlaySlot.SessionList, OverlayView.List)
                             },
                             onOpenWorkspace = openWorkspace,

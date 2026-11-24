@@ -4,10 +4,8 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -147,6 +145,11 @@ internal fun buildTerminalGridRow(
     return TerminalGridRowData(cells = cells, totalCols = col)
 }
 
+internal fun terminalGridRowWidthPx(
+    renderCols: Int,
+    cellWidthPx: Float,
+): Int = kotlin.math.ceil(renderCols.coerceAtLeast(1) * cellWidthPx.coerceAtLeast(1f)).toInt()
+
 @Composable
 internal fun TerminalGridRow(
     line: String,
@@ -175,7 +178,7 @@ internal fun TerminalGridRow(
 
     val renderCols = maxOf(minCols, rowData.totalCols).coerceAtLeast(1)
     val fontSizePx = with(density) { monoStyle.fontSize.toPx() }
-    val rowWidthDp = with(density) { (renderCols * cellWidthPx).toDp() }
+    val rowWidthDp = with(density) { terminalGridRowWidthPx(renderCols, cellWidthPx).toDp() }
     val rowHeightDp = with(density) { cellHeightPx.toDp() }
 
     val monoRegular = Typeface.MONOSPACE
@@ -199,10 +202,14 @@ internal fun TerminalGridRow(
     }
     val arcRect = remember { RectF() }
 
+    // 必须显式指定确定宽高（width + height），严禁改回 widthIn(min = ...) + fillMaxWidth()：
+    // Canvas 底层是 Spacer，其 MeasurePolicy 在 !hasFixedWidth 时返回 width = 0；
+    // 处于 horizontalScroll（maxWidth = Infinity）内时，fillMaxWidth() 会失效，
+    // Placeable 把 0 夹紧到 minWidth 后会产生 apparentToRealOffset.x = +(rowWidth / 2)，
+    // 把整行 TUI 画面向右平移半屏并裁掉右半边。
     Canvas(
         modifier = modifier
-            .widthIn(min = rowWidthDp)
-            .fillMaxWidth()
+            .width(rowWidthDp)
             .height(rowHeightDp),
     ) {
         val cells = rowData.cells

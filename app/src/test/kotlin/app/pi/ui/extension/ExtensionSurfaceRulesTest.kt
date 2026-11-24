@@ -155,4 +155,14 @@ class ExtensionSurfaceRulesTest {
         assertEquals(listOf("q", "r"), shortcuts.map { it.sendData })
         assertEquals(listOf("Quit", "Restart"), shortcuts.map { it.description })
     }
+
+    @Test
+    fun `terminalGridRowWidthPx rounds up cell width cleanly and never collapses to zero`() {
+        assertEquals(1, terminalGridRowWidthPx(0, 0f))
+        assertEquals(428, terminalGridRowWidthPx(57, 7.5f))
+        assertEquals(600, terminalGridRowWidthPx(80, 7.5f))
+        // Matches float column calculation so widget rows never overflow by 1 col
+        val cols = columnsForFloat(widthPx = 1080, chromePx = 112, charPx = 19.4f)
+        assertTrue(terminalGridRowWidthPx(cols, 19.4f) <= 1080 - 112)
+    }
 }

@@ -638,8 +638,16 @@ private fun SurfaceSheetBody(
         else baseMono.copy(fontSize = baseMono.fontSize * fitScale, lineHeight = baseMono.lineHeight * fitScale)
     }
     val fontSizePx = with(density) { monoStyle.fontSize.toPx() }
-    val cellMetrics = remember(measurer, monoStyle, fontSizePx) {
-        val cw = (measurer.measure("0123456789", monoStyle).size.width / 10f).coerceAtLeast(1f)
+    val cellMetrics = remember(measurer, monoStyle, fontSizePx, fitWidth, viewportWidthPx, targetCols, naturalCols, fitScale, usablePx) {
+        val measuredCw = (measurer.measure("0123456789", monoStyle).size.width / 10f).coerceAtLeast(1f)
+        // 在自动适配模式下，字体 hinting 偶尔会把实测字宽多算 1%–3%，导致原本刚好装下的面板多出 1 列并触发横向滚动；
+        // 若理想单格宽在实测字宽 94% 以上，微收单格宽让整帧严丝合缝铺满视口。
+        val idealCw = if (fitWidth && viewportWidthPx > viewportPadHPx && targetCols > naturalCols && fitScale > MIN_FIT_SCALE) {
+            usablePx / targetCols.toFloat()
+        } else {
+            measuredCw
+        }
+        val cw = if (idealCw < measuredCw && idealCw >= measuredCw * 0.94f) idealCw else measuredCw
         // 真实终端单元格高宽比约为 2:1（使 `██` 双列方块恰好呈 1:1 正方形、框线紧凑无缝），
         // 避免 Compose 正文 1.5x lineHeight 把方块拉扁并在上下行间留下空隙。
         val ch = (cw * 2.0f).coerceIn(fontSizePx * 1.14f, fontSizePx * 1.30f).coerceAtLeast(1f)
