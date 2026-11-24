@@ -188,8 +188,14 @@ fun PiSettingsStack(
     var runtimeScreen by rememberSaveable { mutableStateOf(false) }
     // 设置首页「MCP 服务器」（`McpServersScreen`）：pi 的 `mcp.json` 编辑器。
     var mcp by rememberSaveable { mutableStateOf(false) }
+    var updateSheetOpen by remember { mutableStateOf(false) }
+    var updateOutcome by remember { mutableStateOf(app.pi.update.AppUpdater.peekCached()) }
 
     val context = LocalContext.current
+    LaunchedEffect(context) {
+        app.pi.update.AppUpdater.checkForUpdate(context, force = false)
+            .onSuccess { updateOutcome = it }
+    }
     val paths = remember(context) {
         PiPaths(
             filesDir = context.filesDir,
@@ -348,6 +354,9 @@ fun PiSettingsStack(
             key == "hub:licenses" -> {
                 clearRoutes()
                 licenses = true
+            }
+            key == "hub:update" -> {
+                updateSheetOpen = true
             }
             key == "hub:terminal" -> onOpenTerminal?.invoke()
             key == "hub:prompts" -> {
@@ -512,6 +521,9 @@ fun PiSettingsStack(
                     onOpenLicenses = {
                         licenses = true
                     },
+                    onOpenUpdate = {
+                        updateSheetOpen = true
+                    },
                 )
 
                 route == "tools" -> ToolsScreen(
@@ -612,9 +624,18 @@ fun PiSettingsStack(
                     runtimeSummary = runtimeHomeSummary,
                     onOpenOther = { other = true },
                     onOpenMcp = { mcp = true },
+                    onOpenUpdate = { updateSheetOpen = true },
+                    updateOutcome = updateOutcome,
                 )
             }
         }
+    }
+
+    if (updateSheetOpen) {
+        AppUpdateSheet(
+            onDismiss = { updateSheetOpen = false },
+            onOutcomeUpdated = { updateOutcome = it },
+        )
     }
 
     // The 进程 section's "restart so these take effect" step. Two dialogs, not

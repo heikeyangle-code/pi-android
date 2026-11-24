@@ -46,6 +46,7 @@ import app.pi.ui.settings.PiNumberFieldHeight
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.contrastOn
 
 /*
  * 模型与供应商页统一设计语言：
@@ -262,7 +263,7 @@ internal fun TagRow(tags: List<String>, modifier: Modifier = Modifier) {
 
 // ------------------------------------------------------------------ 行
 
-/** 供应商行：头像 + 名字 + 认证方式提示 + 状态/数量；整行可点。 */
+/** 统一供应商行：头像 + 名字 + 认证方式/自定义徽标 + 连接状态/模型数/自定义地址；整行可点。 */
 @Composable
 internal fun ProviderRow(
     facts: ProviderFacts,
@@ -270,6 +271,8 @@ internal fun ProviderRow(
     modifier: Modifier = Modifier,
 ) {
     val c = connectionOf(facts)
+    val palette = PiTheme.palette
+    val hostHint = remember(facts.customBaseUrl) { shortEndpointHost(facts.customBaseUrl) }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -279,23 +282,37 @@ internal fun ProviderRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         ProviderAvatar(facts.id, facts.title)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
                     facts.title,
-                    style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
-                    color = PiTheme.palette.text,
+                    style = PiTheme.text.prose.copy(fontWeight = if (facts.isActiveProvider || c.connected) FontWeight.SemiBold else FontWeight.Medium),
+                    color = palette.text,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
+                if (facts.isActiveProvider) {
+                    TagPill(tr("当前使用", "Active"), tone = palette.accent)
+                }
+                if (facts.custom) {
+                    TagPill(
+                        if (facts.overridesBuiltin) tr("覆盖内置", "Override") else tr("自定义", "Custom"),
+                        tone = if (facts.overridesBuiltin) palette.borderAccent else palette.accent,
+                    )
+                }
                 if (!c.connected) {
                     when {
-                        facts.offersSubscription -> TagPill(tr("订阅", "Sub"), tone = PiTheme.palette.accent)
-                        facts.offersWebLogin -> TagPill(tr("网页登录", "OAuth"), tone = PiTheme.palette.borderAccent)
+                        facts.offersSubscription -> TagPill(tr("订阅", "Sub"), tone = palette.accent)
+                        facts.offersWebLogin -> TagPill(tr("网页登录", "OAuth"), tone = palette.borderAccent)
+                    }
+                    if (facts.offersApiKey && !facts.offersOAuth && !facts.custom) {
+                        TagPill("API Key", tone = palette.muted)
+                    } else if (facts.hasAmbientAuth && !facts.offersOAuth && !facts.offersApiKey) {
+                        TagPill(tr("云凭证", "Env"), tone = palette.muted)
                     }
                 }
             }
@@ -303,17 +320,18 @@ internal fun ProviderRow(
                 ConnectionPill(c)
                 val extra = listOfNotNull(
                     if (facts.modelCount > 0) tr("${facts.modelCount} 个模型", "${facts.modelCount} models") else null,
-                    if (facts.custom) tr("自定义", "Custom") else null,
+                    if (!c.connected && facts.offersOAuth && facts.offersApiKey) "OAuth · API Key" else null,
+                    hostHint,
                 ).joinToString(" · ")
                 if (extra.isNotEmpty()) {
-                    Text(extra, style = PiTheme.text.meta, color = PiTheme.palette.dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(extra, style = PiTheme.text.meta, color = palette.dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
         Icon(
             Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
-            tint = PiTheme.palette.dim,
+            tint = palette.dim,
             modifier = Modifier.size(18.dp),
         )
     }
@@ -461,12 +479,13 @@ internal fun PrimaryAction(
     enabled: Boolean = true,
     fullWidth: Boolean = false,
 ) {
+    val palette = PiTheme.palette
     val shape = if (fullWidth) ModelsButtonShape else RoundedCornerShape(50)
     Box(
         modifier = modifier
             .then(if (fullWidth) Modifier.fillMaxWidth().heightIn(min = 42.dp) else Modifier.heightIn(min = 36.dp))
             .clip(shape)
-            .background(if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh)
+            .background(if (enabled) palette.accent else MaterialTheme.colorScheme.surfaceContainerHigh)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = if (fullWidth) 10.dp else 8.dp),
         contentAlignment = Alignment.Center,
@@ -474,7 +493,7 @@ internal fun PrimaryAction(
         Text(
             text,
             style = if (fullWidth) PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold) else PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-            color = if (enabled) MaterialTheme.colorScheme.onPrimary else PiTheme.palette.muted,
+            color = if (enabled) palette.contrastOn(palette.accent) else palette.muted,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

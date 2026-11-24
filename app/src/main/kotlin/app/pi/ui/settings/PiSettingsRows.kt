@@ -247,6 +247,7 @@ internal fun PiSettingsEntryRow(
     leadingTint: Color? = null,
     monoTitle: Boolean = false,
     expanded: Boolean? = null,
+    trailingBadge: (@Composable () -> Unit)? = null,
 ) {
     PiSettingsRowShell(highlighted = false, modifier = modifier, onClick = onClick) {
         if (leadingIcon != null) {
@@ -271,6 +272,7 @@ internal fun PiSettingsEntryRow(
             supporting = supporting,
             mono = monoTitle,
         )
+        trailingBadge?.invoke()
         if (onClick != null) PiSettingsChevron(expanded = expanded)
     }
 }

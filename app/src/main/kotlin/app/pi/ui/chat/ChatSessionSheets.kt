@@ -70,7 +70,7 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.contrastOn
 
-/** 会话控制中心：现代队列切换卡、自动化开关卡 + 2 列快捷操作网格。 */
+/** 队列与自动容错策略面板：不再与右上角命令中心重复堆叠会话操作，专注 Steering / Follow-up 队列策略与自动压缩/重试开关。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionToolsSheet(
@@ -81,13 +81,6 @@ fun SessionToolsSheet(
     onAutoRetry: (Boolean) -> Unit,
     onAbortRetry: () -> Unit,
     onCompact: () -> Unit,
-    onStats: () -> Unit,
-    onTree: () -> Unit,
-    onFork: () -> Unit,
-    onClone: () -> Unit,
-    onRename: () -> Unit,
-    onExport: () -> Unit,
-    onCopyLast: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val palette = PiTheme.palette
@@ -95,16 +88,24 @@ fun SessionToolsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 580.dp)
+                .heightIn(max = 560.dp)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = PiSpacing.pageHorizontal),
+                .padding(horizontal = PiSpacing.pageHorizontal)
+                .padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                tr("会话控制中心", "Session Controls"),
-                style = PiType.title,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    tr("队列与自动容错策略", "Queue & Auto-Policy"),
+                    style = PiType.title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    tr("控制模型运行期间发送的新消息如何插队或排队，以及上下文与重试自动化。", "Configure how messages sent mid-turn are delivered, plus auto-compaction and retry."),
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
+                )
+            }
 
             // 1. 队列投递策略卡
             SheetCardSection(title = tr("消息队列策略", "Message Queue")) {
@@ -161,80 +162,6 @@ fun SessionToolsSheet(
                     )
                 }
             }
-
-            // 3. 会话快捷操作 2 列网格
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    tr("会话操作", "Session Actions"),
-                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                    color = palette.muted,
-                    modifier = Modifier.padding(start = 4.dp),
-                )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SessionGridTile(
-                        icon = Icons.Filled.AccountTree,
-                        tint = palette.accent,
-                        title = tr("会话树", "Session Tree"),
-                        subtitle = tr("查看分支结构", "Navigate branches"),
-                        onClick = onTree,
-                        modifier = Modifier.weight(1f),
-                    )
-                    SessionGridTile(
-                        icon = Icons.Filled.CallSplit,
-                        tint = palette.warning,
-                        title = tr("历史分叉", "Fork"),
-                        subtitle = tr("从指定消息分支", "Branch from message"),
-                        onClick = onFork,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SessionGridTile(
-                        icon = Icons.Filled.FileCopy,
-                        tint = palette.success,
-                        title = tr("复制会话", "Clone"),
-                        subtitle = tr("克隆独立副本", "Duplicate session"),
-                        onClick = onClone,
-                        modifier = Modifier.weight(1f),
-                    )
-                    SessionGridTile(
-                        icon = Icons.Filled.DriveFileRenameOutline,
-                        tint = palette.borderAccent,
-                        title = tr("重命名", "Rename"),
-                        subtitle = state.meta.sessionName ?: tr("未命名", "Untitled"),
-                        onClick = onRename,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SessionGridTile(
-                        icon = Icons.Filled.IosShare,
-                        tint = palette.accent,
-                        title = tr("导出会话", "Export"),
-                        subtitle = tr("保存 HTML 与 JSONL", "Save HTML & JSONL"),
-                        onClick = onExport,
-                        modifier = Modifier.weight(1f),
-                    )
-                    SessionGridTile(
-                        icon = Icons.Filled.ContentCopy,
-                        tint = palette.muted,
-                        title = tr("复制末条回复", "Copy Last Reply"),
-                        subtitle = tr("直接进剪贴板", "Copy to clipboard"),
-                        onClick = onCopyLast,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                SessionGridTile(
-                    icon = Icons.Filled.Info,
-                    tint = palette.muted,
-                    title = tr("会话元数据信息", "Session Info & Stats"),
-                    subtitle = tr("ID、文件路径、消息与工具计数", "ID, file path, message & tool counts"),
-                    onClick = onStats,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-
-            Spacer(Modifier.height(10.dp))
         }
     }
 }

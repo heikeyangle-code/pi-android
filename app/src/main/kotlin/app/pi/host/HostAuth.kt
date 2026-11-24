@@ -46,6 +46,8 @@ class HostAuth(private val commands: HostCommands) {
          * 「订阅登录」标签只能看它——`usingOAuth` 对非订阅型 OAuth 也是 true。
          */
         val usingSubscription: Boolean = false,
+        /** 是否为内置或扩展注册的供应商（false 表示纯 `models.json` 自定义供应商）。 */
+        val builtin: Boolean = true,
     ) {
         /** `getProviderAuthStatus().source`：`runtime`（本进程临时）/ `stored`（auth.json）/ `environment` / 配置里写的。 */
         val statusSource: String? get() = ((status as? JsonObject)?.get("source") as? JsonPrimitive)?.takeIf { it.isString }?.content
@@ -215,6 +217,7 @@ class HostAuth(private val commands: HostCommands) {
         usingOAuth = (o["usingOAuth"] as? JsonPrimitive)?.content == "true",
         status = o["status"]?.takeIf { it !is JsonNull },
         usingSubscription = (o["usingSubscription"] as? JsonPrimitive)?.content == "true",
+        builtin = (o["builtin"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: true,
     )
 
     private fun rows(e: JsonElement?): List<JsonObject> = (e as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()

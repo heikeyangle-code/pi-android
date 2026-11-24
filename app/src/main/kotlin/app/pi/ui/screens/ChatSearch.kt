@@ -193,11 +193,13 @@ internal fun SearchBar(
     onQueryChange: (String) -> Unit,
     matchCount: Int,
     cursor: Int,
+    hasPrompts: Boolean = false,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onClose: () -> Unit,
 ) {
     val palette = PiTheme.palette
+    val promptNavMode = query.isBlank() && hasPrompts
     val countLabel = if (matchCount == 0) {
         if (query.isBlank()) "" else "0 / 0"
     } else {
@@ -239,7 +241,11 @@ internal fun SearchBar(
                     Box {
                         if (query.isEmpty()) {
                             Text(
-                                text = tr("搜索对话内容…", "Search conversation…"),
+                                text = if (hasPrompts) {
+                                    tr("搜索对话，或点 ↑↓ 跳提问…", "Search chat, or ↑↓ for prompts…")
+                                } else {
+                                    tr("搜索对话内容…", "Search conversation…")
+                                },
                                 style = PiTheme.text.prose,
                                 color = palette.muted,
                                 maxLines = 1,
@@ -267,14 +273,14 @@ internal fun SearchBar(
             }
             SearchNavButton(
                 icon = Icons.Filled.KeyboardArrowUp,
-                label = tr("上一个匹配", "Previous match"),
-                enabled = matchCount > 0,
+                label = if (promptNavMode) tr("上一条提问", "Previous prompt") else tr("上一个匹配", "Previous match"),
+                enabled = matchCount > 0 || promptNavMode,
                 onClick = onPrevious,
             )
             SearchNavButton(
                 icon = Icons.Filled.KeyboardArrowDown,
-                label = tr("下一个匹配", "Next match"),
-                enabled = matchCount > 0,
+                label = if (promptNavMode) tr("下一条提问", "Next prompt") else tr("下一个匹配", "Next match"),
+                enabled = matchCount > 0 || promptNavMode,
                 onClick = onNext,
             )
             Box(

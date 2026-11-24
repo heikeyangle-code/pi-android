@@ -1630,6 +1630,18 @@ internal fun ChatBody(
         // row** (`direction-b-v2.html:1366-1367`: `{p.searchBar}` then `{StateLine}`),
         // because it is chrome for the bar above it rather than a row of the
         // transcript's header — the app used to draw it under the extension status row.
+        val jumpPrompt: (Boolean) -> Unit = { forward ->
+            val firstFull = listState.firstVisibleItemIndex + hiddenCount
+            val target = if (forward) {
+                userRowIndices().firstOrNull { it > firstFull }
+            } else {
+                userRowIndices().lastOrNull { it < firstFull }
+            }
+            target?.let { row ->
+                pauseTail()
+                reveal(row)
+            }
+        }
         androidx.compose.animation.AnimatedVisibility(
             visible = searchOpen,
             enter = androidx.compose.animation.expandVertically(tween(170)) + fadeIn(tween(150)),
@@ -1640,16 +1652,25 @@ internal fun ChatBody(
                 onQueryChange = { searchQuery = it },
                 matchCount = searchMatches.value.ordered.size,
                 cursor = searchCursor,
+                hasPrompts = recentPrompts.isNotEmpty(),
                 onPrevious = {
-                    val count = searchMatches.value.ordered.size
-                    if (count > 0) {
-                        searchCursor = (searchCursor - 1 + count) % count
+                    if (searchQuery.isBlank()) {
+                        jumpPrompt(false)
+                    } else {
+                        val count = searchMatches.value.ordered.size
+                        if (count > 0) {
+                            searchCursor = (searchCursor - 1 + count) % count
+                        }
                     }
                 },
                 onNext = {
-                    val count = searchMatches.value.ordered.size
-                    if (count > 0) {
-                        searchCursor = (searchCursor + 1) % count
+                    if (searchQuery.isBlank()) {
+                        jumpPrompt(true)
+                    } else {
+                        val count = searchMatches.value.ordered.size
+                        if (count > 0) {
+                            searchCursor = (searchCursor + 1) % count
+                        }
                     }
                 },
                 onClose = {

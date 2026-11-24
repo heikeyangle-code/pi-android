@@ -102,7 +102,7 @@ internal fun ChatTopBar(
 ) {
     var commandCenterOpen by remember { mutableStateOf(false) }
     val palette = PiTheme.palette
-    val widePhone = LocalConfiguration.current.screenWidthDp >= 400
+    val wideScreen = LocalConfiguration.current.screenWidthDp >= 520
 
     val hairlineColor = palette.borderMuted.copy(alpha = 0.55f)
     Column(
@@ -176,7 +176,7 @@ internal fun ChatTopBar(
                 }
             }
 
-            // 右侧高频直达图标：新建对话 + 终端（带后台存活状态点）+ 项目与文件 +（宽屏搜索）+ 更多
+            // 右侧高频直达图标：新建对话 + 终端（带后台存活状态点）+ 项目与文件 +（查找态/宽屏搜索）+ 更多
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -213,7 +213,7 @@ internal fun ChatTopBar(
                     contentDescription = tr("项目与文件", "Project & Files"),
                     icon = Icons.Filled.FolderOpen,
                 )
-                if (widePhone) {
+                if (wideScreen || searchOpen) {
                     PiTopBarIcon(
                         onClick = { onToggleSearch(false) },
                         contentDescription = if (searchOpen) tr("关闭对话内查找", "Close search") else tr("在对话里查找", "Search in chat"),
@@ -233,6 +233,8 @@ internal fun ChatTopBar(
     if (commandCenterOpen) {
         ChatCommandCenterSheet(
             engineLabel = engineLabel,
+            sessionTitle = sessionTitle,
+            workspaceName = workspaceName,
             searchOpen = searchOpen,
             toolsExpanded = toolsExpanded,
             onDismiss = { commandCenterOpen = false },
@@ -241,7 +243,7 @@ internal fun ChatTopBar(
                 onToggleSearch(true)
             },
             onJumpQuestion = { forward ->
-                commandCenterOpen = false
+                // 连续点击上一问/下一问时不强关面板，让用户边看上方画布滚动边连续定位
                 onJumpQuestion(forward)
             },
             onToggleTools = {
@@ -259,6 +261,8 @@ internal fun ChatTopBar(
 @Composable
 private fun ChatCommandCenterSheet(
     engineLabel: String,
+    sessionTitle: String?,
+    workspaceName: String?,
     searchOpen: Boolean,
     toolsExpanded: Boolean,
     onDismiss: () -> Unit,
@@ -268,6 +272,7 @@ private fun ChatCommandCenterSheet(
     onAction: (ChatAction) -> Unit,
 ) {
     val palette = PiTheme.palette
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     PiSheet(onDismiss = onDismiss) {
         Column(
             modifier = Modifier
@@ -281,13 +286,26 @@ private fun ChatCommandCenterSheet(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(
-                    text = tr("对话操作", "Chat Actions"),
-                    modifier = Modifier.weight(1f),
-                    style = PiType.title,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = sessionTitle ?: tr("当前对话", "Current Chat"),
+                        style = PiType.title,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (!workspaceName.isNullOrBlank()) {
+                        Text(
+                            text = workspaceName,
+                            style = PiTheme.text.monoSmall,
+                            color = palette.muted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
                 Text(
                     text = engineLabel,
                     modifier = Modifier
@@ -299,7 +317,7 @@ private fun ChatCommandCenterSheet(
                 )
             }
 
-            // 顶部 2×3 快捷磁贴网格（高频核心入口，不再与顶栏「+ 新建会话」重复）
+            // 顶部 2×3 快捷磁贴网格（高频核心入口，零重复）
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -340,7 +358,7 @@ private fun ChatCommandCenterSheet(
                     )
                     QuickTile(
                         icon = Icons.Filled.Info,
-                        label = tr("会话信息", "Session Info"),
+                        label = tr("会话统计", "Session Stats"),
                         tint = palette.warning,
                         modifier = Modifier.weight(1f),
                         onClick = { onAction(ChatAction.SessionStats) },
@@ -356,30 +374,61 @@ private fun ChatCommandCenterSheet(
             }
 
             // 显示与导航组
-            ActionGroupCard(title = tr("显示与导航", "View & Navigation")) {
+            ActionGroupCard(title = tr("视图与定位", "View & Navigation")) {
+                SheetActionRow(
+                    icon = Icons.Filled.Search,
+                    label = if (searchOpen) tr("关闭对话内查找", "Close search") else tr("查找内容 / 快速定位提问", "Search chat / jump prompts"),
+                    onClick = onToggleSearch,
+                )
+                SheetHairline()
+                // 并排双按钮连续跳提问，点击不强关面板，带触感反馈
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .clickable {
+                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                onJumpQuestion(false)
+                            }
+                            .padding(vertical = 8.dp, horizontal = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Filled.KeyboardArrowUp, contentDescription = null, modifier = Modifier.size(17.dp), tint = palette.accent)
+                        Spacer(Modifier.width(4.dp))
+                        Text(tr("上一条提问", "Prev prompt"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+                    }
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .clickable {
+                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                onJumpQuestion(true)
+                            }
+                            .padding(vertical = 8.dp, horizontal = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(17.dp), tint = palette.accent)
+                        Spacer(Modifier.width(4.dp))
+                        Text(tr("下一条提问", "Next prompt"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+                    }
+                }
+                SheetHairline()
                 SheetActionRow(
                     icon = if (toolsExpanded) Icons.Filled.UnfoldLess else Icons.Filled.UnfoldMore,
                     label = if (toolsExpanded) tr("收起全部工具输出", "Collapse all tool outputs") else tr("展开全部工具输出", "Expand all tool outputs"),
                     trailingBadge = if (toolsExpanded) tr("已展开", "Expanded") else tr("已收起", "Collapsed"),
                     onClick = onToggleTools,
-                )
-                SheetHairline()
-                SheetActionRow(
-                    icon = Icons.Filled.Search,
-                    label = if (searchOpen) tr("关闭对话内查找", "Close search") else tr("在对话里查找", "Search in chat"),
-                    onClick = onToggleSearch,
-                )
-                SheetHairline()
-                SheetActionRow(
-                    icon = Icons.Filled.KeyboardArrowUp,
-                    label = tr("跳到上一条提问", "Previous prompt"),
-                    onClick = { onJumpQuestion(false) },
-                )
-                SheetHairline()
-                SheetActionRow(
-                    icon = Icons.Filled.KeyboardArrowDown,
-                    label = tr("跳到下一条提问", "Next prompt"),
-                    onClick = { onJumpQuestion(true) },
                 )
                 SheetHairline()
                 SheetActionRow(
@@ -389,8 +438,8 @@ private fun ChatCommandCenterSheet(
                 )
             }
 
-            // 会话管理组
-            ActionGroupCard(title = tr("当前会话", "Current Session")) {
+            // 会话与策略组
+            ActionGroupCard(title = tr("当前会话与策略", "Session & Policy")) {
                 SheetActionRow(
                     icon = Icons.Filled.Edit,
                     label = tr("重命名会话", "Rename session"),
@@ -398,36 +447,36 @@ private fun ChatCommandCenterSheet(
                 )
                 SheetHairline()
                 SheetActionRow(
-                    icon = Icons.Filled.Compress,
-                    label = tr("压缩会话上下文", "Compact context"),
-                    subtitle = tr("将较早对话总结压缩以释放上下文窗口", "Summarize earlier turns to free context window"),
-                    onClick = { onAction(ChatAction.Compact) },
-                )
-                SheetHairline()
-                SheetActionRow(
                     icon = Icons.Filled.AccountTree,
                     label = tr("从历史消息分叉", "Fork from message"),
-                    subtitle = tr("回到某条消息创建新分支会话", "Create a new session branched from an earlier message"),
+                    subtitle = tr("回到某条用户消息创建独立分支会话", "Branch into a new session from an earlier prompt"),
                     onClick = { onAction(ChatAction.PickFork) },
                 )
                 SheetHairline()
                 SheetActionRow(
                     icon = Icons.Filled.ContentCopy,
-                    label = tr("复制当前会话", "Clone session"),
+                    label = tr("克隆当前会话", "Clone session"),
                     onClick = { onAction(ChatAction.CloneSession) },
                 )
                 SheetHairline()
                 SheetActionRow(
-                    icon = Icons.Filled.FileUpload,
-                    label = tr("导入 JSONL 会话", "Import JSONL session"),
-                    onClick = { onAction(ChatAction.ImportSession) },
+                    icon = Icons.Filled.Compress,
+                    label = tr("立即压缩上下文", "Compact context now"),
+                    subtitle = tr("总结较早轮次释放上下文窗口", "Summarize earlier turns to free context window"),
+                    onClick = { onAction(ChatAction.Compact) },
                 )
                 SheetHairline()
                 SheetActionRow(
                     icon = Icons.Filled.Tune,
-                    label = tr("会话与队列设置", "Session & queue settings"),
-                    subtitle = tr("引导/后续模式、自动压缩、重试", "Steer/follow-up mode, auto-compaction, retry"),
+                    label = tr("队列与自动容错策略", "Queue & Auto-Policy"),
+                    subtitle = tr("引导/后续投递方式、自动压缩与自动重试开关", "Steering/follow-up mode, auto-compaction & auto-retry"),
                     onClick = { onAction(ChatAction.ToolsSheet) },
+                )
+                SheetHairline()
+                SheetActionRow(
+                    icon = Icons.Filled.FileUpload,
+                    label = tr("导入 JSONL 会话文件", "Import JSONL session"),
+                    onClick = { onAction(ChatAction.ImportSession) },
                 )
             }
         }

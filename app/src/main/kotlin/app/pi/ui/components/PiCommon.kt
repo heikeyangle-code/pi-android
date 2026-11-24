@@ -1,5 +1,10 @@
 package app.pi.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -10,6 +15,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,18 +25,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
@@ -241,32 +249,33 @@ fun PiMenu(
     placement: PiMenuPlacement,
     modifier: Modifier = Modifier,
     maxHeight: Dp = PI_MENU_MAX_HEIGHT,
+    alignEnd: Boolean = false,
 ) {
-    if (!expanded) return
+    if (!expanded || items.isEmpty()) return
     val density = LocalDensity.current
     val dividerCount = items.count { it.dividerBefore }
     val height = (PI_MENU_ROW_HEIGHT * items.size +
         PI_MENU_VERTICAL_PADDING * 2 +
         PI_MENU_DIVIDER_HEIGHT * dividerCount).coerceAtMost(maxHeight)
-    // `Popup`'s offset is from the anchor's top-left, in pixels.
     val offsetY = when (placement) {
         PiMenuPlacement.Above -> -(height + PI_MENU_ANCHOR_GAP)
         PiMenuPlacement.Below -> PI_MENU_ANCHOR_GAP
     }
+    val hasAnySymbol = items.any { it.symbol != null }
     Popup(
-        alignment = Alignment.TopStart,
+        alignment = if (alignEnd) Alignment.TopEnd else Alignment.TopStart,
         offset = with(density) { IntOffset(0, offsetY.roundToPx()) },
         onDismissRequest = onDismiss,
         properties = PopupProperties(focusable = true),
     ) {
         val enterAlpha = remember { androidx.compose.animation.core.Animatable(0f) }
         androidx.compose.runtime.LaunchedEffect(Unit) {
-            enterAlpha.animateTo(1f, androidx.compose.animation.core.tween(110))
+            enterAlpha.animateTo(1f, tween(110))
         }
         Column(
             modifier = modifier
                 .graphicsLayer { alpha = enterAlpha.value }
-                .width(PI_MENU_WIDTH)
+                .width(if (hasAnySymbol) PI_MENU_WIDTH else 208.dp)
                 .heightIn(max = maxHeight)
                 .clip(RoundedCornerShape(PI_MENU_RADIUS))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
@@ -281,11 +290,11 @@ fun PiMenu(
             items.forEach { item ->
                 if (item.dividerBefore) {
                     HorizontalDivider(
-                        thickness = 1.dp,
+                        thickness = 0.5.dp,
                         color = PiTheme.palette.borderMuted.copy(alpha = 0.55f),
                     )
                 }
-                PiMenuRow(item = item, onDismiss = onDismiss)
+                PiMenuRow(item = item, showSymbolSlot = hasAnySymbol, onDismiss = onDismiss)
             }
         }
     }
@@ -293,29 +302,25 @@ fun PiMenu(
 
 /** One row of a [PiMenu]: `[symbol 24] + 10 + label + slack + right-aligned note`. */
 @Composable
-private fun PiMenuRow(item: PiMenuItem, onDismiss: () -> Unit) {
+private fun PiMenuRow(item: PiMenuItem, showSymbolSlot: Boolean, onDismiss: () -> Unit) {
     val palette = PiTheme.palette
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    // What a screen reader hears. The rule the designer set: wherever a symbol is
-    // visible there must be Chinese beside it, and whatever is announced must *be*
-    // that Chinese — so the label and the note are joined, and a row whose spoken
-    // name is not just those two (「清空」 → 「清空草稿」) overrides it.
     val spoken = item.a11yLabel ?: item.note?.let { tr("${item.label}，$it", "${item.label}, $it") } ?: item.label
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .alpha(if (item.enabled) 1f else 0.45f)
             .background(
-                if (pressed) {
+                if (pressed && item.enabled) {
                     MaterialTheme.colorScheme.surfaceContainerHighest
                 } else {
                     Color.Transparent
                 },
             )
             .clickable(
+                enabled = item.enabled,
                 interactionSource = interaction,
-                // No ripple: v2's menus have no press animation, and M3's would tint
-                // the row with `primary`, which this app reserves for real actions.
                 indication = null,
                 onClickLabel = spoken,
             ) {
@@ -326,18 +331,20 @@ private fun PiMenuRow(item: PiMenuItem, onDismiss: () -> Unit) {
             .padding(horizontal = PI_MENU_ROW_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.width(PI_MENU_SYMBOL_WIDTH), contentAlignment = Alignment.Center) {
-            if (item.symbol != null) {
-                Text(
-                    text = item.symbol,
-                    style = PiTheme.text.monoSmall.copy(fontSize = 13.sp),
-                    color = item.symbolColor ?: palette.text,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                )
+        if (showSymbolSlot) {
+            Box(Modifier.width(PI_MENU_SYMBOL_WIDTH), contentAlignment = Alignment.Center) {
+                if (item.symbol != null) {
+                    Text(
+                        text = item.symbol,
+                        style = PiTheme.text.monoSmall.copy(fontSize = 13.sp),
+                        color = item.symbolColor ?: palette.text,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+                }
             }
+            Spacer(Modifier.width(PI_MENU_SYMBOL_GAP))
         }
-        Spacer(Modifier.width(PI_MENU_SYMBOL_GAP))
         Text(
             text = item.label,
             modifier = Modifier.weight(1f),
@@ -377,6 +384,7 @@ data class PiMenuItem(
     val a11yLabel: String? = null,
     /** Draw the 1 px rule above this row. */
     val dividerBefore: Boolean = false,
+    val enabled: Boolean = true,
     val onSelect: () -> Unit,
 )
 
@@ -638,28 +646,79 @@ fun PiSwitchRow(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 10.dp),
+            .alpha(if (enabled) 1f else 0.45f)
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = androidx.compose.ui.semantics.Role.Switch,
+                onValueChange = { next ->
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                    onCheckedChange(next)
+                },
+            )
+            .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 title,
-                style = MaterialTheme.typography.bodyLarge,
+                style = PiType.rowTitle,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             if (supporting != null) {
                 Text(
                     supporting,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
         Spacer(Modifier.width(12.dp))
-        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+        PiPillSwitch(checked = checked)
+    }
+}
+
+@Composable
+private fun PiPillSwitch(checked: Boolean) {
+    val accent = PiTheme.palette.accent
+    val track by animateColorAsState(
+        targetValue = if (checked) accent else MaterialTheme.colorScheme.surfaceContainerHighest,
+        animationSpec = tween(160),
+        label = "piSwitchTrack",
+    )
+    val border by animateColorAsState(
+        targetValue = if (checked) accent else PiTheme.palette.borderMuted.copy(alpha = 0.7f),
+        animationSpec = tween(160),
+        label = "piSwitchBorder",
+    )
+    val knobOffset by animateDpAsState(
+        targetValue = if (checked) 18.dp else 0.dp,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "piSwitchKnob",
+    )
+    Box(
+        modifier = Modifier
+            .size(width = 38.dp, height = 22.dp)
+            .clip(CircleShape)
+            .background(track)
+            .border(PiSpacing.hairlineThin, border, CircleShape)
+            .padding(2.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(
+            Modifier
+                .offset(x = knobOffset)
+                .size(16.dp)
+                .clip(CircleShape)
+                .background(if (checked) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant),
+        )
     }
 }
 

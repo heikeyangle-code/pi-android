@@ -67,29 +67,6 @@ internal fun ChatSheetHost(
                 session.compact()
                 onSheet(null)
             },
-            onStats = {
-                session.refreshStats()
-                onSheet(ChatSheet.Stats)
-            },
-            onTree = {
-                // Navigation refreshes the tree — see the `/tree` arm in `pick`.
-                session.requestNav(NavRequest.SessionTree)
-                onSheet(null)
-            },
-            onFork = {
-                session.refreshForkMessages()
-                onSheet(ChatSheet.Fork)
-            },
-            onClone = {
-                session.cloneSession()
-                onSheet(null)
-            },
-            onRename = { onSheet(ChatSheet.Rename) },
-            onExport = {
-                session.exportSession()
-                onSheet(null)
-            },
-            onCopyLast = { copyLastAssistant(session, context) },
             onDismiss = { onSheet(null) },
         )
 

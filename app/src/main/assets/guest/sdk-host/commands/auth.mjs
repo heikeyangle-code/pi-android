@@ -32,6 +32,10 @@ function describeProvider(runtime, provider) {
       loginLabel: provider.auth.oauth.loginLabel,
     });
   }
+  const builtin =
+    runtime.builtins?.has(provider.id) === true ||
+    runtime.nativeExtensionProviders?.has(provider.id) === true ||
+    runtime.extensionProviders?.has(provider.id) === true;
   return {
     id: provider.id,
     name: provider.name,
@@ -42,6 +46,7 @@ function describeProvider(runtime, provider) {
     // App 的「订阅登录」标签必须用它，用 usingOAuth 会把非订阅型 OAuth 也标成订阅。
     usingSubscription: runtime.isUsingSubscription(provider.id),
     status: runtime.getProviderAuthStatus(provider.id),
+    builtin,
   };
 }
 

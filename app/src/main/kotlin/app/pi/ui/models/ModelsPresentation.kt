@@ -47,7 +47,7 @@ enum class Connection {
     val connected: Boolean get() = this != None
 }
 
-/** 页面用的供应商读数（由 `HostAuth.Provider` 一对一映射，不依赖它）。 */
+/** 页面用的供应商读数（与 SDK `ModelRuntime.getProviders()` + `models.json` 一一对齐，不拆成割裂的多套分区）。 */
 data class ProviderFacts(
     val id: String,
     val name: String,
@@ -55,16 +55,26 @@ data class ProviderFacts(
     val usingOAuth: Boolean,
     val usingSubscription: Boolean,
     val source: String?,
-    /** 这家有没有「订阅账号」型的 OAuth 登录方式可选（统一排在顶部「订阅登录」段，登录前后不跳段、不重复）。 */
     val offersSubscription: Boolean,
     val modelCount: Int,
-    /** 来自 `models.json`（用户自己加的，或覆盖了内置供应商）。 */
+    /** 来自 `models.json`（用户自建端点，或对内置供应商的覆盖）。 */
     val custom: Boolean,
-    /** 是否支持非订阅型 OAuth 网页登录（如 OpenRouter / Radius）。 */
+    /** 是否支持非订阅型 OAuth 网页授权登录（如 OpenRouter / Radius）。 */
     val offersWebLogin: Boolean = false,
+    /** 是否支持交互式保存 API Key（`auth.apiKey.login`）。 */
+    val offersApiKey: Boolean = false,
+    /** 是否通过环境变量/本机云凭证隐式工作（如 AWS Bedrock / Vertex）。 */
+    val hasAmbientAuth: Boolean = false,
+    /** 当 [custom] 为真时，该条目是否覆盖了一个内置/扩展供应商（同 ID 覆盖 Base URL / 请求头）。 */
+    val overridesBuiltin: Boolean = false,
+    /** `models.json` 中配置的自定义 `baseUrl`（用于在统一列表行展示简短域名）。 */
+    val customBaseUrl: String? = null,
+    /** 是否为当前会话激活模型所属的供应商。 */
+    val isActiveProvider: Boolean = false,
+    /** 仅存在于 `models.json`、尚未注册进 `ModelRuntime`（如配置待补全）的条目。 */
+    val customUnregistered: Boolean = false,
 ) {
     val title: String get() = name.ifBlank { id }
-    /** 是否支持任何一种 OAuth 账号登录（订阅账号或网页授权登录），统一排在顶部段。 */
     val offersOAuth: Boolean get() = offersSubscription || offersWebLogin
 }
 
@@ -80,34 +90,130 @@ fun connectionOf(f: ProviderFacts): Connection = when {
     }
 }
 
-/**
- * 供应商列表的三段，按使用优先级自上而下排列，且互斥不重复：
- *  1. [accountProviders]：全部支持账号登录（订阅账号 + OAuth 网页登录，含 OpenRouter 等）的供应商
- *     （已连接在前，其次订阅账号，其次网页登录，各自按名字排；登录前后不跳段、不重复）；
- *  2. [connectedApi]：已连接的纯 API Key / 环境变量 / 自定义供应商；
- *  3. [otherApi]：其余未连接的 API 供应商（默认折叠，搜索时展开）。
- */
-data class ProviderSections(
-    val accountProviders: List<ProviderFacts>,
-    val connectedApi: List<ProviderFacts>,
-    val otherApi: List<ProviderFacts>,
+/** 统一供应商列表的快速筛选胶囊（不拆多张卡片，所有供应商整合在同一列表）。 */
+enum class ProviderFilter {
+    All,
+    Connected,
+    Account,
+    Custom,
+    ;
+
+    val label: String
+        get() = when (this) {
+            All -> tr("全部", "All")
+            Connected -> tr("已连接", "Connected")
+            Account -> tr("账号登录", "Account")
+            Custom -> tr("自定义", "Custom")
+        }
+}
+
+data class ProviderFilterCounts(
+    val all: Int,
+    val connected: Int,
+    val account: Int,
+    val custom: Int,
+) {
+    fun countOf(filter: ProviderFilter): Int = when (filter) {
+        ProviderFilter.All -> all
+        ProviderFilter.Connected -> connected
+        ProviderFilter.Account -> account
+        ProviderFilter.Custom -> custom
+    }
+}
+
+data class UnifiedProvidersView(
+    val visible: List<ProviderFacts>,
+    val hiddenCount: Int,
+    val totalMatched: Int,
+    val counts: ProviderFilterCounts,
 )
+
+/** 默认收起长尾时的最少展示行数；已连接、自定义、以及支持账号一键登录的供应商始终完整保留不折叠。 */
+private const val MIN_UNIFIED_VISIBLE = 10
 
 private val NAME_ORDER = Comparator<ProviderFacts> { a, b ->
     val byName = a.title.compareTo(b.title, ignoreCase = true)
     if (byName != 0) byName else a.id.compareTo(b.id)
 }
 
-private val ACCOUNT_ORDER = compareByDescending<ProviderFacts> { it.configured }
-    .thenByDescending { it.offersSubscription }
-    .then(NAME_ORDER)
+/**
+ * 统一供应商排序规则（100% 对齐 SDK `ModelRuntime` 单一供应商注册表语义）：
+ *  1. 当前会话模型所属供应商（若已连接）置顶；
+ *  2. 全部已连接供应商（无论订阅账号、网页 OAuth、API Key、环境变量还是自定义 `models.json`）紧随其后；
+ *  3. 用户在 `models.json` 中添加但尚未配置凭据的自定义供应商；
+ *  4. 支持订阅账号 / 网页 OAuth 一键登录的内置供应商；
+ *  5. 其余内置 API 供应商（按名称字母序）。
+ */
+private val UNIFIED_ORDER = Comparator<ProviderFacts> { a, b ->
+    fun tier(p: ProviderFacts): Int = when {
+        p.configured && p.isActiveProvider -> 0
+        p.configured -> 1
+        p.custom -> 2
+        p.offersSubscription -> 3
+        p.offersWebLogin -> 4
+        else -> 5
+    }
+    val byTier = tier(a).compareTo(tier(b))
+    if (byTier != 0) return@Comparator byTier
+    // 已连接层内部：订阅 > 网页登录 > 自定义 > 其余，同级按名称排，稳定不乱跳
+    if (a.configured && b.configured) {
+        val subCmp = b.usingSubscription.compareTo(a.usingSubscription)
+        if (subCmp != 0) return@Comparator subCmp
+        val oauthCmp = b.usingOAuth.compareTo(a.usingOAuth)
+        if (oauthCmp != 0) return@Comparator oauthCmp
+    }
+    NAME_ORDER.compare(a, b)
+}
 
-fun sectionProviders(all: List<ProviderFacts>, query: String): ProviderSections {
-    val hit = all.filter { matches(query, it.title, it.id) }
-    return ProviderSections(
-        accountProviders = hit.filter { it.offersOAuth }.sortedWith(ACCOUNT_ORDER),
-        connectedApi = hit.filter { !it.offersOAuth && it.configured }.sortedWith(NAME_ORDER),
-        otherApi = hit.filter { !it.offersOAuth && !it.configured }.sortedWith(NAME_ORDER),
+fun shortEndpointHost(rawUrl: String?): String? {
+    val clean = rawUrl?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val noProto = clean.removePrefix("https://").removePrefix("http://")
+    return noProto.substringBefore('/').substringBefore('?').takeIf { it.isNotBlank() } ?: clean
+}
+
+fun buildUnifiedProviders(
+    all: List<ProviderFacts>,
+    query: String,
+    filter: ProviderFilter = ProviderFilter.All,
+    expanded: Boolean = false,
+): UnifiedProvidersView {
+    val counts = ProviderFilterCounts(
+        all = all.size,
+        connected = all.count { it.configured },
+        account = all.count { it.offersOAuth || it.usingOAuth },
+        custom = all.count { it.custom },
+    )
+    val sorted = all
+        .filter { p ->
+            val matchesFilter = when (filter) {
+                ProviderFilter.All -> true
+                ProviderFilter.Connected -> p.configured
+                ProviderFilter.Account -> p.offersOAuth || p.usingOAuth
+                ProviderFilter.Custom -> p.custom
+            }
+            matchesFilter && matches(query, p.title, p.id, p.customBaseUrl.orEmpty())
+        }
+        .sortedWith(UNIFIED_ORDER)
+
+    val searchingOrFiltered = query.isNotBlank() || filter != ProviderFilter.All
+    if (searchingOrFiltered || expanded) {
+        return UnifiedProvidersView(
+            visible = sorted,
+            hiddenCount = 0,
+            totalMatched = sorted.size,
+            counts = counts,
+        )
+    }
+
+    val pinnedCount = sorted.count { it.configured || it.custom || it.offersOAuth }
+    val keep = maxOf(MIN_UNIFIED_VISIBLE, pinnedCount).coerceAtMost(sorted.size)
+    // 若剩余长尾只有 1~2 项，直接全部展开避免多点一次
+    val finalKeep = if (sorted.size - keep <= 2) sorted.size else keep
+    return UnifiedProvidersView(
+        visible = sorted.take(finalKeep),
+        hiddenCount = (sorted.size - finalKeep).coerceAtLeast(0),
+        totalMatched = sorted.size,
+        counts = counts,
     )
 }
 

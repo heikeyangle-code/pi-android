@@ -565,16 +565,61 @@ internal fun ProviderSheet(
                 }
             } else if (provider.oauth == null) {
                 item(key = "no-auth-note") {
-                    ModelsCard {
-                        Text(
-                            tr(
-                                "这个供应商没有内置登录方式；请在下方「自定义端点与请求头」里填写地址与密钥。",
-                                "This provider has no built-in login; configure its URL and key under Custom Endpoint & Headers below.",
-                            ),
-                            style = PiTheme.text.meta,
-                            color = palette.muted,
-                            modifier = Modifier.padding(ModelsCardPadding),
-                        )
+                    if (custom != null) {
+                        val baseUrl = (custom["baseUrl"] as? kotlinx.serialization.json.JsonPrimitive)
+                            ?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+                        val apiType = (custom["api"] as? kotlinx.serialization.json.JsonPrimitive)
+                            ?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+                        ModelsCard(accent = configured) {
+                            Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(
+                                        tr("models.json 自定义端点", "Custom Endpoint (models.json)"),
+                                        style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
+                                        color = palette.text,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    if (apiType != null) TagPill(apiType, tone = palette.accent)
+                                }
+                                if (baseUrl != null) {
+                                    Text(
+                                        baseUrl,
+                                        style = PiTheme.text.monoSmall,
+                                        color = palette.muted,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Text(
+                                    tr(
+                                        "该供应商的 Base URL、API Key 与模型列表由 models.json 直接管理。",
+                                        "This provider's Base URL, API key, and model list are managed directly in models.json.",
+                                    ),
+                                    style = PiTheme.text.meta,
+                                    color = palette.dim,
+                                )
+                                PrimaryAction(
+                                    text = tr("编辑端点、凭据与模型", "Edit Endpoint, Key & Models"),
+                                    fullWidth = true,
+                                    onClick = { onEditCustom(custom) },
+                                )
+                            }
+                        }
+                    } else {
+                        ModelsCard {
+                            Text(
+                                tr(
+                                    "这个供应商没有内置登录方式；请在下方「自定义端点与请求头」里填写地址与密钥。",
+                                    "This provider has no built-in login; configure its URL and key under Custom Endpoint & Headers below.",
+                                ),
+                                style = PiTheme.text.meta,
+                                color = palette.muted,
+                                modifier = Modifier.padding(ModelsCardPadding),
+                            )
+                        }
                     }
                 }
             }

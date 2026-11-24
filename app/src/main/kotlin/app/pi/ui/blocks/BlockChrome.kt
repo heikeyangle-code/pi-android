@@ -25,8 +25,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -238,22 +236,44 @@ internal fun BlockActionMenu(
     // 和消息的长按面同一个形态（底部面板 + 触感），而不是一个没有触感、锚点会跳的下拉菜单。
     if (open) {
         app.pi.ui.components.PiSheet(onDismiss = { open = false }) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
-                actions.forEach { action ->
-                    Text(
-                        action.label,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                open = false
-                                action.onSelect()
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = PiSpacing.pageHorizontal)
+                    .padding(bottom = 18.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.45f)),
+                ) {
+                    Column {
+                        actions.forEachIndexed { index, action ->
+                            if (index > 0) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 14.dp)
+                                        .height(0.5.dp)
+                                        .background(PiTheme.palette.borderMuted.copy(alpha = 0.45f)),
+                                )
                             }
-                            .padding(vertical = PiSpacing.cardPadding),
-                        style = app.pi.ui.components.PiType.rowTitle,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
-                    )
+                            Text(
+                                action.label,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        open = false
+                                        action.onSelect()
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                style = app.pi.ui.components.PiType.rowTitle,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
                 }
-                Spacer(Modifier.height(PiSpacing.unit))
             }
         }
     }

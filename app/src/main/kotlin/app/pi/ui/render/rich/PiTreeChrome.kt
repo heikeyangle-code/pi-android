@@ -20,8 +20,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import app.pi.ui.components.PiMenu
+import app.pi.ui.components.PiMenuItem
+import app.pi.ui.components.PiMenuPlacement
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -302,17 +303,15 @@ internal fun PiTreeRowMenu(actions: List<Pair<String, () -> Unit>>) {
                 .clickable(onClickLabel = tr("更多操作", "More actions")) { open = true }
                 .padding(horizontal = 10.dp, vertical = 6.dp),
         )
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            actions.forEach { (label, action) ->
-                DropdownMenuItem(
-                    text = { Text(label) },
-                    onClick = {
-                        open = false
-                        action()
-                    },
-                )
-            }
-        }
+        PiMenu(
+            expanded = open,
+            onDismiss = { open = false },
+            placement = PiMenuPlacement.Below,
+            alignEnd = true,
+            items = actions.map { (label, action) ->
+                PiMenuItem(label = label, onSelect = action)
+            },
+        )
     }
 }
 

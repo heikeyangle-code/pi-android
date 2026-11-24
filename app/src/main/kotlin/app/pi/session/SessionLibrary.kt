@@ -88,6 +88,10 @@ class SessionLibrary(
     private val hostRoot: String get() = File(hostAgentDir, "sessions").absolutePath
     private val guestRoot: String get() = "$guestAgentDir/sessions"
 
+    private val rootCanonLazy: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        runCatching { File(hostRoot).canonicalPath }.getOrDefault(hostRoot)
+    }
+
     /** @param refresh true = 宿主重读磁盘（官方 `refreshSessionsAfterMutation` / 首次进入）；false = 用宿主缓存重算视图。 */
     suspend fun list(q: SessionListQuery, refresh: Boolean): SessionListPage {
         val data = requireCommands().call(
@@ -102,8 +106,9 @@ class SessionLibrary(
                 "groupByCwd" to JsonPrimitive(true),
             ),
         ).data
+        val dirCache = HashMap<String, String?>()
         return SessionListPage(
-            rows = rows(data["rows"]).mapNotNull(::summaryOf),
+            rows = rows(data["rows"]).mapNotNull { summaryOf(it, dirCache) },
             total = (data["total"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0,
             queryError = str(data, "queryError"),
             raw = data["rows"] as? JsonArray,
@@ -113,7 +118,8 @@ class SessionLibrary(
     fun parseProgress(data: JsonElement?): SessionLoadProgress? {
         val o = data as? JsonObject ?: return null
         val scope = SessionScope.entries.firstOrNull { it.wire == str(o, "scope") } ?: return null
-        val partial = (o["rows"] as? JsonArray)?.let { arr -> arr.mapNotNull { it as? JsonObject }.mapNotNull(::summaryOf) }
+        val dirCache = HashMap<String, String?>()
+        val partial = (o["rows"] as? JsonArray)?.let { arr -> arr.mapNotNull { it as? JsonObject }.mapNotNull { summaryOf(it, dirCache) } }
         return SessionLoadProgress(
             scope,
             (o["loaded"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0,
@@ -129,7 +135,8 @@ class SessionLibrary(
         return runCatching {
             val root = Json.parseToJsonElement(f.readText()) as JsonObject
             if (str(root, "key") != q.cacheKey || str(root, "root") != hostRoot) return null
-            SessionListPage(rows(root["rows"]).mapNotNull(::summaryOf), (root["total"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0, null)
+            val dirCache = HashMap<String, String?>()
+            SessionListPage(rows(root["rows"]).mapNotNull { summaryOf(it, dirCache) }, (root["total"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0, null)
         }.getOrNull()
     }
 
@@ -187,18 +194,27 @@ class SessionLibrary(
     // ---- 路径换算 ----
 
     fun guestPathOf(file: File): String? {
-        val rootCanon = runCatching { File(hostRoot).canonicalPath }.getOrDefault(hostRoot)
+        val rootCanon = rootCanonLazy
         val p = runCatching { file.canonicalPath }.getOrNull() ?: return null
         if (p != rootCanon && !p.startsWith("$rootCanon/")) return null
         return guestRoot + p.removePrefix(rootCanon)
     }
 
-    fun hostFileOf(guestPath: String): File? {
+    fun hostFileOf(guestPath: String, parentCanonCache: MutableMap<String, String?>? = null): File? {
         if (guestPath != guestRoot && !guestPath.startsWith("$guestRoot/")) return null
         val rel = guestPath.removePrefix(guestRoot).trimStart('/')
-        if (rel.split('/').any { it == ".." }) return null
+        if (rel.contains('\\') || rel.contains('\u0000') || rel.split('/').any { it == ".." || it == "." }) return null
         val candidate = File(hostRoot, rel)
-        val rootCanon = runCatching { File(hostRoot).canonicalPath }.getOrDefault(hostRoot)
+        val rootCanon = rootCanonLazy
+        val parent = candidate.parentFile
+        if (parent != null && parentCanonCache != null) {
+            val parentCanon = parentCanonCache.getOrPut(parent.path) {
+                runCatching { parent.canonicalPath }.getOrNull()
+            } ?: return null
+            if (parentCanon != rootCanon && !parentCanon.startsWith("$rootCanon/")) return null
+            val isSymlink = runCatching { java.nio.file.Files.isSymbolicLink(candidate.toPath()) }.getOrDefault(false)
+            if (!isSymlink) return candidate
+        }
         val candCanon = runCatching { candidate.canonicalPath }.getOrNull() ?: return null
         if (candCanon != rootCanon && !candCanon.startsWith("$rootCanon/")) return null
         return candidate
@@ -216,8 +232,8 @@ class SessionLibrary(
         false
     }
 
-    private fun summaryOf(o: JsonObject): SessionSummary? {
-        val file = hostFileOf(str(o, "path") ?: return null) ?: return null
+    private fun summaryOf(o: JsonObject, dirCache: MutableMap<String, String?>? = null): SessionSummary? {
+        val file = hostFileOf(str(o, "path") ?: return null, dirCache) ?: return null
         val id = str(o, "id") ?: return null
         val created = millis(str(o, "created"))
         val modified = millis(str(o, "modified")) ?: created

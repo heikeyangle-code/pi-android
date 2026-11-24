@@ -20,7 +20,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -43,10 +46,9 @@ import app.pi.i18n.tr
 import app.pi.models.ProviderForm
 import app.pi.protocol.PiResponses
 import app.pi.ui.PiTopBar
+import app.pi.ui.PiTopBarIcon
 import app.pi.ui.settings.G_MODELS_SCREEN
-import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiInfoNote
-import app.pi.ui.settings.PiRowKind
 import app.pi.ui.settings.PiSetting
 import app.pi.ui.settings.PiSettingEditorSheet
 import app.pi.ui.settings.PiSettingsCatalog
@@ -64,18 +66,18 @@ import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * 模型、订阅与推理设置（SDK 统一入口）。
- *
- * 取代了旧版独立的「模型与推理」设置分组页与冗余的「引擎」页模型段，将所有模型相关能力统一收拢：
- *  1. **当前模型与思考等级**：查看当前会话模型（能力标签/价格）、一键切换模型（只本次 / 设为默认），并直接切换当前思考等级；
- *  2. **订阅账号登录（统一置顶）**：所有支持订阅登录的供应商集中展示（已连接在前、未连接在后），登录前后不跳段、不重复；
- *  3. **已连接 / 其他 API 供应商**：按连接状态清晰分区；
- *  4. **自定义供应商（`models.json`）**：增改删与内置覆盖，由 SDK 校验落盘；
- *  5. **推理、作用域与缓存**：当前会话作用域模型、实时缓存预热状态与模式切换，以及 `settings.json` 中的推理/预算/循环模型规则；
- *  6. **模型目录刷新**：按需向各供应商拉取最新目录并报告失败明细。
+ * 模型、供应商与推理设置（100% 对齐 Pi 1.6.0 `ModelRuntime` 单一供应商注册表语义）：
+ *  1. **当前会话模型与思考等级**：查看当前会话模型（能力标签/价格）、一键切换模型（只本次 / 设为默认），并直接切换思考深度；
+ *  2. **统一供应商列表**：不再人为拆分成「订阅登录 / 已连接 API / 其他 API / 自定义供应商」多张割裂卡片，
+ *     而是与 SDK `ModelRuntime.getProviders()` + `models.json` 一致整合为单一供应商列表（当前使用与已连接置顶，
+ *     支持全部 / 已连接 / 账号登录 / 自定义筛选，行内清晰展示订阅、网页 OAuth、API Key、自定义端点与覆盖标识，
+ *     底部无缝集成添加自定义端点与导入 `models.json`）；
+ *  3. **推理、作用域与缓存**：作用域与循环模型、全局与逐模型思考等级、思考预算及缓存预热；
+ *  4. **顶栏一键刷新目录**：按需向各供应商拉取最新模型目录并提示结果。
  */
 @Composable
 fun ModelsScreen(
@@ -96,10 +98,11 @@ fun ModelsScreen(
     var data by remember { mutableStateOf<Data?>(null) }
     var loaded by remember { mutableStateOf(false) }
     var query by remember(initialProviderQuery) { mutableStateOf(initialProviderQuery.orEmpty()) }
+    var filter by remember { mutableStateOf(ProviderFilter.All) }
     var notice by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var refresh by remember { mutableStateOf<RefreshSummary?>(null) }
-    var showOthers by remember { mutableStateOf(false) }
+    var showAllProviders by remember { mutableStateOf(false) }
     var openProvider by remember { mutableStateOf<String?>(null) }
     var initialHandled by remember(initialProviderQuery, initialOpenScoped) { mutableStateOf(false) }
     var picker by remember { mutableStateOf(false) }
@@ -159,18 +162,60 @@ fun ModelsScreen(
         androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
     }
 
+    fun triggerCatalogRefresh() {
+        if (busy) return
+        val h = host() ?: run {
+            notice = tr("引擎没在运行：刷新没有执行。", "Engine is not running: refresh did not run.")
+            return
+        }
+        scope.launch {
+            busy = true
+            runCatching { h.auth.refreshModels() }
+                .onSuccess { refresh = refreshSummary(it); onLoadAvailableModels() }
+                .onFailure { notice = tr("刷新失败：${it.message}", "Refresh failed: ${it.message}") }
+            busy = false
+            reload++
+        }
+    }
+
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = tr("模型与供应商", "Models & Providers"), onBack = onBack, scrolled = scrolled)
+        PiTopBar(
+            title = tr("模型与供应商", "Models & Providers"),
+            onBack = onBack,
+            scrolled = scrolled,
+            actions = {
+                if (data != null) {
+                    if (busy) {
+                        Box(
+                            modifier = Modifier.size(44.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = PiTheme.palette.accent,
+                            )
+                        }
+                    } else {
+                        PiTopBarIcon(
+                            onClick = ::triggerCatalogRefresh,
+                            contentDescription = tr("刷新模型目录", "Refresh model catalog"),
+                            icon = Icons.Filled.Refresh,
+                        )
+                    }
+                }
+            },
+        )
         val d = data
         if (d == null) {
             if (loaded) {
                 PiInfoNote(tr("引擎没有在运行，这一页读不到模型与供应商。启动后再来。", "Engine is not running, so models and providers cannot be loaded. Start the engine and try again."))
             } else {
-                androidx.compose.foundation.layout.Box(
+                Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    androidx.compose.material3.CircularProgressIndicator(
+                    CircularProgressIndicator(
                         modifier = Modifier.size(28.dp),
                         strokeWidth = 2.5.dp,
                         color = PiTheme.palette.accent,
@@ -180,11 +225,17 @@ fun ModelsScreen(
             return@Column
         }
 
-        val customIds = d.custom?.providers?.keys.orEmpty()
-        val facts = d.facts(customIds)
-        val names = d.providers.associate { it.id to it.name }
-        val sections = sectionProviders(facts, query)
-        val searching = query.isNotBlank()
+        val customProviders = d.custom?.providers.orEmpty()
+        val customIds = customProviders.keys
+        val builtinIds = remember(d.providers) { d.providers.filter { it.builtin }.map { it.id }.toSet() }
+        val facts = d.facts(customProviders)
+        val names = remember(d.providers, facts) { facts.associate { it.id to it.title } }
+        val unified = buildUnifiedProviders(
+            all = facts,
+            query = query,
+            filter = filter,
+            expanded = showAllProviders,
+        )
         val current = d.currentFacts()
 
         LazyColumn(
@@ -204,7 +255,25 @@ fun ModelsScreen(
                 }
             }
 
-            // ---- 当前模型与即时思考等级 ----
+            refresh?.let { r ->
+                item(key = "refresh-banner") {
+                    ModelsCard(onClick = { refresh = null }) {
+                        Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                r.sentence(names),
+                                style = PiTheme.text.prose,
+                                color = if (r.ok) PiTheme.palette.success else PiTheme.palette.warning,
+                            )
+                            r.detail(names).forEach {
+                                Text(it, style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            }
+                            Text(tr("点一下关掉", "Tap to dismiss"), style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                        }
+                    }
+                }
+            }
+
+            // ---- 1. 当前模型与即时思考等级 ----
             item(key = "current") {
                 val palette = PiTheme.palette
                 ModelsCard(accent = current != null) {
@@ -243,7 +312,7 @@ fun ModelsScreen(
                                     )
                                 } else {
                                     Text(
-                                        tr("连接供应商后即可选择模型开始对话", "Connect a provider to select a model and start chatting"),
+                                        tr("在下方连接任意供应商后即可选择模型", "Connect any provider below to select a model"),
                                         style = PiTheme.text.meta,
                                         color = palette.dim,
                                     )
@@ -282,135 +351,184 @@ fun ModelsScreen(
                                 }
                             }
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            PrimaryAction(
-                                text = when {
-                                    d.models.isEmpty() -> tr("先连接供应商", "Connect a Provider First")
-                                    current == null -> tr("选择模型（${d.models.size} 可用）", "Select Model (${d.models.size} available)")
-                                    else -> tr("更换模型（${d.models.size} 可用）", "Switch Model (${d.models.size} available)")
-                                },
-                                enabled = d.models.isNotEmpty(),
-                                onClick = { picker = true },
-                            )
-                        }
-                    }
-                }
-            }
-
-            item(key = "search") {
-                ModelsSearchBar(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = tr("搜索供应商（如 OpenRouter、Anthropic、DeepSeek…）", "Search providers (e.g. OpenRouter, Anthropic, DeepSeek…)"),
-                    modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
-                )
-            }
-
-            // ---- 账号与订阅登录：全部支持 OAuth（订阅账号 + 网页授权，含 OpenRouter）统一置顶 ----
-            if (sections.accountProviders.isNotEmpty()) {
-                val connectedAccountCount = sections.accountProviders.count { it.configured }
-                item(key = "l:sub") {
-                    ModelsSectionLabel(
-                        text = if (connectedAccountCount > 0) {
-                            tr(
-                                "账号与订阅登录（$connectedAccountCount/${sections.accountProviders.size} 已连接）",
-                                "Account & Subscription Login ($connectedAccountCount/${sections.accountProviders.size} connected)",
-                            )
-                        } else {
-                            tr(
-                                "账号与订阅登录（${sections.accountProviders.size}）",
-                                "Account & Subscription Login (${sections.accountProviders.size})",
-                            )
-                        },
-                        subtitle = if (connectedAccountCount == 0 && !searching) {
-                            tr("支持订阅账号或浏览器 OAuth 一键登录（含 OpenRouter 等），也可填写 API Key", "Sign in with subscription or browser OAuth (including OpenRouter), or paste an API key")
-                        } else {
-                            null
-                        },
-                    )
-                }
-                item(key = "c:sub") { ProviderCard(sections.accountProviders) { openProvider = it } }
-            }
-
-            // ---- 已连接的 API 供应商 ----
-            if (sections.connectedApi.isNotEmpty()) {
-                item(key = "l:conn") { ModelsSectionLabel(tr("已连接 API（${sections.connectedApi.size}）", "Connected APIs (${sections.connectedApi.size})")) }
-                item(key = "c:conn") { ProviderCard(sections.connectedApi) { openProvider = it } }
-            }
-
-            // ---- 其余未连接的 API 供应商 ----
-            if (sections.otherApi.isNotEmpty()) {
-                val open = showOthers || searching
-                item(key = "l:other") {
-                    ModelsSectionLabel(
-                        tr("其他 API 供应商（${sections.otherApi.size}）", "Other API Providers (${sections.otherApi.size})"),
-                        trailing = if (searching) null else ({
-                            PiSettingsChip(text = if (open) tr("收起", "Collapse") else tr("浏览全部", "Browse All"), onClick = { showOthers = !showOthers })
-                        }),
-                    )
-                }
-                if (open) item(key = "c:other") { ProviderCard(sections.otherApi) { openProvider = it } }
-            }
-
-            if (sections.accountProviders.isEmpty() && sections.connectedApi.isEmpty() && sections.otherApi.isEmpty()) {
-                item(key = "none") {
-                    ModelsCard {
-                        Column(Modifier.padding(ModelsCardPadding)) {
-                            Text(tr("没有匹配的供应商", "No matching providers"), style = PiTheme.text.prose, color = PiTheme.palette.text)
-                            Text(tr("换个词，或在下面添加自定义供应商。", "Try a different search, or add a custom provider below."), style = PiTheme.text.meta, color = PiTheme.palette.dim)
-                        }
-                    }
-                }
-            }
-
-            // ---- 自定义（models.json） ----
-            item(key = "l:custom") { ModelsSectionLabel(tr("自定义供应商", "Custom Providers")) }
-            item(key = "c:custom") {
-                ModelsCard {
-                    Column {
-                        val custom = d.custom?.providers.orEmpty()
-                        custom.entries.forEach { (id, json) ->
-                            val builtin = d.providers.any { it.id == id }
-                            CustomRow(
-                                id = id,
-                                name = names[id]?.takeIf { it.isNotBlank() && it != id },
-                                detail = (json["baseUrl"] as? JsonPrimitive)?.content,
-                                overrides = builtin,
-                                onClick = { form = FormRequest(ProviderForm.from(id, json), isNew = false) },
-                            )
-                            ModelsDivider()
-                        }
-                        ActionRow(
-                            title = tr("添加自定义供应商", "Add Custom Provider"),
-                            detail = tr("OpenAI 兼容、Anthropic 兼容等任意端点，也可以只改某个内置供应商的地址", "Any OpenAI- or Anthropic-compatible endpoint, or override a built-in provider's URL"),
-                            icon = Icons.Filled.Add,
-                            onClick = { form = FormRequest(ProviderForm(api = "openai-completions"), isNew = true) },
-                        )
-                        ModelsDivider()
-                        ActionRow(
-                            title = tr("导入 / 编辑 models.json", "Import / Edit models.json"),
-                            detail = tr("选择 .json 文件或粘贴官方 models.json 批量导入端点，也可直接修复格式错误", "Pick a .json file or paste official models.json to bulk-import endpoints or repair errors"),
-                            icon = Icons.Filled.Code,
-                            onClick = { modelsJsonOpen = true },
-                        )
-                        d.custom?.error?.let { e ->
-                            ModelsDivider()
-                            Column(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable { modelsJsonOpen = true }
-                                    .padding(ModelsCardPadding),
-                                verticalArrangement = Arrangement.spacedBy(3.dp),
-                            ) {
-                                Text(tr("models.json 有问题（点此修复）", "Invalid models.json (tap to repair)"), style = PiTheme.text.prose, color = PiTheme.palette.error)
-                                Text(e, style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                        if (d.models.isNotEmpty()) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                PrimaryAction(
+                                    text = if (current == null) {
+                                        tr("选择模型（${d.models.size} 可用）", "Select Model (${d.models.size} available)")
+                                    } else {
+                                        tr("更换模型（${d.models.size} 可用）", "Switch Model (${d.models.size} available)")
+                                    },
+                                    onClick = { picker = true },
+                                )
                             }
                         }
                     }
                 }
             }
 
-            // ---- 推理、作用域与缓存（100% 对齐 Pi SDK，不再混用旧版纯文本编辑器或重复行） ----
+            // ---- 2. 统一供应商（订阅账号 + OAuth 网页授权 + API Key + 云凭证 + 自定义 models.json 整合为一处） ----
+            item(key = "providers-header") {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ModelsSectionLabel(
+                        text = if (unified.counts.connected > 0) {
+                            tr(
+                                "供应商（已连接 ${unified.counts.connected} / ${unified.counts.all}）",
+                                "Providers (${unified.counts.connected}/${unified.counts.all} connected)",
+                            )
+                        } else {
+                            tr(
+                                "供应商（${unified.counts.all}）",
+                                "Providers (${unified.counts.all})",
+                            )
+                        },
+                        trailing = {
+                            PiSettingsChip(
+                                text = tr("+ 自定义", "+ Custom"),
+                                onClick = { form = FormRequest(ProviderForm(api = "openai-completions"), isNew = true) },
+                            )
+                        },
+                    )
+                    ModelsSearchBar(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = tr("搜索供应商（如 Anthropic、ChatGPT、OpenRouter、DeepSeek…）", "Search providers (Anthropic, ChatGPT, OpenRouter, DeepSeek…)"),
+                        modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        ProviderFilter.entries.forEach { f ->
+                            val count = unified.counts.countOf(f)
+                            if (f == ProviderFilter.All || count > 0 || filter == f) {
+                                PiSettingsChip(
+                                    text = "$count".let { "${f.label} ($it)" },
+                                    active = filter == f,
+                                    onClick = { filter = f },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            item(key = "providers-card") {
+                val palette = PiTheme.palette
+                val canCollapse = filter == ProviderFilter.All && query.isBlank() &&
+                    (unified.hiddenCount > 0 || (showAllProviders && unified.totalMatched > buildUnifiedProviders(facts, "", ProviderFilter.All, expanded = false).visible.size))
+
+                ModelsCard {
+                    Column {
+                        d.custom?.error?.let { e ->
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .background(palette.error.copy(alpha = 0.08f))
+                                    .clickable { modelsJsonOpen = true }
+                                    .padding(ModelsCardPadding),
+                                verticalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                Text(
+                                    tr("models.json 格式有误（点此修复）", "Invalid models.json (tap to repair)"),
+                                    style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
+                                    color = palette.error,
+                                )
+                                Text(e, style = PiTheme.text.meta, color = palette.muted, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            }
+                            ModelsDivider()
+                        }
+
+                        if (unified.visible.isEmpty()) {
+                            Column(
+                                Modifier.padding(ModelsCardPadding),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    tr("没有匹配的供应商", "No matching providers"),
+                                    style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                                    color = palette.text,
+                                )
+                                Text(
+                                    when (filter) {
+                                        ProviderFilter.Connected -> tr("当前还没有已连接的供应商。切回「全部」选择任意供应商登录或填入 API Key。", "No providers connected yet. Switch to \"All\" to sign in or paste an API key.")
+                                        ProviderFilter.Custom -> tr("还没有自定义供应商。点下方「添加自定义供应商」或「导入 models.json」。", "No custom providers yet. Add one or import models.json below.")
+                                        else -> tr("换个关键词，或在下方添加 OpenAI / Anthropic 兼容端点。", "Try another keyword, or add an OpenAI/Anthropic-compatible endpoint below.")
+                                    },
+                                    style = PiTheme.text.meta,
+                                    color = palette.dim,
+                                )
+                            }
+                        } else {
+                            unified.visible.forEachIndexed { index, p ->
+                                if (index > 0) ModelsDivider()
+                                ProviderRow(
+                                    facts = p,
+                                    onClick = {
+                                        if (p.customUnregistered) {
+                                            val rawJson = customProviders[p.id]
+                                            if (rawJson != null) {
+                                                form = FormRequest(ProviderForm.from(p.id, rawJson), isNew = false)
+                                            }
+                                        } else {
+                                            openProvider = p.id
+                                        }
+                                    },
+                                )
+                            }
+                        }
+
+                        if (canCollapse) {
+                            ModelsDivider()
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showAllProviders = !showAllProviders }
+                                    .padding(horizontal = ModelsCardPadding, vertical = 11.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    imageVector = if (showAllProviders) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                    contentDescription = null,
+                                    tint = palette.accent,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    text = if (showAllProviders) {
+                                        tr("收起更多未连接供应商", "Show fewer providers")
+                                    } else {
+                                        tr("展开其余 ${unified.hiddenCount} 个供应商", "Show ${unified.hiddenCount} more providers")
+                                    },
+                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                    color = palette.accent,
+                                    modifier = Modifier.padding(start = 4.dp),
+                                )
+                            }
+                        }
+
+                        ModelsDivider()
+                        ActionRow(
+                            title = tr("添加自定义供应商 / 代理端点", "Add Custom Provider / Proxy"),
+                            detail = tr("接入任意 OpenAI / Anthropic 兼容接口，或覆盖内置供应商地址", "Connect any OpenAI/Anthropic-compatible endpoint or override a built-in URL"),
+                            icon = Icons.Filled.Add,
+                            onClick = { form = FormRequest(ProviderForm(api = "openai-completions"), isNew = true) },
+                        )
+                        ModelsDivider()
+                        ActionRow(
+                            title = tr("导入 / 编辑 models.json", "Import / Edit models.json"),
+                            detail = tr("选择 .json 文件或粘贴官方 models.json 批量导入自定义端点与模型", "Pick a .json file or paste official models.json to bulk-import endpoints & models"),
+                            icon = Icons.Filled.Code,
+                            onClick = { modelsJsonOpen = true },
+                        )
+                    }
+                }
+            }
+
+            // ---- 3. 推理、作用域与缓存（100% 对齐 Pi SDK） ----
             item(key = "l:reasoning") { ModelsSectionLabel(tr("推理、作用域与缓存", "Reasoning, Scoped Models & Caching")) }
             item(key = "c:reasoning") {
                 val settingByKey = remember(modelSettings) { modelSettings.associateBy { it.key } }
@@ -437,7 +555,6 @@ fun ModelsScreen(
 
                 ModelsCard {
                     Column {
-                        // 1. 统一「作用域与循环模型」（合并原重复的「当前会话作用域模型」+「循环模型」纯文本项）
                         val scopedSummary = when {
                             d.scoped.isNotEmpty() -> tr("当前会话 ${d.scoped.size} 个模型", "${d.scoped.size} in current session") +
                                 if (persistedEnabledModels.isNotEmpty()) tr(" · 默认规则 ${persistedEnabledModels.size} 项", " · ${persistedEnabledModels.size} default rules") else ""
@@ -450,7 +567,6 @@ fun ModelsScreen(
                             onClick = { onLoadAvailableModels(); pickingScoped = true },
                         )
 
-                        // 2. 全局默认思考等级（新会话默认）
                         defaultThinkingSetting?.let { setting ->
                             ModelsDivider()
                             val summary = remember(store, setting.key, freshness, reload) {
@@ -463,7 +579,6 @@ fun ModelsScreen(
                             )
                         }
 
-                        // 3. 逐模型思考等级（官方两步选择器：真实模型列表 → 该模型真实支持的思考等级，直走 SDK setter）
                         ModelsDivider()
                         PiSettingsEntryRow(
                             title = tr("逐模型思考等级", "Per-Model Thinking Level"),
@@ -475,7 +590,6 @@ fun ModelsScreen(
                             onClick = { onLoadAvailableModels(); pickingModelThinking = true },
                         )
 
-                        // 4. 思考预算（结构化四档 token 预算编辑器）
                         budgetsSetting?.let { setting ->
                             ModelsDivider()
                             val summary = remember(store, setting.key, freshness, reload) {
@@ -488,7 +602,6 @@ fun ModelsScreen(
                             )
                         }
 
-                        // 5. 实时缓存预热（直走 SDK cache.setMode，无实时状态时退回设置选择器）
                         if (d.cache != null) {
                             ModelsDivider()
                             Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -537,7 +650,6 @@ fun ModelsScreen(
                             )
                         }
 
-                        // 6. 缓存未命中提示（单写：store.write + onSettingWritten 同步 SDK 与 UiPrefs）
                         cacheMissSetting?.let { setting ->
                             ModelsDivider()
                             val checked = remember(store, setting.key, freshness, reload) { setting.boolIn(store) }
@@ -553,7 +665,6 @@ fun ModelsScreen(
                             )
                         }
 
-                        // 7. 提示缓存保留时长（PI_CACHE_RETENTION：short / long）
                         cacheRetentionSetting?.let { setting ->
                             ModelsDivider()
                             val summary = remember(store, setting.key, freshness, reload) {
@@ -568,45 +679,6 @@ fun ModelsScreen(
                     }
                 }
             }
-
-            // ---- 目录 ----
-            item(key = "l:ops") { ModelsSectionLabel(tr("目录", "Catalog")) }
-            item(key = "c:ops") {
-                ModelsCard {
-                    Column {
-                        ActionRow(
-                            title = if (busy) tr("正在刷新…", "Refreshing…") else tr("刷新模型目录", "Refresh Model Catalog"),
-                            detail = tr("重新向各供应商拉取模型列表（需要网络）", "Fetch the latest model list from each provider (requires network)"),
-                            icon = Icons.Filled.Refresh,
-                            enabled = !busy,
-                            onClick = {
-                                val h = host() ?: run { notice = tr("引擎没在运行：刷新没有执行。", "Engine is not running: refresh did not run."); return@ActionRow }
-                                scope.launch {
-                                    busy = true
-                                    runCatching { h.auth.refreshModels() }
-                                        .onSuccess { refresh = refreshSummary(it) }
-                                        .onFailure { notice = tr("刷新失败：${it.message}", "Refresh failed: ${it.message}") }
-                                    busy = false
-                                    reload++
-                                }
-                            },
-                        )
-                        refresh?.let { r ->
-                            ModelsDivider()
-                            Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Text(
-                                    r.sentence(names),
-                                    style = PiTheme.text.meta,
-                                    color = if (r.ok) PiTheme.palette.success else PiTheme.palette.warning,
-                                )
-                                r.detail(names).forEach {
-                                    Text(it, style = PiTheme.text.meta, color = PiTheme.palette.dim)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         openProvider?.let { id ->
@@ -617,7 +689,7 @@ fun ModelsScreen(
                 facts = facts.first { it.id == id },
                 available = d.models.filter { it.provider == p.id },
                 current = d.current,
-                custom = d.custom?.providers?.get(p.id),
+                custom = customProviders[p.id],
                 onChanged = { reload++; onLoadAvailableModels() },
                 onDismiss = { openProvider = null; reload++ },
                 onEditCustom = { json -> openProvider = null; form = FormRequest(ProviderForm.from(p.id, json), isNew = false) },
@@ -644,7 +716,7 @@ fun ModelsScreen(
                 initial = req.form,
                 isNew = req.isNew,
                 customIds = customIds,
-                knownIds = d.providers.map { it.id }.toSet(),
+                knownIds = builtinIds,
                 host = host,
                 onDismiss = { form = null },
                 onDone = { form = null; reload++; onLoadAvailableModels() },
@@ -654,7 +726,7 @@ fun ModelsScreen(
         if (modelsJsonOpen) {
             ModelsJsonImportSheet(
                 host = host,
-                existingProviders = d.custom?.providers.orEmpty(),
+                existingProviders = customProviders,
                 corruptError = d.custom?.error,
                 onDismiss = { modelsJsonOpen = false },
                 onSaved = { msg ->
@@ -739,19 +811,53 @@ private class Data(
     val scoped: List<HostAdvanced.ModelRef>,
     val cache: HostAdvanced.CacheStatus?,
 ) {
-    fun facts(customIds: Set<String>): List<ProviderFacts> = providers.map { p ->
-        ProviderFacts(
-            id = p.id,
-            name = p.name,
-            configured = p.configured,
-            usingOAuth = p.usingOAuth,
-            usingSubscription = p.usingSubscription,
-            source = p.statusSource,
-            offersSubscription = p.isSubscription,
-            modelCount = models.count { it.provider == p.id },
-            custom = p.id in customIds,
-            offersWebLogin = p.isWebLogin,
-        )
+    fun facts(customMap: Map<String, JsonObject>): List<ProviderFacts> {
+        val activeProviderId = current?.first
+        val runtimeIds = HashSet<String>(providers.size)
+        val fromRuntime = providers.map { p ->
+            runtimeIds += p.id
+            val customJson = customMap[p.id]
+            val isCustom = customJson != null || !p.builtin
+            ProviderFacts(
+                id = p.id,
+                name = p.name,
+                configured = p.configured,
+                usingOAuth = p.usingOAuth,
+                usingSubscription = p.usingSubscription,
+                source = p.statusSource,
+                offersSubscription = p.isSubscription,
+                modelCount = models.count { it.provider == p.id },
+                custom = isCustom,
+                offersWebLogin = p.isWebLogin,
+                offersApiKey = p.supportsApiKeyInput,
+                hasAmbientAuth = p.hasAmbientApiKey,
+                overridesBuiltin = customJson != null && p.builtin,
+                customBaseUrl = (customJson?.get("baseUrl") as? JsonPrimitive)?.takeIf { it.isString }?.content,
+                isActiveProvider = activeProviderId != null && activeProviderId == p.id,
+            )
+        }
+        val unregisteredCustom = customMap.entries
+            .filter { (id, _) -> id !in runtimeIds }
+            .map { (id, json) ->
+                val customName = (json["name"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+                val baseUrl = (json["baseUrl"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                ProviderFacts(
+                    id = id,
+                    name = customName ?: id,
+                    configured = false,
+                    usingOAuth = false,
+                    usingSubscription = false,
+                    source = null,
+                    offersSubscription = false,
+                    modelCount = 0,
+                    custom = true,
+                    overridesBuiltin = false,
+                    customBaseUrl = baseUrl,
+                    isActiveProvider = activeProviderId == id,
+                    customUnregistered = true,
+                )
+            }
+        return fromRuntime + unregisteredCustom
     }
 
     fun currentFacts(): ModelFacts? = current?.let { (p, id) ->
@@ -770,48 +876,6 @@ internal fun PiResponses.ModelInfo.facts() = ModelFacts(
     inputCost = inputCost,
     outputCost = outputCost,
 )
-
-@Composable
-private fun ProviderCard(list: List<ProviderFacts>, onOpen: (String) -> Unit) {
-    ModelsCard {
-        Column {
-            list.forEachIndexed { i, p ->
-                if (i > 0) ModelsDivider()
-                ProviderRow(p, onClick = { onOpen(p.id) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun CustomRow(id: String, name: String?, detail: String?, overrides: Boolean, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = ModelsCardPadding, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        ProviderAvatar(id, name ?: id)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(name ?: id, style = PiTheme.text.prose, color = PiTheme.palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                listOfNotNull(if (overrides) tr("覆盖内置", "Overrides built-in") else null, detail).joinToString(" · ").ifEmpty { tr("编辑", "Edit") },
-                style = PiTheme.text.meta,
-                color = PiTheme.palette.dim,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Icon(
-            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = PiTheme.palette.dim,
-            modifier = Modifier.size(18.dp),
-        )
-    }
-}
 
 @Composable
 private fun ActionRow(

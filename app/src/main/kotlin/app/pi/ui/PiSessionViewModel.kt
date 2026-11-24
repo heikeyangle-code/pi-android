@@ -877,8 +877,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         sessionListPrimed = true
         viewModelScope.launch {
             val cached = withContext(Dispatchers.IO) { sessionLibrary.readCache(_sessionList.value.query) } ?: return@launch
-            if (_sessionList.value.rows.isEmpty() && !_sessionList.value.loading) {
+            if (!sessionListLoadedOnce && !_sessionList.value.streamingPartial) {
                 _sessionList.value = _sessionList.value.copy(rows = cached.rows, total = cached.total, fromCache = true)
+                applyActiveRow()
             }
         }
     }
@@ -2188,6 +2189,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             refreshTheme()
             // 主对话已就绪：稍作错峰再问信任状态与预热会话列表，避免与后台 bindExtensions 争抢单线程 Node；
             // 若用户提前点开会话列表，ensureSessionList 会立即拉取（且冷启动已有磁盘缓存瞬时展示）。
+            if (_overlay.value?.slot == OverlaySlot.SessionList && !sessionListLoadedOnce && !_sessionList.value.loading) {
+                refreshSessions()
+            }
             viewModelScope.launch {
                 delay(400)
                 if (session === engine) refreshTrustPrompt()

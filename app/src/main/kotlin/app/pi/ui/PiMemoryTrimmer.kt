@@ -59,6 +59,7 @@ internal object PiMemoryTrimmer {
             PiMathRenderEngine.clearCaches()
             PiMathDrawCache.clear()
             RowHeightCache.shared.clear()
+            app.pi.update.AppUpdater.clearCache()
         }
     }
 
@@ -76,5 +77,6 @@ internal object PiMemoryTrimmer {
         PiMathRenderEngine.clearCaches()
         PiMathDrawCache.clear()
         RowHeightCache.shared.clear()
+        app.pi.update.AppUpdater.clearCache()
     }
 }

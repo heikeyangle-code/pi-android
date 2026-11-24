@@ -18,4 +18,5 @@
 -->
 <paths>
     <files-path name="pi-home" path="pi/" />
+    <cache-path name="apk-updates" path="updates/" />
 </paths>

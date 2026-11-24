@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -16,6 +17,7 @@ import androidx.compose.ui.Modifier
 import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiTheme
+import app.pi.update.AppUpdater
 
 /**
  * 设置首页的「其他」：系统工具、设备权限、安全与法律声明，统一收进一张分组卡片中展示。
@@ -27,9 +29,11 @@ internal fun OtherSettingsScreen(
     onOpenTerminal: (() -> Unit)?,
     onOpenDeviceCapabilities: (() -> Unit)?,
     onOpenLicenses: (() -> Unit)?,
+    onOpenUpdate: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     val context = androidx.compose.ui.platform.LocalContext.current
+    val currentVer = remember(context) { AppUpdater.installedVersionName(context) }
     val capStore = androidx.compose.runtime.remember(context) { app.pi.bridge.DeviceCapabilityStore.get(context) }
     var capStates by androidx.compose.runtime.remember {
         androidx.compose.runtime.mutableStateOf<List<app.pi.bridge.DeviceCapabilityState>>(emptyList())
@@ -76,6 +80,15 @@ internal fun OtherSettingsScreen(
                         tr("设备能力", "Device Capabilities"),
                         capSupporting,
                         onOpenDeviceCapabilities,
+                    ),
+                )
+                if (onOpenUpdate != null) add(
+                    OtherEntry(
+                        Icons.Filled.SystemUpdate,
+                        palette.borderAccent,
+                        tr("检查更新", "Check for Updates"),
+                        tr("当前版本 v$currentVer · 从 GitHub Releases 原地下载安装", "Current v$currentVer · Download & install updates in-app"),
+                        onOpenUpdate,
                     ),
                 )
                 if (onOpenLicenses != null) add(

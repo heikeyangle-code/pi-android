@@ -11,20 +11,24 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.update.AppUpdater
 
 /**
  * 设置首页（SDK 重构版），按清晰职责分为五节，彻底去除旧版「模型与推理」和冗余的「引擎」入口：
@@ -32,7 +36,7 @@ import app.pi.ui.theme.PiTheme
  *  2. **扩展与工具**：扩展与资源（含项目信任、扩展/技能/提示/主题/包与运行时 flag）、工具；
  *  3. **对话与提示词**：系统提示词、对话与消息、上下文与压缩、网络与重试；
  *  4. **外观**：主题、配色、排版、思考块显示；
- *  5. **系统**：运行时与诊断（含导出 JSONL / 问题报告）、其他（终端、设备能力、开源许可）。
+ *  5. **系统**：引擎与运行环境、应用更新（原生下载覆盖安装）、其他（终端、设备能力、开源许可）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,6 +52,8 @@ fun SettingsHome(
     runtimeSummary: String? = null,
     onOpenOther: (() -> Unit)? = null,
     onOpenMcp: (() -> Unit)? = null,
+    onOpenUpdate: (() -> Unit)? = null,
+    updateOutcome: AppUpdater.CheckOutcome? = null,
 ) {
     var query by remember { mutableStateOf("") }
     val q = query.trim()
@@ -197,8 +203,14 @@ fun SettingsHome(
             groupCards("chat-prompts", tr("对话与外观", "Chat & Appearance"), listOf("prompts", "messages", "compaction", "retry", "appearance"), tint = palette.mdLink)
             item(key = "label:system") { HomeSectionLabel(tr("系统", "System")) }
             item(key = "card:system") {
+                val context = LocalContext.current
+                val currentVer = remember(context) { AppUpdater.installedVersionName(context) }
+                val hasNew = updateOutcome?.hasUpdate == true
+                val newVer = updateOutcome?.latest?.version
                 PiSettingsCard {
+                    var hasPrev = false
                     if (onOpenRuntime != null) {
+                        hasPrev = true
                         PiSettingsEntryRow(
                             title = tr("引擎与运行环境", "Engine & Runtime"),
                             supporting = runtimeSummary ?: tr(
@@ -210,8 +222,28 @@ fun SettingsHome(
                             leadingTint = palette.accent,
                         )
                     }
+                    if (onOpenUpdate != null) {
+                        if (hasPrev) PiSettingsHairline()
+                        hasPrev = true
+                        PiSettingsEntryRow(
+                            title = tr("应用更新", "App Update"),
+                            supporting = if (hasNew && !newVer.isNullOrBlank()) {
+                                tr("发现新版本 v$newVer（当前 v$currentVer）· 点击下载安装", "New version v$newVer available (current v$currentVer) · Tap to update")
+                            } else {
+                                tr("当前版本 v$currentVer · 检查并原地覆盖安装新版", "Current v$currentVer · Check & install updates in-app")
+                            },
+                            onClick = onOpenUpdate,
+                            leadingIcon = Icons.Filled.SystemUpdate,
+                            leadingTint = if (hasNew) palette.success else palette.borderAccent,
+                            trailingBadge = if (hasNew && !newVer.isNullOrBlank()) {
+                                { PiSettingsBadge(label = "v$newVer", tone = palette.success) }
+                            } else {
+                                null
+                            },
+                        )
+                    }
                     if (onOpenOther != null) {
-                        if (onOpenRuntime != null) PiSettingsHairline()
+                        if (hasPrev) PiSettingsHairline()
                         PiSettingsEntryRow(
                             title = tr("其他", "More"),
                             supporting = tr("终端、设备能力、开源许可", "Terminal, device capabilities, licenses"),
@@ -263,6 +295,12 @@ private fun buildCustomSearchEntries(): List<CustomSearchEntry> = listOf(
         title = tr("引擎与运行环境", "Engine & Runtime"),
         subtitle = tr("proot / proroot / tawcroot、后台保活、自检与诊断报告", "proot / proroot / tawcroot, keep-alive, self-check & diagnostics"),
         keywords = "proot proroot tawcroot runtime engine keepAlive app.runtime.keepAlive diagnostics report",
+    ),
+    CustomSearchEntry(
+        routeKey = "hub:update",
+        title = tr("应用更新", "App Update"),
+        subtitle = tr("检查 GitHub 最新版本并在应用内下载覆盖安装", "Check GitHub releases and download/install updates in-app"),
+        keywords = "update upgrade version apk release github 更新 升级 版本 下载 安装",
     ),
     CustomSearchEntry(
         routeKey = "hub:device",

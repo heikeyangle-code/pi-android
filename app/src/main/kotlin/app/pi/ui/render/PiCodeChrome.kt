@@ -37,8 +37,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import app.pi.ui.components.PiMenu
+import app.pi.ui.components.PiMenuItem
+import app.pi.ui.components.PiMenuPlacement
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -557,18 +558,19 @@ internal fun PiCardMenu(palette: PiPalette, items: List<PiCardMenuItem>) {
                 modifier = Modifier.size(18.dp),
             )
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            items.forEach { item ->
-                DropdownMenuItem(
-                    text = { Text(item.label) },
+        PiMenu(
+            expanded = open,
+            onDismiss = { open = false },
+            placement = PiMenuPlacement.Below,
+            alignEnd = true,
+            items = items.map { item ->
+                PiMenuItem(
+                    label = item.label,
                     enabled = item.enabled,
-                    onClick = {
-                        open = false
-                        item.onClick()
-                    },
+                    onSelect = item.onClick,
                 )
-            }
-        }
+            },
+        )
     }
 }
 

@@ -98,6 +98,7 @@ import app.pi.session.tree.TreeRow
 import app.pi.session.tree.TreeTone
 import app.pi.ui.chat.BranchSummaryChoice
 import app.pi.ui.components.PiEmptyState
+import app.pi.ui.theme.contrastOn
 import app.pi.ui.components.PiSheet
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiShapes
@@ -1011,7 +1012,7 @@ private fun TreePillButton(label: String, primary: Boolean, onClick: () -> Unit)
         Text(
             text = label,
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-            color = if (primary) MaterialTheme.colorScheme.onPrimary else p.text,
+            color = if (primary) p.contrastOn(p.accent) else p.text,
             maxLines = 1,
         )
     }

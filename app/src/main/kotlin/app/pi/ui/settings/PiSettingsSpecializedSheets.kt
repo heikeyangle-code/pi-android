@@ -1,7 +1,6 @@
 package app.pi.ui.settings
 
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Switch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -312,7 +311,7 @@ fun PiDefaultToolsSheet(
                             )
                         }
                         Spacer(Modifier.width(PiSpacing.inline))
-                        Switch(
+                        PiSettingsSwitch(
                             checked = checked,
                             onCheckedChange = { on ->
                                 selected = if (on) selected + item.id else selected - item.id
