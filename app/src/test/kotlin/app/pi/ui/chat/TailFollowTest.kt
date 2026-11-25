@@ -1,5 +1,6 @@
 package app.pi.ui.chat
 
+import app.pi.ui.blocks.shouldAnchorCollapsedRow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -438,5 +439,88 @@ class TailFollowTest {
         )
         assertFalse(newOutputWhilePaused.following)
         assertNull(newOutputWhilePaused.pin)
+    }
+
+    @Test
+    fun `stationary collapse while paused never silently re-arms follow or yanks next expand`() {
+        val follow = TailFollow(initiallyFollowing = false)
+        // Stationary slightly above bottom (not following).
+        val initial = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 10,
+                contentRevision = 20L,
+                viewport = TailViewport(
+                    totalItems = 10,
+                    firstVisibleIndex = 5,
+                    firstVisibleOffsetPx = 100,
+                    lastVisibleIndex = 9,
+                    lastVisibleOffsetPx = 1280,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = false,
+                ),
+            ),
+        )
+        assertFalse(initial.following)
+        assertNull(initial.pin)
+
+        // User collapses a card in place -> list shrinks so atBottom flips true with NO gesture.
+        follow.holdOnLocalLayoutToggle()
+        val afterCollapse = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 10,
+                contentRevision = 20L,
+                viewport = TailViewport(
+                    totalItems = 10,
+                    firstVisibleIndex = 5,
+                    firstVisibleOffsetPx = 100,
+                    lastVisibleIndex = 9,
+                    lastVisibleOffsetPx = 1080,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = true,
+                ),
+            ),
+        )
+        assertFalse(afterCollapse.following)
+        assertNull(afterCollapse.pin)
+
+        // User expands the card back -> MUST stay completely steady with zero pin!
+        follow.holdOnLocalLayoutToggle()
+        val afterExpand = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 10,
+                contentRevision = 20L,
+                viewport = TailViewport(
+                    totalItems = 10,
+                    firstVisibleIndex = 5,
+                    firstVisibleOffsetPx = 100,
+                    lastVisibleIndex = 9,
+                    lastVisibleOffsetPx = 1280,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = false,
+                ),
+            ),
+        )
+        assertFalse(afterExpand.following)
+        assertNull(afterExpand.pin)
+    }
+
+    @Test
+    fun `collapse anchor ignores rows whose top is still visible inside top contentPadding`() {
+        // viewportStartOffset = -28px (e.g. 10dp top contentPadding).
+        assertFalse(shouldAnchorCollapsedRow(rowOffset = 0, viewportStartOffset = -28))
+        assertFalse(shouldAnchorCollapsedRow(rowOffset = -12, viewportStartOffset = -28))
+        assertFalse(shouldAnchorCollapsedRow(rowOffset = -28, viewportStartOffset = -28))
+        // Truly scrolled above top of viewport -> anchor to 0 on collapse.
+        assertTrue(shouldAnchorCollapsedRow(rowOffset = -29, viewportStartOffset = -28))
+        assertTrue(shouldAnchorCollapsedRow(rowOffset = -420, viewportStartOffset = -28))
     }
 }

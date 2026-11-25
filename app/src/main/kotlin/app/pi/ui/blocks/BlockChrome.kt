@@ -532,16 +532,23 @@ internal class TranscriptRowAnchor(
      */
     fun onBeforeToggle(expanding: Boolean) {
         onEvictHeight()
-        if (isFollowing()) {
-            onLocalLayoutToggle()
-        }
+        onLocalLayoutToggle()
         if (expanding) return
-        val row = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index } ?: return
-        if (row.offset < 0) {
+        val info = listState.layoutInfo
+        val row = info.visibleItemsInfo.firstOrNull { it.index == index } ?: return
+        if (shouldAnchorCollapsedRow(row.offset, info.viewportStartOffset)) {
             listState.requestScrollToItem(index, 0)
         }
     }
 }
+
+/**
+ * Only anchor a collapsing row to top when its top edge is genuinely scrolled ABOVE the
+ * visible viewport (`rowOffset < viewportStartOffset`). Rows resting inside `beforeContentPadding`
+ * (`viewportStartOffset <= rowOffset < 0`) still have their top on screen and must NOT be nudged.
+ */
+internal fun shouldAnchorCollapsedRow(rowOffset: Int, viewportStartOffset: Int): Boolean =
+    rowOffset < viewportStartOffset
 
 /**
  * The transcript row a block is being composed inside, or null when the block is composed

@@ -11,7 +11,7 @@
  *  6. MainActivity.kt: early `session.boot()` in `onCreate()` before `setContent {}`.
  *  7. sdk-host: `host.bundle.mjs` single-file bundle exists, `main.mjs` embeds hello in `host.ready` + preloads SDK + updates `PWD`, `PiEngineSession.kt` consumes `readyHello`.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -110,9 +110,38 @@ check(
   "PiEngineSession must consume embedded HostHello from host.ready to skip serial host.hello RTT",
 );
 
+// 8: Transcript card-toggle zero-jitter & tail-follow invariants
+const blockChromeKt = readFileSync(join(repo, "app/src/main/kotlin/app/pi/ui/blocks/BlockChrome.kt"), "utf8");
+check(
+  "BlockChrome.kt holds tail-follow & anchors only above viewportStartOffset",
+  blockChromeKt.includes("onLocalLayoutToggle()") &&
+    blockChromeKt.includes("shouldAnchorCollapsedRow(row.offset, info.viewportStartOffset)") &&
+    !blockChromeKt.includes("if (expanding || isFollowing()) return"),
+  "TranscriptRowAnchor.onBeforeToggle must call onLocalLayoutToggle() unconditionally and use shouldAnchorCollapsedRow(row.offset, info.viewportStartOffset)",
+);
+
+const tailFollowKt = readFileSync(join(repo, "app/src/main/kotlin/app/pi/ui/chat/TailFollow.kt"), "utf8");
+check(
+  "TailFollow.kt preserves holdPositionUntilGrowth & blocks non-gesture re-arm",
+  tailFollowKt.includes("holdPositionUntilGrowth") &&
+    tailFollowKt.includes("val userScrolledToBottom = gesture || previousScrolling"),
+  "TailFollow must hold viewport steady on local card toggles and only re-arm paused follow on user scroll or explicit reArm()",
+);
+
+const blocksDir = join(repo, "app/src/main/kotlin/app/pi/ui/blocks");
+for (const entry of readdirSync(blocksDir)) {
+  if (!entry.endsWith(".kt")) continue;
+  const src = readFileSync(join(blocksDir, entry), "utf8");
+  check(
+    `ui/blocks/${entry} free of LazyColumn-fighting animateContentSize`,
+    !src.includes("animateContentSize(") && !src.includes("import androidx.compose.animation.animateContentSize"),
+    `${entry} must not attach animateContentSize inside transcript LazyColumn items`,
+  );
+}
+
 if (failures.length > 0) {
   console.error("startup-perf check FAILED:");
   for (const f of failures) console.error("  - " + f);
   process.exit(1);
 }
-console.log("startup-perf: OK (all 12 cold-startup invariants verified)");
+console.log("startup-perf: OK (all cold-startup & scroll-stability invariants verified)");

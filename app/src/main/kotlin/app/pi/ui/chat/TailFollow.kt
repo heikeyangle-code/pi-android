@@ -60,7 +60,6 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
      * Markdown re-measures inside the newly expanded card) never yank or jitter the list.
      */
     fun holdOnLocalLayoutToggle() {
-        if (!following) return
         holdPositionUntilGrowth = true
         heldAtRows = previousRows
         heldAtRevision = previousRevision
@@ -93,7 +92,8 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         }
 
         if (viewport.atBottom) {
-            if (!pausedByNavigation || gesture) {
+            val userScrolledToBottom = gesture || previousScrolling
+            if ((following && !pausedByNavigation) || userScrolledToBottom) {
                 following = true
                 pausedByNavigation = false
             }
