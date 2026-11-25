@@ -394,21 +394,13 @@ fun DeviceCapabilityScreen(
             )
             app.pi.ui.components.PiDialogBody(
                 tr(
-                    "Shizuku 为设备 Shell 提供 ADB/Root 级别权限（非必须，未安装时仍可使用普通应用沙箱 Shell）。
-
-" +
-                        "1. 安装 Shizuku 应用（GitHub / Google Play）
-" +
-                        "2. 在 Shizuku 中通过「无线调试」或 Root 启动服务
-" +
+                    "Shizuku 为设备 Shell 提供 ADB/Root 级别权限（非必须，未安装时仍可使用普通应用沙箱 Shell）。\n\n" +
+                        "1. 安装 Shizuku 应用（GitHub / Google Play）\n" +
+                        "2. 在 Shizuku 中通过「无线调试」或 Root 启动服务\n" +
                         "3. 返回本页再次点击「Shizuku 提权」完成授权",
-                    "Shizuku grants ADB/Root privileges for Device Shell (optional — standard sandbox Shell works without it).
-
-" +
-                        "1. Install Shizuku (GitHub / Google Play)
-" +
-                        "2. Start the Shizuku service via Wireless Debugging or Root
-" +
+                    "Shizuku grants ADB/Root privileges for Device Shell (optional — standard sandbox Shell works without it).\n\n" +
+                        "1. Install Shizuku (GitHub / Google Play)\n" +
+                        "2. Start the Shizuku service via Wireless Debugging or Root\n" +
                         "3. Return here and tap Shizuku again to authorize",
                 ),
             )

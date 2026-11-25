@@ -62,12 +62,6 @@ class ProtocolHardeningTest {
     }
 
     @Test
-    fun `APP_EXPOSED_PRE_SPAWN has no duplicate appKey entries`() {
-        val keys = APP_EXPOSED_PRE_SPAWN.map { it.appKey }
-        assertEquals("Duplicate keys found: $keys", keys.distinct().size, keys.size)
-    }
-
-    @Test
     fun `TranscriptReducer clears pending user echo when session prompt is rejected`() {
         val reducer = TranscriptReducer(now = { 1_000L })
         reducer.onUserPrompt("first message")

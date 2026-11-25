@@ -196,7 +196,7 @@ private fun LicenceTextScreen(
             actions = {
                 val copyable = body
                 if (copyable != null) {
-                    app.pi.ui.components.PiTopBarIcon(
+                    app.pi.ui.PiTopBarIcon(
                         onClick = {
                             clipboard.setText(androidx.compose.ui.text.AnnotatedString(copyable))
                             haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
