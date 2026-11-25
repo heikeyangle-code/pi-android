@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build and attach APKs to (e.g. v0.2.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  tawcroot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: android-actions/setup-android@v3
+        continue-on-error: true
+      - name: Ensure an NDK is available
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then
+            echo "::error::no Android SDK at $SDK"
+            exit 1
+          fi
+          if ! ls -d "$SDK"/ndk/* >/dev/null 2>&1; then
+            sdkm="$(command -v sdkmanager || find "$SDK/cmdline-tools" -maxdepth 3 -name sdkmanager -type f 2>/dev/null | sort -V | tail -1)"
+            [ -n "$sdkm" ] || { echo "::error::no sdkmanager under $SDK"; exit 1; }
+            yes 2>/dev/null | "$sdkm" --licenses >/dev/null 2>&1 || true
+            yes 2>/dev/null | "$sdkm" --install "ndk;27.2.12479018" >/dev/null 2>&1 || true
+          fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          ls -d "$SDK"/ndk/* || { echo "::error::still no NDK under $SDK/ndk"; exit 1; }
+      - name: Build libtawcroot.so from the pinned tag
+        run: bash tools/build-tawcroot.sh "$RUNNER_TEMP/tawcroot-out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libtawcroot
+          path: ${{ runner.temp }}/tawcroot-out/libtawcroot.so
+
+  apk:
+    name: Release APK (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    needs: tawcroot
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: sideload28
+            targetSdk: 28
+          - variant: modern36
+            targetSdk: 36
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: libtawcroot
+          path: app/src/main/jniLibs/arm64-v8a
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: android-actions/setup-android@v3
+        continue-on-error: true
+      - name: Ensure an Android SDK is on the environment
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then
+            echo "::error::no Android SDK found at $SDK on this runner"
+            exit 1
+          fi
+          {
+            echo "ANDROID_HOME=$SDK"
+            echo "ANDROID_SDK_ROOT=$SDK"
+            echo "PATH=$SDK/cmdline-tools/latest/bin:$SDK/platform-tools:$PATH"
+          } >> "$GITHUB_ENV"
+          yes 2>/dev/null | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Cache upstream artifacts
+        uses: actions/cache@v4
+        with:
+          path: build/downloads
+          key: pi-runtime-downloads-${{ hashFiles('runtime.lock.json') }}
+          restore-keys: pi-runtime-downloads-
+      - name: Assemble runtime (proot, Ubuntu, Node, rg/fd, pi)
+        run: |
+          sudo apt-get install -y -qq dpkg-dev xz-utils
+          node tools/fetch-runtime.mjs
+      - name: Assemble arm64 release APK
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleRelease             -Ppi.targetSdk=${{ matrix.targetSdk }}             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=768m -XX:+UseG1GC -Dfile.encoding=UTF-8"             -Dorg.gradle.parallel=true             -Dorg.gradle.workers.max=4             -Pkotlin.daemon.jvmargs=-Xmx2g             -Pkotlin.incremental=true             --console=plain 2>&1 | tee /tmp/assemble.log
+      - name: Verify signing and uncompressed payloads
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:-${SDK:-}}"
+          apksigner="$(find "$sdk/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null | sort -V | tail -1)"
+          [ -n "$apksigner" ] && [ -x "$apksigner" ] || { echo "::error::no apksigner found"; exit 1; }
+          apk="$(ls app/build/outputs/apk/release/*.apk | head -1)"
+          case "$apk" in
+            *unsigned*) echo "::error::unsigned APK produced: $apk"; exit 1 ;;
+          esac
+          "$apksigner" verify --verbose --print-certs "$apk" | tee /tmp/apksigner.txt
+          unzip -tq "$apk"
+          if [ -z "${PI_KEYSTORE:-}" ]; then
+            expected=b12b3607b5978386c13a55a47020fd95750fa6f9db048cdf6148661c05a09c7c
+            grep -qi "$expected" /tmp/apksigner.txt || { echo "::error::$apk not signed with sideload key"; exit 1; }
+          fi
+          unzip -l "$apk" | grep -qE 'lib/arm64-v8a/libtawcroot\.so' || { echo "::error::missing libtawcroot.so"; exit 1; }
+          rev="$(unzip -p "$apk" assets/runtime-revision.txt 2>/dev/null | tr -d '[:space:]' || true)"
+          [ "${#rev}" -eq 16 ] || { echo "::error::invalid runtime-revision.txt: '$rev'"; exit 1; }
+      - name: Stage versioned release APK
+        env:
+          RAW_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ver="${RAW_TAG#v}"
+          apk="$(ls app/build/outputs/apk/release/*.apk | head -1)"
+          mkdir -p "$RUNNER_TEMP/release-apks"
+          out="$RUNNER_TEMP/release-apks/pi-android-${ver}-${{ matrix.variant }}-arm64.apk"
+          cp "$apk" "$out"
+          ls -lh "$out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-apk-${{ matrix.variant }}
+          path: ${{ runner.temp }}/release-apks/*.apk
+          compression-level: 0
+          if-no-files-found: error
+
+  publish:
+    name: Attach APKs to GitHub Release
+    runs-on: ubuntu-latest
+    needs: apk
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-apk-*
+          merge-multiple: true
+          path: dist
+      - name: Generate SHA256SUMS and upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ls -lh dist/
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --generate-notes
+          fi
+          gh release upload "$TAG" dist/*.apk dist/SHA256SUMS.txt --repo "${{ github.repository }}" --clobber
