@@ -1074,7 +1074,7 @@ internal fun ProjectConfigQuickCard(
  * Sticky full-width Studio path bar pinned directly beneath `PiTopBar` (outside `LazyColumn`).
  * Features always-working Up button (except at `/`), Location Jump pill (`~ ▾` / `/ ▾` / `SD ▾`),
  * Home shortcut when outside the active project, horizontally scrollable breadcrumbs,
- * and right-pinned `设为 CWD` pill for any writable directory.
+ * and right-pinned `设为项目` pill for any writable directory.
  */
 @Composable
 internal fun WorkspacePathBar(
@@ -1216,7 +1216,7 @@ internal fun WorkspacePathBar(
 
         if (canSetAsProject) {
             WsChip(
-                text = tr("设为 CWD", "Use as CWD"),
+                text = tr("设为项目", "Set Project"),
                 solid = true,
                 onClick = onSetAsProject,
             )

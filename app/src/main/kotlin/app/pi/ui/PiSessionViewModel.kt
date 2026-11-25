@@ -3588,12 +3588,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    private val _trustPrompt = MutableStateFlow<app.pi.packages.PiProjectTrust.State?>(null)
+    internal val _trustPrompt = MutableStateFlow<app.pi.packages.PiProjectTrust.State?>(null)
 
     /** 要问用户「信任这个项目吗」时非空（项目里有 `.pi` 资源、没人表态、默认策略是 ask）。 */
     val trustPrompt: StateFlow<app.pi.packages.PiProjectTrust.State?> = _trustPrompt.asStateFlow()
 
-    private fun refreshTrustPrompt() {
+    internal fun refreshTrustPrompt() {
         val c = session?.commands ?: return
         viewModelScope.launch {
             val st = runCatching { app.pi.packages.PiProjectTrust.parse(c.trustState().data) }.getOrNull()
@@ -3673,7 +3673,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private var renderInvalidateJob: Job? = null
     private var hostRequestJob: Job? = null
-    private val _renderRev = MutableStateFlow(0)
+    internal val _renderRev = MutableStateFlow(0)
 
     /** 宿主说「渲染结果变了」时加一；聊天页据此换一个 [ToolRenderer] 实例，卡片的 produceState 就重取。 */
     val renderRev: StateFlow<Int> = _renderRev.asStateFlow()

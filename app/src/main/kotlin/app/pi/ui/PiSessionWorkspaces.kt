@@ -302,10 +302,23 @@ private fun PiSessionViewModel.afterWorkspaceChanged(name: String, engine: PiEng
     // that getter would otherwise hand it a store still bound to the previous
     // workspace's project document.
     rebuildWorkspaceScopedCaches()
+    // Clear any stale trust prompt & project-extension render caches from the previous project.
+    _trustPrompt.value = null
+    toolRenderCache.reset()
+    messageRenderCache.reset()
+    entryRenderCache.reset()
+    markdownTransformCache.reset()
+    _renderRev.value += 1
     // `attach` is not optional and not cosmetic: `PiEngineHost.restart` closed
     // the old engine before starting the new one, and every action here checks
     // `api != null`, so without it the UI would be inert until the next boot.
-    if (engine != null) attach(engine)
+    if (engine != null) {
+        attach(engine)
+    } else {
+        // Hot-switch via `session.new(cwd)`: refresh project-scoped models and trust state immediately.
+        refreshModels()
+        refreshTrustPrompt()
+    }
     refreshPrefs()
     refreshTheme()
     publishWorkspaceState(name, note = null, bumped = true)

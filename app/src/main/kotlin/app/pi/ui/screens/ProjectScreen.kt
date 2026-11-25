@@ -221,7 +221,7 @@ fun ProjectScreen(
         workspaceCanonicalPath.removePrefix(base).trimStart('/').split('/').filter { it.isNotEmpty() }
     }
     // Seamless dual-tree browsing: container rootfs (`/`) vs Android host storage (`/storage/emulated/0`).
-    var browsingHostFs by remember(workspace.absolutePath) { mutableStateOf(!workspaceInRootfs) }
+    var browsingHostFs by remember(workspace.absolutePath, workspaceInRootfs) { mutableStateOf(!workspaceInRootfs) }
     val browseRoot = if (browsingHostFs) File("/") else guestRootfs
     var crumbs by remember(workspace.absolutePath, homeCrumbs) { mutableStateOf(homeCrumbs) }
     var locationSheet by remember { mutableStateOf(false) }
@@ -479,7 +479,7 @@ fun ProjectScreen(
             // Direct device storage path (e.g. `/storage/emulated/0/...` or `/sdcard/...`)
             if (raw.startsWith("/storage/") || raw.startsWith("/sdcard/")) {
                 val direct = allowed(File(raw))
-                if (direct != null && direct.exists()) return WorkspaceSessionFile(direct, workspaceDisplayPath(workspace, direct))
+                if (direct != null && direct.exists()) return WorkspaceSessionFile(direct, workspaceDisplayPath(workspace, direct, guestRootfs))
             }
             val guest = raw.trimStart('/')
             if (guest.isNotEmpty()) {
@@ -1121,8 +1121,8 @@ fun ProjectScreen(
                             item(key = itemKey) {
                               Box(Modifier.animateItem()) {
                                 val entryFile = if (isRecursiveActive) File(workspace, entry.path) else File(currentDir, entry.name)
-                                val displayPath = remember(workspace.absolutePath, entryFile.absolutePath) {
-                                    workspaceDisplayPath(workspace, entryFile)
+                                val displayPath = remember(workspace.absolutePath, entryFile.absolutePath, guestRootfs.absolutePath) {
+                                    workspaceDisplayPath(workspace, entryFile, guestRootfs)
                                 }
                                 // 这一行的**工作区相对**路径，与「本次会话」徽标比对用。
                                 val entryRelative = remember(isRecursiveActive, entry.path, entry.name, currentCanonicalDirPath, workspaceCanonicalPath) {
@@ -1458,6 +1458,7 @@ fun ProjectScreen(
             onEnter = {
                 menuFor = null
                 if (searchWholeProject && filterText.isNotBlank()) {
+                    browsingHostFs = !workspaceInRootfs
                     crumbs = homeCrumbs + target.path.split('/').filter { it.isNotEmpty() }
                     filterText = ""
                     filterOpen = false
@@ -1466,9 +1467,17 @@ fun ProjectScreen(
                 }
             },
             onOpenAsProject = if (target.isDirectory) {
-                {
-                    menuFor = null
-                    openDirectoryAsProject(target.file)
+                val targetCanonical = runCatching { target.file.canonicalPath }.getOrDefault(target.file.absolutePath).trimEnd('/')
+                val canSwitchHere = targetCanonical.isNotEmpty() &&
+                    targetCanonical != workspaceCanonicalPath &&
+                    targetCanonical != rootfsCanonicalPath
+                if (canSwitchHere) {
+                    {
+                        menuFor = null
+                        openDirectoryAsProject(target.file)
+                    }
+                } else {
+                    null
                 }
             } else {
                 null
@@ -1517,6 +1526,7 @@ fun ProjectScreen(
         WorkspaceLocationSheet(
             currentPath = currentLogicalPath,
             projectGuestPath = activeEntry?.guestPath ?: state.workspace.guestPath,
+            projectInRootfs = workspaceInRootfs,
             browsingHostFs = browsingHostFs,
             crumbs = crumbs,
             onClose = { locationSheet = false },
@@ -1588,7 +1598,7 @@ fun ProjectScreen(
                         WorkspaceInputKind.NewFile -> {
                             val parent = dialog.absoluteParent ?: File(workspace, dialog.relativeParent.orEmpty())
                             val created = File(parent, typed)
-                            val display = workspaceDisplayPath(workspace, created)
+                            val display = workspaceDisplayPath(workspace, created, guestRootfs)
                             runFileOp(
                                 what = tr("已新建文件 · $typed", "Created file · $typed"),
                                 onDone = { ok ->
@@ -1617,7 +1627,7 @@ fun ProjectScreen(
                                 onDone = { ok ->
                                     if (ok && viewer?.file?.absolutePath == target.absolutePath) {
                                         viewer = targetFor(
-                                            displayPath = workspaceDisplayPath(workspace, renamed),
+                                            displayPath = workspaceDisplayPath(workspace, renamed, guestRootfs),
                                             file = renamed,
                                             editable = true,
                                         )

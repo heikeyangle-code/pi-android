@@ -375,7 +375,7 @@ internal fun WorkspaceMenuSheet(
             MenuAction(tr("进入文件夹", "Open Folder"), onEnter, icon = Icons.Filled.FolderOpen)
             if (onOpenAsProject != null) {
                 MenuAction(
-                    tr("设为当前项目（切换工作目录）", "Open as Active Project (cwd)"),
+                    tr("设为当前项目", "Set as Active Project"),
                     onOpenAsProject,
                     tone = palette.accent,
                     icon = Icons.Filled.SwapHoriz,
@@ -880,10 +880,16 @@ internal fun relativeTime(epochMillis: Long): String {
  * 面包屑已经走到工作区外（rootfs 的 `/opt` 等）就用绝对路径 —— viewer 的 displayPath
  * 只是标签，真正读写的是传入的 [file]。
  */
-internal fun workspaceDisplayPath(workspace: File, file: File): String {
+internal fun workspaceDisplayPath(workspace: File, file: File, guestRootfs: File? = null): String {
     val base = runCatching { workspace.canonicalPath }.getOrDefault(workspace.absolutePath).trimEnd('/')
     val created = runCatching { file.canonicalPath }.getOrDefault(file.absolutePath)
-    return if (base.isNotEmpty() && created.startsWith("$base/")) created.removePrefix("$base/") else created
+    if (base.isNotEmpty() && created.startsWith("$base/")) {
+        return created.removePrefix("$base/")
+    }
+    if (guestRootfs != null) {
+        return app.pi.runtime.GuestWorkspacePath.hostToGuest(guestRootfs, file)
+    }
+    return created
 }
 
 // ================================================================ 浮层：快速位置跳转
@@ -901,12 +907,13 @@ private data class QuickLocationItem(
  * - Current real path copy card (`sheetCardBg`)
  * - 2×3 Studio quick-location grid (Current Project, Container `/`, Home `/root`,
  *   Pi Config `~/.pi/agent`, Temp `/tmp`, Phone Storage `/storage/emulated/0`)
- * - Full real ancestor chain with `CWD` and `当前` badges.
+ * - Full real ancestor chain with `当前项目` and `正在浏览` badges.
  */
 @Composable
 internal fun WorkspaceLocationSheet(
     currentPath: String,
     projectGuestPath: String,
+    projectInRootfs: Boolean,
     browsingHostFs: Boolean,
     crumbs: List<String>,
     onClose: () -> Unit,
@@ -927,12 +934,13 @@ internal fun WorkspaceLocationSheet(
         app.pi.runtime.GuestWorkspacePath.shortenForDisplay(projectGuestPath)
     }
 
+    val sameFsAsProject = browsingHostFs == !projectInRootfs
     val quickItems = listOf(
         QuickLocationItem(
             title = tr("当前项目", "Current Project"),
             subtitle = prettyProject,
             icon = Icons.Filled.FolderSpecial,
-            active = currentPath.trimEnd('/') == projectGuestPath.trimEnd('/'),
+            active = sameFsAsProject && currentPath.trimEnd('/') == projectGuestPath.trimEnd('/'),
             onClick = {
                 onClose()
                 onJumpProject()
@@ -1092,7 +1100,7 @@ internal fun WorkspaceLocationSheet(
         WsCard {
             ancestors.forEachIndexed { idx, (fullPath, depth) ->
                 if (idx > 0) WsHairline(startInset = WsIconHairlineStart)
-                val isCwd = fullPath == normalizedProject
+                val isProjectRoot = sameFsAsProject && fullPath == normalizedProject
                 val isHere = fullPath == normalizedCurrent
                 val label = if (depth == 0) {
                     if (browsingHostFs) tr("设备根 /", "Device /") else tr("容器根 /", "Container /")
@@ -1102,23 +1110,23 @@ internal fun WorkspaceLocationSheet(
                 WsRow(
                     title = label,
                     mono = depth > 0,
-                    strong = isHere || isCwd,
+                    strong = isHere || isProjectRoot,
                     lead = { FolderGlyph() },
                     meta = if (depth == 0) "/" else app.pi.runtime.GuestWorkspacePath.shortenForDisplay(fullPath),
                     badge = when {
-                        isCwd && isHere -> {
+                        isProjectRoot && isHere -> {
                             {
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    WsBadge(text = "CWD", tone = StateTone.Accent)
-                                    WsBadge(text = tr("当前", "Here"), tone = StateTone.Success)
+                                    WsBadge(text = tr("当前项目", "Project"), tone = StateTone.Accent)
+                                    WsBadge(text = tr("正在浏览", "Viewing"), tone = StateTone.Success)
                                 }
                             }
                         }
-                        isCwd -> {
-                            { WsBadge(text = "CWD", tone = StateTone.Accent) }
+                        isProjectRoot -> {
+                            { WsBadge(text = tr("当前项目", "Project"), tone = StateTone.Accent) }
                         }
                         isHere -> {
-                            { WsBadge(text = tr("当前", "Here"), tone = StateTone.Success) }
+                            { WsBadge(text = tr("正在浏览", "Viewing"), tone = StateTone.Success) }
                         }
                         else -> null
                     },
