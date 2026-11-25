@@ -887,8 +887,8 @@ private val PI_MERMAID_MAX_IMAGE_HEIGHT = 460.dp
 /** Ratio used when an SVG declares no `viewBox`, width or height at all. */
 private const val PI_MERMAID_FALLBACK_ASPECT = 1.6f
 
-/** Mermaid's own default face; passed through [PiSvgTheme] so the engine can use it. */
-private const val PI_MERMAID_FONT_FAMILY = "sans-serif"
+/** Bundled offline Studio sans face (`assets/rich/mermaid/fonts/Geist-*.ttf`) with clean CJK fallback. */
+private const val PI_MERMAID_FONT_FAMILY = "PiStudioSans, sans-serif"
 
 /** Shown in the toolbar long enough to read, not long enough to linger. */
 private const val PI_MERMAID_FEEDBACK_MS = 1500L

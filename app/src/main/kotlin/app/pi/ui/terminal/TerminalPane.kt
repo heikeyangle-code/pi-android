@@ -57,9 +57,7 @@ import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import app.pi.R
 import app.pi.i18n.tr
-import app.pi.ui.theme.PiMonoFamily
 import app.pi.ui.theme.PiTheme
 import com.termux.terminal.KeyHandler
 import com.termux.terminal.TerminalSession
@@ -93,8 +91,9 @@ fun TerminalPane(
     var ctrlState by remember { mutableStateOf(ModifierState.Off) }
     var altState by remember { mutableStateOf(ModifierState.Off) }
 
-    val typeface = remember(context) {
-        runCatching { ResourcesCompat.getFont(context, R.font.jetbrains_mono_regular) }.getOrNull()
+    val codeFontRes = PiTheme.typography.codeFontResRegular()
+    val typeface = remember(context, codeFontRes) {
+        runCatching { ResourcesCompat.getFont(context, codeFontRes) }.getOrNull()
             ?: Typeface.MONOSPACE
     }
 
@@ -246,7 +245,7 @@ fun TerminalPane(
                                 // 必须先 setTextSize 再 setTypeface（Termux TerminalView.setTypeface 依赖 mRenderer 非空）
                                 setTextSize(textSizePx)
                                 setTypeface(typeface)
-                                tag = textSizePx
+                                tag = Pair(textSizePx, codeFontRes)
                                 setTerminalCursorBlinkerRate(550)
                                 setTerminalCursorBlinkerState(true, true)
                                 this.keepScreenOn = keepScreenOn
@@ -274,10 +273,11 @@ fun TerminalPane(
                         if (sessionChanged) {
                             view.attachSession(activeTab.session)
                         }
-                        if (view.tag != textSizePx) {
+                        val fontTag = Pair(textSizePx, codeFontRes)
+                        if (view.tag != fontTag) {
                             view.setTextSize(textSizePx)
                             view.setTypeface(typeface)
-                            view.tag = textSizePx
+                            view.tag = fontTag
                         }
                         // 仅在会话或主题真实变化时才重新绑定与刷新，避免吐司淡出 / Ctrl 切换 / 标题更新
                         // 触发 Compose 重组后无谓调用 onScreenUpdated() 导致终端画面闪烁乱跳。
@@ -493,7 +493,7 @@ private fun TerminalEmptyOrErrorState(
             Text(
                 text = error,
                 color = palette.foreground.copy(alpha = 0.68f),
-                fontFamily = PiMonoFamily,
+                fontFamily = PiTheme.typography.codeFontFamily(),
                 fontSize = 12.sp,
             )
         }

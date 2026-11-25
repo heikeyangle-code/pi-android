@@ -7,10 +7,12 @@ import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.pi.ui.theme.PiFontFeatures
 import app.pi.ui.theme.PiHeading
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiTypographyProfile
@@ -85,7 +87,7 @@ internal fun piMarkdownColors(
     text = textColor ?: palette.text,
     mutedText = palette.muted,
     codeBackground = Color.Transparent,
-    inlineCodeBackground = palette.borderMuted.copy(alpha = if (darkTheme) 0.42f else 0.34f),
+    inlineCodeBackground = palette.borderMuted.copy(alpha = if (darkTheme) 0.36f else 0.28f),
     dividerColor = palette.mdHr.copy(alpha = 0.28f),
     tableBackground = palette.cardBg,
     quoteText = palette.mdQuote,
@@ -107,33 +109,51 @@ internal fun piMarkdownTypography(
     val base = profile.styles.prose.copy(
         fontFamily = profile.proseFontFamily(),
         fontWeight = FontWeight.Normal,
-        letterSpacing = if (profile.proseFont == PiTypographyProfile.FONT_MONO) 0.sp else 0.15.sp,
+        letterSpacing = 0.sp,
+        fontFeatureSettings = profile.proseFontFeatures(),
+        lineBreak = LineBreak.Paragraph,
     )
     val mono = profile.styles.mono
-    val code = profile.styles.code
-    val heading = base.copy(color = palette.mdHeading, fontWeight = FontWeight.SemiBold)
+    val code = profile.styles.code.copy(
+        fontFamily = profile.codeFontFamily(),
+        fontFeatureSettings = profile.codeFontFeatures(allowLigatures = true),
+    )
+    val heading = base.copy(
+        color = palette.mdHeading,
+        fontWeight = FontWeight.SemiBold,
+        lineBreak = LineBreak.Heading,
+    )
     val body = textColor ?: palette.text
+    val tableFeatures = listOfNotNull(profile.proseFontFeatures(), PiFontFeatures.TABULAR).joinToString(", ")
 
     return PiMarkdownTypography(
-        h1 = heading.headingSlot(profile.h1, weight = FontWeight.Bold, letterSpacingSp = -0.35f),
-        h2 = heading.headingSlot(profile.h2, weight = FontWeight.Bold, letterSpacingSp = -0.25f),
-        h3 = heading.headingSlot(profile.h3, weight = FontWeight.SemiBold, letterSpacingSp = -0.15f),
-        h4 = heading.headingSlot(profile.h4, weight = FontWeight.SemiBold, letterSpacingSp = -0.05f),
-        h5 = heading.headingSlot(profile.h5, weight = FontWeight.SemiBold, letterSpacingSp = 0f),
-        h6 = heading.headingSlot(profile.h6, weight = FontWeight.Medium, letterSpacingSp = 0.2f),
-        alertTitle = heading.headingSlot(profile.h4, weight = FontWeight.SemiBold, letterSpacingSp = 0.1f),
+        // Neutral 0sp default tracking on headings so CJK titles never get crushed;
+        // Latin-dominant headings apply subtle optical tightening in PiMarkdownHeading.
+        h1 = heading.headingSlot(profile.h1, weight = FontWeight.Bold),
+        h2 = heading.headingSlot(profile.h2, weight = FontWeight.Bold),
+        h3 = heading.headingSlot(profile.h3, weight = FontWeight.SemiBold),
+        h4 = heading.headingSlot(profile.h4, weight = FontWeight.SemiBold),
+        h5 = heading.headingSlot(profile.h5, weight = FontWeight.SemiBold),
+        h6 = heading.headingSlot(profile.h6, weight = FontWeight.Medium),
+        alertTitle = heading.headingSlot(profile.h4, weight = FontWeight.SemiBold),
         text = base.copy(color = body),
         code = code.copy(color = palette.mdCodeBlock),
         inlineCode = mono.copy(
+            fontFamily = profile.codeFontFamily(),
             fontSize = profile.inlineCodeSizeSp.sp,
             lineHeight = profile.inlineCodeLineHeightSp.sp,
             fontWeight = profile.inlineCodeWeight,
             color = palette.mdCode,
             letterSpacing = 0.sp,
+            fontFeatureSettings = profile.codeFontFeatures(allowLigatures = false),
         ),
-        quote = base.copy(color = palette.mdQuote),
+        quote = base.copy(
+            color = palette.mdQuote,
+            fontSize = (base.fontSize.value * 0.96f).sp,
+            lineHeight = (base.lineHeight.value * 0.96f).sp,
+        ),
         paragraph = if (monoParagraph) mono.copy(color = body) else base.copy(color = body),
-        ordered = base.copy(color = body),
+        ordered = base.copy(color = body, fontFeatureSettings = tableFeatures),
         bullet = base.copy(
             color = palette.mdListBullet,
             fontFamily = FontFamily.Default,
@@ -141,16 +161,20 @@ internal fun piMarkdownTypography(
             lineHeight = base.lineHeight,
         ),
         list = base.copy(color = body),
+        // Editorial link style: Medium weight + theme accent ink; subtle baseline-offset hairline
+        // underline is drawn by PiInlineMarkdownText so descenders (g/p/y) and CJK bottoms stay clean.
         textLink = TextLinkStyles(
             style = SpanStyle(
                 color = palette.mdLink,
-                textDecoration = TextDecoration.Underline,
+                fontWeight = FontWeight.Medium,
+                textDecoration = TextDecoration.None,
             ),
         ),
         table = base.copy(
             fontSize = profile.tableSizeSp.sp,
             lineHeight = profile.tableLineHeightSp.sp,
             color = body,
+            fontFeatureSettings = tableFeatures,
         ),
     )
 }
@@ -161,9 +185,9 @@ internal fun piMarkdownSpacing(profile: PiTypographyProfile): PiMarkdownSpacing 
         block = profile.markdownBlock,
         listItem = itemGap,
         listIndent = profile.markdownListIndent,
-        headingTopH1 = 14.dp,
-        headingTopH2 = 10.dp,
-        headingTopH3 = 6.dp,
+        headingTopH1 = 16.dp,
+        headingTopH2 = 12.dp,
+        headingTopH3 = 8.dp,
         headingTopSmall = 4.dp,
     )
 }
@@ -177,4 +201,5 @@ private fun TextStyle.headingSlot(
     lineHeight = slot.lineHeightSp.sp,
     fontWeight = weight,
     letterSpacing = letterSpacingSp.sp,
+    lineBreak = LineBreak.Heading,
 )

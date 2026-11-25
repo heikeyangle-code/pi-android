@@ -79,6 +79,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.pi.bridge.PiImageLoadState
 import app.pi.bridge.PiImageLoader
 import app.pi.bridge.PiNoOpImageLoader
@@ -351,7 +352,7 @@ private fun PiMarkdownHeading(
     isFirstBlock: Boolean,
 ) {
     val palette = PiTheme.palette
-    val style = when (level) {
+    val baseStyle = when (level) {
         1 -> typography.h1
         2 -> typography.h2
         3 -> typography.h3
@@ -362,6 +363,19 @@ private fun PiMarkdownHeading(
     val contentNode = remember(node, setext) {
         val targetType = if (setext) MarkdownTokenTypes.SETEXT_CONTENT else MarkdownTokenTypes.ATX_CONTENT
         node.findChildOfType(targetType) ?: node
+    }
+    val headingSlice = safeSlice(content, contentNode)
+    val style = remember(baseStyle, level, headingSlice) {
+        if (level <= 3 && isLatinDominantHeading(headingSlice)) {
+            val tightenSp = when (level) {
+                1 -> -0.32f
+                2 -> -0.22f
+                else -> -0.10f
+            }
+            baseStyle.copy(letterSpacing = tightenSp.sp)
+        } else {
+            baseStyle
+        }
     }
     val skipTop = isFirstBlock || headingFollowsHeading(node)
     val topPad = if (skipTop) 0.dp else extraTop
@@ -392,6 +406,20 @@ private fun PiMarkdownHeading(
             )
         }
     }
+}
+
+/** True when a heading is predominantly Latin/ASCII letters so subtle editorial negative tracking enhances legibility without squeezing CJK ideographs. */
+internal fun isLatinDominantHeading(text: String): Boolean {
+    var latin = 0
+    var cjk = 0
+    for (ch in text) {
+        val code = ch.code
+        when {
+            (code in 0x4E00..0x9FFF) || (code in 0x3400..0x4DBF) || (code in 0x3040..0x30FF) || (code in 0xAC00..0xD7AF) -> cjk++
+            (ch in 'A'..'Z') || (ch in 'a'..'z') -> latin++
+        }
+    }
+    return latin > 0 && cjk == 0
 }
 
 private fun headingFollowsHeading(node: ASTNode): Boolean {
@@ -812,12 +840,14 @@ private fun PiBlockQuote(
         lerp(palette.cardBg, palette.pageBg, 0.25f)
     }
     val quoteTypo = remember(typography, quoteColor) {
+        val qSize = typography.quote.fontSize
+        val qLine = typography.quote.lineHeight
         typography.copy(
-            text = typography.text.copy(color = quoteColor),
+            text = typography.text.copy(color = quoteColor, fontSize = qSize, lineHeight = qLine),
             quote = typography.quote.copy(color = quoteColor),
-            paragraph = typography.paragraph.copy(color = quoteColor),
-            ordered = typography.ordered.copy(color = quoteColor),
-            list = typography.list.copy(color = quoteColor),
+            paragraph = typography.paragraph.copy(color = quoteColor, fontSize = qSize, lineHeight = qLine),
+            ordered = typography.ordered.copy(color = quoteColor, fontSize = qSize, lineHeight = qLine),
+            list = typography.list.copy(color = quoteColor, fontSize = qSize, lineHeight = qLine),
         )
     }
     val shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 10.dp, bottomEnd = 10.dp)
@@ -1220,11 +1250,13 @@ private fun PiTable(
     val nestedInsetDp = (quoteDepth * 26 + listDepth * 22).dp
     val available = (LocalConfiguration.current.screenWidthDp.dp - 32.dp - nestedInsetDp).coerceAtLeast(180.dp)
 
-    val colWidthsDp = remember(columnDisplayChars, available) {
+    val tableFontSp = typography.table.fontSize.value.takeIf { it.isFinite() && it > 0f } ?: 14f
+    val charWidthDp = (tableFontSp * 0.58f).coerceIn(6.8f, 11.5f)
+    val colWidthsDp = remember(columnDisplayChars, available, charWidthDp) {
         computePiTableColumnWidthsDp(
             columnDisplayChars = columnDisplayChars,
             availableDp = available.value,
-            charWidthDp = 8.2f,
+            charWidthDp = charWidthDp,
             horizontalPaddingDp = 24f,
             minColDp = 56f,
             maxColDp = 240f,
@@ -1766,7 +1798,8 @@ private fun PiCodeSurface(
 
     val mermaidMode = rememberPiMermaidMode()
     if (normalized?.lowercase() == MERMAID_LANGUAGE && mermaidMode != PiMermaidMode.Off) {
-        PiMermaidView(source = code, settled = settled) {
+        val mermaidSettled = if (mermaidMode == PiMermaidMode.Final) !LocalPiMarkdownStreaming.current else settled
+        PiMermaidView(source = code, settled = mermaidSettled) {
             PiMermaidAsciiFallback(code = code, style = style)
         }
         return
@@ -1950,7 +1983,15 @@ private fun buildPiCodeText(
         val style = when (span.token) {
             PiSyntaxToken.Emphasis -> SpanStyle(fontStyle = FontStyle.Italic)
             PiSyntaxToken.Strong -> SpanStyle(fontWeight = FontWeight.Bold)
-            PiSyntaxToken.Link -> SpanStyle(textDecoration = TextDecoration.Underline)
+            PiSyntaxToken.Link -> SpanStyle(color = palette.mdLink, textDecoration = TextDecoration.Underline)
+            PiSyntaxToken.Comment -> SpanStyle(
+                color = palette.syntaxComment,
+                fontStyle = FontStyle.Italic,
+            )
+            PiSyntaxToken.Keyword -> SpanStyle(
+                color = palette.syntaxKeyword,
+                fontWeight = FontWeight.Medium,
+            )
             else -> span.token.color(palette)?.let { SpanStyle(color = it) } ?: SpanStyle()
         }
         addStyle(style, start, end)

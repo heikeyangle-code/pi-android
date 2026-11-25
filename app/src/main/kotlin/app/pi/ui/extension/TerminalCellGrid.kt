@@ -181,12 +181,31 @@ internal fun TerminalGridRow(
     val rowWidthDp = with(density) { terminalGridRowWidthPx(renderCols, cellWidthPx).toDp() }
     val rowHeightDp = with(density) { cellHeightPx.toDp() }
 
-    val monoRegular = Typeface.MONOSPACE
-    val monoBold = remember { Typeface.create(Typeface.MONOSPACE, Typeface.BOLD) }
-    val monoItalic = remember { Typeface.create(Typeface.MONOSPACE, Typeface.ITALIC) }
-    val monoBoldItalic = remember { Typeface.create(Typeface.MONOSPACE, Typeface.BOLD_ITALIC) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val typography = PiTheme.typography
+    val codeFontKey = typography.codeFont
+    val monoRegular = remember(context, codeFontKey) {
+        runCatching {
+            androidx.core.content.res.ResourcesCompat.getFont(context, typography.codeFontResRegular())
+        }.getOrNull() ?: Typeface.MONOSPACE
+    }
+    val monoBold = remember(context, codeFontKey) {
+        runCatching {
+            androidx.core.content.res.ResourcesCompat.getFont(context, typography.codeFontResBold())
+        }.getOrNull() ?: Typeface.create(monoRegular, Typeface.BOLD)
+    }
+    val monoItalic = remember(context, codeFontKey) {
+        runCatching {
+            androidx.core.content.res.ResourcesCompat.getFont(context, typography.codeFontResItalic())
+        }.getOrNull() ?: Typeface.create(monoRegular, Typeface.ITALIC)
+    }
+    val monoBoldItalic = remember(context, codeFontKey) {
+        runCatching {
+            androidx.core.content.res.ResourcesCompat.getFont(context, typography.codeFontResBoldItalic())
+        }.getOrNull() ?: Typeface.create(monoRegular, Typeface.BOLD_ITALIC)
+    }
 
-    val paint = remember(fontSizePx) {
+    val paint = remember(fontSizePx, monoRegular) {
         Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
             typeface = monoRegular
             textSize = fontSizePx

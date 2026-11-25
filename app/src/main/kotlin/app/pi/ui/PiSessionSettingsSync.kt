@@ -177,6 +177,8 @@ internal fun PiSessionViewModel.readPrefs(): UiPrefs {
             lineHeight = string("app.appearance.lineHeight", "normal"),
             fontSize = fontSize,
             proseFont = string("app.appearance.proseFont", PiTypographyProfile.FONT_SANS),
+            codeFont = string("app.appearance.codeFont", PiTypographyProfile.CODE_JETBRAINS),
+            codeLigatures = bool("app.appearance.codeLigatures", true),
         ),
         showTimestamps = bool("app.appearance.showTimestamps", false),
         thinkingCollapsedByDefault = bool("app.appearance.thinkingCollapsedByDefault", true),

@@ -220,7 +220,11 @@ internal fun PiRichCodeBlock(
                             }
                             Text(
                                 text = lineNumbersText,
-                                style = style.copy(color = palette.dim.copy(alpha = 0.78f), textAlign = TextAlign.End),
+                                style = style.copy(
+                                    color = palette.dim.copy(alpha = 0.78f),
+                                    textAlign = TextAlign.End,
+                                    fontFeatureSettings = app.pi.ui.theme.PiFontFeatures.CODE_LIGATURES_OFF,
+                                ),
                                 modifier = Modifier
                                     .padding(end = 10.dp)
                                     .drawBehind {

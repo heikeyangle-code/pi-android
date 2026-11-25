@@ -77,7 +77,6 @@ import app.pi.ui.terminal.TerminalViewRef
 import app.pi.ui.terminal.hideSoftKeyboard
 import app.pi.ui.terminal.showSoftKeyboard
 import app.pi.ui.terminal.toggleSoftKeyboard
-import app.pi.ui.theme.PiMonoFamily
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -426,7 +425,7 @@ private fun TerminalTabPill(
         Text(
             text = tab.title,
             color = palette.foreground.copy(alpha = if (selected) 0.96f else 0.65f),
-            fontFamily = PiMonoFamily,
+            fontFamily = PiTheme.typography.codeFontFamily(),
             fontSize = 12.sp,
             fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
             maxLines = 1,

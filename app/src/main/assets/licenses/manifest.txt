@@ -131,6 +131,8 @@ Unlicense.txt	Unlicense	许可证全文
 0BSD.txt	0BSD	许可证全文
 BlueOak-1.0.0.txt	BlueOak-1.0.0	许可证全文
 JetBrainsMono-OFL-1.1.txt	JetBrains Mono 2.304（OFL-1.1）	许可证全文
+Inter-OFL-1.1.txt	Inter 4.1（OFL-1.1）	许可证全文
+Geist-OFL-1.1.txt	Geist & Geist Mono 1.9.2（OFL-1.1）	许可证全文
 SourceHanSerif-OFL-1.1.txt	Source Han Serif CN 2.003R（OFL-1.1）	许可证全文
 pi-license.txt	pi 引擎 1.6.0（MIT）	许可证全文
 proroot-license.txt	proroot v1.2.8（Proprietary）	许可证全文

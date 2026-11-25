@@ -63,7 +63,7 @@ object PiMermaidSvg {
      *
      * 版本号与 `app/src/main/assets/rich/mermaid/LICENSE` 记录的 12.2.0 对齐。
      */
-    const val ENGINE_VERSION: String = "mermaid-12.2.0-skia-3"
+    const val ENGINE_VERSION: String = "mermaid-12.2.0-skia-4"
 
     /**
      * Renders a Mermaid diagram using Chromium/Skia high-DPI capture (`htmlLabels: true`)

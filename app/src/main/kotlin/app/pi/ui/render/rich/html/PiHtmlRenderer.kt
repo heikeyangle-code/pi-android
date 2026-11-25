@@ -263,9 +263,10 @@ private fun HtmlInlineText(
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
+    val codeFamily = PiTheme.typography.codeFontFamily()
     val uriHandler = LocalUriHandler.current
-    val annotated = remember(nodes, palette) {
-        buildHtmlAnnotatedString(nodes, palette)
+    val annotated = remember(nodes, palette, codeFamily) {
+        buildHtmlAnnotatedString(nodes, palette, codeFamily)
     }
     var layout by remember(annotated) { mutableStateOf<TextLayoutResult?>(null) }
     val hasLink = remember(annotated) {
@@ -313,13 +314,15 @@ private const val PI_HTML_URL_TAG = "pi.html.url"
 private fun buildHtmlAnnotatedString(
     nodes: PiHtmlNodes,
     palette: PiPalette,
+    codeFamily: androidx.compose.ui.text.font.FontFamily = PiMonoFamily,
 ): AnnotatedString = buildAnnotatedString {
-    appendHtmlInline(nodes, palette)
+    appendHtmlInline(nodes, palette, codeFamily)
 }
 
 private fun AnnotatedString.Builder.appendHtmlInline(
     nodes: PiHtmlNodes,
     palette: PiPalette,
+    codeFamily: androidx.compose.ui.text.font.FontFamily,
 ) {
     for (node in nodes) {
         when (node) {
@@ -329,25 +332,25 @@ private fun AnnotatedString.Builder.appendHtmlInline(
                 if (node.tag == "br") {
                     append('\n')
                 } else {
-                    val span = inlineSpanFor(node.tag, palette)
+                    val span = inlineSpanFor(node.tag, palette, codeFamily)
                     if (span == null) {
-                        appendHtmlInline(node.children, palette)
+                        appendHtmlInline(node.children, palette, codeFamily)
                     } else {
-                        withStyle(span) { appendHtmlInline(node.children, palette) }
+                        withStyle(span) { appendHtmlInline(node.children, palette, codeFamily) }
                     }
                 }
             }
 
-            is PiHtmlNode.Link -> appendHtmlLink(node, palette)
+            is PiHtmlNode.Link -> appendHtmlLink(node, palette, codeFamily)
 
             is PiHtmlNode.Code -> {
                 if (node.block) {
                     // 块级代码被误放进行内缓冲时，仍然保留文字和换行，不丢。
                     append('\n')
-                    withStyle(inlineCodeSpan(palette)) { append(node.text) }
+                    withStyle(inlineCodeSpan(palette, codeFamily)) { append(node.text) }
                     append('\n')
                 } else {
-                    withStyle(inlineCodeSpan(palette)) { append(node.text) }
+                    withStyle(inlineCodeSpan(palette, codeFamily)) { append(node.text) }
                 }
             }
 
@@ -365,18 +368,20 @@ private fun AnnotatedString.Builder.appendHtmlInline(
 private fun AnnotatedString.Builder.appendHtmlLink(
     node: PiHtmlNode.Link,
     palette: PiPalette,
+    codeFamily: androidx.compose.ui.text.font.FontFamily,
 ) {
     val href = node.href.trim()
     val openable = isSafeOpenableUrl(href)
     val linkStyle = SpanStyle(
         color = palette.mdLink,
+        fontWeight = FontWeight.Medium,
         textDecoration = TextDecoration.Underline,
     )
     val content: AnnotatedString.Builder.() -> Unit = {
         if (node.children.isEmpty()) {
             if (href.isNotEmpty()) append(href)
         } else {
-            appendHtmlInline(node.children, palette)
+            appendHtmlInline(node.children, palette, codeFamily)
         }
     }
 
@@ -394,7 +399,11 @@ private fun AnnotatedString.Builder.appendHtmlLink(
     }
 }
 
-private fun inlineSpanFor(tag: String, palette: PiPalette): SpanStyle? = when (tag) {
+private fun inlineSpanFor(
+    tag: String,
+    palette: PiPalette,
+    codeFamily: androidx.compose.ui.text.font.FontFamily,
+): SpanStyle? = when (tag) {
     "strong", "b" -> SpanStyle(fontWeight = FontWeight.Bold)
     "em", "i" -> SpanStyle(fontStyle = FontStyle.Italic)
     "del", "s" -> SpanStyle(textDecoration = TextDecoration.LineThrough)
@@ -402,14 +411,18 @@ private fun inlineSpanFor(tag: String, palette: PiPalette): SpanStyle? = when (t
     "mark" -> SpanStyle(background = palette.warning.copy(alpha = 0.28f))
     "sup" -> SpanStyle(baselineShift = BaselineShift.Superscript)
     "sub" -> SpanStyle(baselineShift = BaselineShift.Subscript)
-    "code", "kbd" -> inlineCodeSpan(palette)
+    "code", "kbd" -> inlineCodeSpan(palette, codeFamily)
     else -> null
 }
 
-private fun inlineCodeSpan(palette: PiPalette): SpanStyle = SpanStyle(
-    fontFamily = PiMonoFamily,
+private fun inlineCodeSpan(
+    palette: PiPalette,
+    codeFamily: androidx.compose.ui.text.font.FontFamily,
+): SpanStyle = SpanStyle(
+    fontFamily = codeFamily,
     color = palette.mdCode,
-    background = palette.borderMuted.copy(alpha = 0.38f),
+    background = palette.borderMuted.copy(alpha = 0.34f),
+    fontFeatureSettings = app.pi.ui.theme.PiFontFeatures.CODE_LIGATURES_OFF,
 )
 
 /**
@@ -704,9 +717,12 @@ private fun HtmlImage(node: PiHtmlNode.Image, modifier: Modifier = Modifier) {
 @Composable
 private fun piHtmlBodyStyle(): TextStyle {
     val palette = PiTheme.palette
-    return PiTheme.typography.styles.prose.copy(
-        fontFamily = PiTheme.typography.proseFontFamily(),
+    val profile = PiTheme.typography
+    return profile.styles.prose.copy(
+        fontFamily = profile.proseFontFamily(),
         fontWeight = FontWeight.Normal,
+        fontFeatureSettings = profile.proseFontFeatures(),
+        lineBreak = androidx.compose.ui.text.style.LineBreak.Paragraph,
         color = palette.text,
     )
 }

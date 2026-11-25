@@ -316,13 +316,93 @@ data class PiTypographyProfile(
     val blockSpacing: Dp,
     /** The `sp` this profile's [fontSize] adds to every text role, headings included. */
     val fontSizeOffsetSp: Int,
-    /** Markdown reading font family: `sans` (modern UI sans), `serif` (bundled Source Han Serif), or `mono` (JetBrains Mono). */
+    /** Markdown & UI reading font family: `sans` (Inter), `geist` (Geist Sans), `serif` (Source Han Serif CN), `mono` (active code font), or `system` (Android ROM default). */
     val proseFont: String = FONT_SANS,
+    /** Code, terminal & TUI monospace family: `jetbrains` (JetBrains Mono) or `geist_mono` (Geist Mono). */
+    val codeFont: String = CODE_JETBRAINS,
+    /** Enable OpenType coding ligatures (`=>`, `!=`, `->`) in code fences and code viewers. */
+    val codeLigatures: Boolean = true,
 ) {
+    /** App-wide UI chrome typeface (buttons, top bar, settings, dialogs). Follows Geist / System when chosen, else Inter. */
+    fun uiFontFamily(): FontFamily = when (proseFont) {
+        FONT_GEIST -> PiGeistFamily
+        FONT_SYSTEM -> FontFamily.Default
+        else -> PiInterFamily
+    }
+
+    /** OpenType feature string for UI chrome text (`cv05, cv11` on Inter for crisp lowercase l / single-story a). */
+    fun uiFontFeatures(): String? = when (proseFont) {
+        FONT_GEIST, FONT_SYSTEM -> null
+        else -> PiFontFeatures.INTER_UI
+    }
+
+    /** Chat Markdown reading prose typeface. */
     fun proseFontFamily(): FontFamily = when (proseFont) {
+        FONT_GEIST -> PiGeistFamily
         FONT_SERIF -> PiProseFamily
-        FONT_MONO -> PiMonoFamily
-        else -> FontFamily.Default
+        FONT_MONO -> codeFontFamily()
+        FONT_SYSTEM -> FontFamily.Default
+        else -> PiInterFamily
+    }
+
+    /** OpenType feature string for chat Markdown reading prose. */
+    fun proseFontFeatures(): String? = when (proseFont) {
+        FONT_SANS -> PiFontFeatures.INTER_UI
+        FONT_MONO -> codeFontFeatures(allowLigatures = false)
+        else -> null
+    }
+
+    /** Active code, diff, terminal, and TUI monospace typeface (complete 6 static cuts: 400/500/600/700 + 400i/700i). */
+    fun codeFontFamily(): FontFamily = when (codeFont) {
+        CODE_GEIST_MONO -> PiGeistMonoFamily
+        else -> PiJetBrainsMonoFamily
+    }
+
+    /** OpenType feature string for monospace text (ligatures opt-in for code blocks, off for diffs/paths/commands). */
+    fun codeFontFeatures(allowLigatures: Boolean): String =
+        if (allowLigatures && codeLigatures) PiFontFeatures.CODE_LIGATURES_ON else PiFontFeatures.CODE_LIGATURES_OFF
+
+    fun codeFontResRegular(): Int =
+        if (codeFont == CODE_GEIST_MONO) app.pi.R.font.geist_mono_regular else app.pi.R.font.jetbrains_mono_regular
+
+    fun codeFontResBold(): Int =
+        if (codeFont == CODE_GEIST_MONO) app.pi.R.font.geist_mono_bold else app.pi.R.font.jetbrains_mono_bold
+
+    fun codeFontResItalic(): Int =
+        if (codeFont == CODE_GEIST_MONO) app.pi.R.font.geist_mono_italic else app.pi.R.font.jetbrains_mono_italic
+
+    fun codeFontResBoldItalic(): Int =
+        if (codeFont == CODE_GEIST_MONO) app.pi.R.font.geist_mono_bold_italic else app.pi.R.font.jetbrains_mono_bold_italic
+
+    /** Subtly scaled-down profile for expanded reasoning / thinking blocks so they read cleanly yet stay subordinate to answers. */
+    fun forThinking(): PiTypographyProfile {
+        val proseSz = (styles.prose.fontSize.value - 1.5f).coerceAtLeast(12.5f)
+        val proseLh = (styles.prose.lineHeight.value - 2f).coerceAtLeast(19f)
+        val codeSz = (styles.code.fontSize.value - 1f).coerceAtLeast(11.5f)
+        val codeLh = (styles.code.lineHeight.value - 1.5f).coerceAtLeast(17.5f)
+        fun PiHeading.shrink(): PiHeading = PiHeading(
+            sizeSp = (sizeSp - 2).coerceAtLeast(13),
+            lineHeightSp = (lineHeightSp - 2).coerceAtLeast(19),
+        )
+        return copy(
+            styles = styles.copy(
+                prose = styles.prose.copy(fontSize = proseSz.sp, lineHeight = proseLh.sp),
+                code = styles.code.copy(fontSize = codeSz.sp, lineHeight = codeLh.sp),
+            ),
+            h1 = h1.shrink(),
+            h2 = h2.shrink(),
+            h3 = h3.shrink(),
+            h4 = h4.shrink(),
+            h5 = h5.shrink(),
+            h6 = h6.shrink(),
+            inlineCodeSizeSp = (inlineCodeSizeSp - 1f).coerceAtLeast(11.5f),
+            inlineCodeLineHeightSp = (inlineCodeLineHeightSp - 1.5f).coerceAtLeast(16.5f),
+            tableSizeSp = (tableSizeSp - 1f).coerceAtLeast(12f),
+            tableLineHeightSp = (tableLineHeightSp - 1.5f).coerceAtLeast(18f),
+            markdownBlock = (markdownBlock.value * 0.7f).coerceAtLeast(6f).dp,
+            markdownListItemTop = (markdownListItemTop.value * 0.75f).coerceAtLeast(2f).dp,
+            markdownListItemBottom = (markdownListItemBottom.value * 0.75f).coerceAtLeast(2f).dp,
+        )
     }
 
     companion object {
@@ -331,13 +411,25 @@ data class PiTypographyProfile(
         const val LOOSE = "loose"
 
         const val FONT_SANS = "sans"
+        const val FONT_GEIST = "geist"
         const val FONT_SERIF = "serif"
         const val FONT_MONO = "mono"
+        const val FONT_SYSTEM = "system"
+
+        const val CODE_JETBRAINS = "jetbrains"
+        const val CODE_GEIST_MONO = "geist_mono"
 
         fun proseFontOf(raw: String?): String = when (raw) {
+            FONT_GEIST -> FONT_GEIST
             FONT_SERIF -> FONT_SERIF
             FONT_MONO -> FONT_MONO
+            FONT_SYSTEM -> FONT_SYSTEM
             else -> FONT_SANS
+        }
+
+        fun codeFontOf(raw: String?): String = when (raw) {
+            CODE_GEIST_MONO -> CODE_GEIST_MONO
+            else -> CODE_JETBRAINS
         }
 
         /** Unknown or absent → the default preset, never a crash over a text file. */
@@ -377,7 +469,7 @@ data class PiTypographyProfile(
                 codeSize = 12, codeLine = 19,
                 blockSpacing = 6,
                 messageGap = 18,
-                inlineSize = 12.5f, inlineWeight = 400,
+                inlineSize = 12.5f, inlineWeight = 500,
                 tableSize = 13.5f, tableLine = 21,
                 headings = intArrayOf(22, 20, 18, 17, 16, 15),
             ),
@@ -387,7 +479,7 @@ data class PiTypographyProfile(
                 codeSize = 13, codeLine = 21,
                 blockSpacing = 8,
                 messageGap = 24,
-                inlineSize = 13.5f, inlineWeight = 400,
+                inlineSize = 13.5f, inlineWeight = 500,
                 tableSize = 14f, tableLine = 22,
                 headings = intArrayOf(24, 21, 19, 18, 17, 16),
             ),
@@ -397,7 +489,7 @@ data class PiTypographyProfile(
                 codeSize = 14, codeLine = 23,
                 blockSpacing = 12,
                 messageGap = 32,
-                inlineSize = 14.5f, inlineWeight = 400,
+                inlineSize = 14.5f, inlineWeight = 500,
                 tableSize = 15f, tableLine = 24,
                 headings = intArrayOf(26, 23, 21, 19, 18, 17),
             ),
@@ -428,8 +520,12 @@ data class PiTypographyProfile(
             lineHeight: String,
             fontSize: String,
             proseFont: String = FONT_SANS,
+            codeFont: String = CODE_JETBRAINS,
+            codeLigatures: Boolean = true,
         ): PiTypographyProfile {
             val resolved = presetOf(preset)
+            val resolvedProseFont = proseFontOf(proseFont)
+            val resolvedCodeFont = codeFontOf(codeFont)
             val numbers = PRESETS.getValue(resolved)
             val leading = when (lineHeightOf(lineHeight)) {
                 "tight" -> 0.92
@@ -438,29 +534,54 @@ data class PiTypographyProfile(
             }
             val offset = offsetSp(fontSizeOf(fontSize))
 
+            val uiFamily = when (resolvedProseFont) {
+                FONT_GEIST -> PiGeistFamily
+                FONT_SYSTEM -> FontFamily.Default
+                else -> PiInterFamily
+            }
+            val uiFeatures = when (resolvedProseFont) {
+                FONT_GEIST, FONT_SYSTEM -> null
+                else -> PiFontFeatures.INTER_UI
+            }
+            val monoFamily = if (resolvedCodeFont == CODE_GEIST_MONO) PiGeistMonoFamily else PiJetBrainsMonoFamily
+            val codeFeatures = if (codeLigatures) PiFontFeatures.CODE_LIGATURES_ON else PiFontFeatures.CODE_LIGATURES_OFF
+
             return PiTypographyProfile(
                 preset = resolved,
                 lineHeight = lineHeightOf(lineHeight),
                 fontSize = fontSizeOf(fontSize),
                 styles = PiTextStyles(
                     meta = TextStyle(
-                        fontFamily = FontFamily.Default,
+                        fontFamily = uiFamily,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        fontWeight = FontWeight.Normal,
+                        fontFeatureSettings = uiFeatures,
+                    ).piPrecise(),
+                    mono = TextStyle(
+                        fontFamily = monoFamily,
                         fontSize = 13.sp,
                         lineHeight = 20.sp,
-                        fontWeight = FontWeight.Normal,
+                        fontFeatureSettings = PiFontFeatures.CODE_LIGATURES_OFF,
                     ).piPrecise(),
-                    mono = PiTextStyles.Default.mono,
-                    monoSmall = PiTextStyles.Default.monoSmall,
+                    monoSmall = TextStyle(
+                        fontFamily = monoFamily,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        fontFeatureSettings = PiFontFeatures.CODE_LIGATURES_OFF,
+                    ).piPrecise(),
                     prose = TextStyle(
-                        fontFamily = FontFamily.Default,
+                        fontFamily = uiFamily,
                         fontSize = numbers.proseSize.sp,
                         lineHeight = numbers.proseLine.sp,
                         fontWeight = FontWeight.Normal,
+                        fontFeatureSettings = uiFeatures,
                     ).piPrecise(),
                     code = TextStyle(
-                        fontFamily = PiMonoFamily,
+                        fontFamily = monoFamily,
                         fontSize = numbers.codeSize.sp,
                         lineHeight = numbers.codeLine.sp,
+                        fontFeatureSettings = codeFeatures,
                     ).piPrecise(),
                 ).leadingScaled(leading).scaled(offset),
                 h1 = heading(numbers, 0, offset),
@@ -469,11 +590,6 @@ data class PiTypographyProfile(
                 h4 = heading(numbers, 3, offset),
                 h5 = heading(numbers, 4, offset),
                 h6 = heading(numbers, 5, offset),
-                // 行内代码的字号跟着走，行高跟着平移（它与标题槽同一处理）。
-                // 注意：这一对行高**进不了渲染** —— Compose 的 `SpanStyle` 没有
-                // `lineHeight`（库把 `inlineCode` 当 span 压进 AnnotatedString，
-                // 见 `docs/render-inventory.md` §2.9），真正生效的只有字号与字重。
-                // 仍然一起平移，是为了这一对数字自己不自相矛盾。
                 inlineCodeSizeSp = numbers.inlineSize + offset,
                 inlineCodeLineHeightSp =
                     (if (numbers.inlineSize >= 14f) 19f else 18f) + offset,
@@ -482,11 +598,6 @@ data class PiTypographyProfile(
                     numbers.inlineWeight >= 500 -> FontWeight.Medium
                     else -> FontWeight.Normal
                 },
-                // 表格与别的角色同待遇：两个乘子都吃。列宽是渲染器写死的 160 dp，
-                // 所以行高只决定单元格多高、不改变它要挤进几列 —— 但「唯一的例外」
-                // 本身就是系统里的一个洞：`字号 = 更大` 时正文 18 而表格停在 14，
-                // 单元格相对正文只有 0.78 em。这里按同一机制平移（`steppedLeading`
-                // 处理行距、`+ offset` 处理字号），表格的两个数因此和同档代码块一致。
                 tableSizeSp = numbers.tableSize + offset,
                 tableLineHeightSp = steppedLeading(
                     numbers.tableLine.toFloat(),
@@ -500,7 +611,9 @@ data class PiTypographyProfile(
                 messageSpacing = numbers.messageGap.dp,
                 blockSpacing = numbers.blockSpacing.dp,
                 fontSizeOffsetSp = offset,
-                proseFont = proseFontOf(proseFont),
+                proseFont = resolvedProseFont,
+                codeFont = resolvedCodeFont,
+                codeLigatures = codeLigatures,
             )
         }
 

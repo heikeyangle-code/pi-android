@@ -139,26 +139,32 @@ fun ThinkingBlockBlock(
                     val bodyText = transformed.ifEmpty {
                         if (item.streaming) tr("正在思考…", "Thinking…") else tr("（无思考内容）", "(No thinking content)")
                     }
+                    val baseProfile = PiTheme.typography
+                    val thinkingProfile = androidx.compose.runtime.remember(baseProfile) { baseProfile.forThinking() }
+                    val bodyColor = palette.thinkingBodyOnCanvas.copy(alpha = 0.84f)
                     val bodyContent: @Composable () -> Unit = {
-                        Text(
-                            text = bodyText,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp, bottom = 2.dp)
-                                .drawBehind {
-                                    drawRoundRect(
-                                        color = muted.copy(alpha = 0.28f),
-                                        topLeft = Offset(0f, 0f),
-                                        size = Size(THINK_STRIPE_WIDTH.toPx(), size.height),
-                                        cornerRadius = CornerRadius(THINK_STRIPE_WIDTH.toPx() / 2f),
-                                    )
-                                }
-                                .padding(start = THINK_BODY_INDENT),
-                            style = PiTheme.text.prose.let {
-                                it.copy(fontSize = it.fontSize * 0.9f, lineHeight = it.lineHeight * 0.95f)
-                            },
-                            color = palette.thinkingBodyOnCanvas.copy(alpha = 0.82f),
-                        )
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            app.pi.ui.theme.LocalPiTypographyProfile provides thinkingProfile,
+                            app.pi.ui.theme.LocalPiTextStyles provides thinkingProfile.styles,
+                        ) {
+                            app.pi.ui.render.PiMarkdownText(
+                                markdown = bodyText,
+                                textColor = bodyColor,
+                                streaming = item.streaming,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp, bottom = 2.dp)
+                                    .drawBehind {
+                                        drawRoundRect(
+                                            color = muted.copy(alpha = 0.28f),
+                                            topLeft = Offset(0f, 0f),
+                                            size = Size(THINK_STRIPE_WIDTH.toPx(), size.height),
+                                            cornerRadius = CornerRadius(THINK_STRIPE_WIDTH.toPx() / 2f),
+                                        )
+                                    }
+                                    .padding(start = THINK_BODY_INDENT),
+                            )
+                        }
                     }
                     // 流式期间不包裹 SelectionContainer，避免每个思考 token 都触发选择注册表重算与闪烁。
                     if (item.streaming) {

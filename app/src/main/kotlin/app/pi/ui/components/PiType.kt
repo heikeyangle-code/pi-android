@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.sp
 import app.pi.ui.theme.PiTheme
 
@@ -77,6 +78,7 @@ object PiType {
                 fontSize = (17 + shift).sp,
                 lineHeight = (24 + shift).sp,
                 fontWeight = FontWeight.SemiBold,
+                lineBreak = LineBreak.Heading,
             )
         }
 
@@ -95,6 +97,7 @@ object PiType {
                 fontSize = (16 + shift).sp,
                 lineHeight = (22 + shift).sp,
                 fontWeight = FontWeight.SemiBold,
+                lineBreak = LineBreak.Heading,
             )
         }
 

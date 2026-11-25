@@ -35,7 +35,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.pi.ui.theme.PiMonoFamily
 import com.termux.terminal.KeyHandler
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -299,12 +298,13 @@ private fun ExtraKeyCap(
             },
         contentAlignment = Alignment.Center,
     ) {
+        val monoFamily = app.pi.ui.theme.PiTheme.typography.codeFontFamily()
         val hint = key.longPressLabel
         if (hint != null) {
             Text(
                 text = hint,
                 color = palette.foreground.copy(alpha = 0.42f),
-                fontFamily = PiMonoFamily,
+                fontFamily = monoFamily,
                 fontSize = 9.sp,
                 lineHeight = 9.sp,
                 modifier = Modifier
@@ -315,7 +315,7 @@ private fun ExtraKeyCap(
         Text(
             text = key.label,
             color = textColor,
-            fontFamily = PiMonoFamily,
+            fontFamily = monoFamily,
             fontWeight = if (modifierState.isActive) FontWeight.Bold else FontWeight.Medium,
             fontSize = 12.sp,
             letterSpacing = if (key.label.length >= 4) (-0.5).sp else 0.sp,

@@ -22,7 +22,9 @@ import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -275,27 +277,75 @@ object PiShapes {
 }
 
 /**
- * The bundled machine-language face: JetBrains Mono v2.304, static `Regular` +
- * `Bold` TTFs from the upstream release (`app/src/main/res/font/`), licensed
- * OFL-1.1 (the text ships in the in-app licence list).
- *
- * Static instances rather than the release's
- * `fonts/variable/JetBrainsMono[wght].ttf`: this app asks for exactly two weights,
- * and a static pair needs no variation-axis resolution at runtime.
- *
- * Bold is not decorative — `buildPiCodeText` marks emphasised code spans
- * `FontWeight.Bold`, so a family without a Bold entry would have those spans
- * synthesised (faux-bold, wrong advance width) inside the code block.
- *
- * Use this (or the [PiTextStyles] `mono` / `monoSmall` roles, which are built on
- * it) for anything a *machine* emitted. `FontFamily.Monospace` is deliberately not
- * used outside the terminal: it resolves to whatever face the ROM picked, which is
- * why fixed columns sized from an advance width used to shift between devices.
+ * OpenType feature presets shared across the Studio typography system:
+ *  - [INTER_UI]: Inter's `cv05` (tailed lowercase `l`) + `cv11` (single-story `a`) for razor-sharp UI legibility.
+ *  - [TABULAR]: Tabular lining figures so live counters, timestamps, and tables never jitter horizontally.
+ *  - [CODE_LIGATURES_ON]: Coding ligatures (`=>`, `!=`, `->`, `<=`) + slashed zero for code fences and viewers.
+ *  - [CODE_LIGATURES_OFF]: Literal character fidelity + slashed zero + tabular numerals for diffs, paths, commands, and inline code.
  */
-val PiMonoFamily: FontFamily = FontFamily(
-    Font(R.font.jetbrains_mono_regular, FontWeight.Normal),
-    Font(R.font.jetbrains_mono_bold, FontWeight.Bold),
+object PiFontFeatures {
+    const val INTER_UI: String = "cv05, cv11"
+    const val TABULAR: String = "tnum"
+    const val CODE_LIGATURES_ON: String = "calt, liga, zero, tnum"
+    const val CODE_LIGATURES_OFF: String = "calt 0, liga 0, zero, tnum"
+}
+
+/**
+ * Primary Studio UI & modern reading sans: Inter v4.1 (OFL-1.1), 6 complete static cuts
+ * (`400 / 500 / 600 / 700 + Italic / BoldItalic`). CJK glyphs fall back seamlessly to the
+ * device's system CJK sans face with zero missing characters across Simplified/Traditional/JP/KR.
+ */
+val PiInterFamily: FontFamily = FontFamily(
+    Font(R.font.inter_regular, FontWeight.Normal, FontStyle.Normal),
+    Font(R.font.inter_medium, FontWeight.Medium, FontStyle.Normal),
+    Font(R.font.inter_semibold, FontWeight.SemiBold, FontStyle.Normal),
+    Font(R.font.inter_bold, FontWeight.Bold, FontStyle.Normal),
+    Font(R.font.inter_italic, FontWeight.Normal, FontStyle.Italic),
+    Font(R.font.inter_bold_italic, FontWeight.Bold, FontStyle.Italic),
 )
+
+/**
+ * Geometric Studio UI & reading sans: Vercel Geist v1.9.2 (OFL-1.1), 6 complete static cuts
+ * (`400 / 500 / 600 / 700 + Italic / BoldItalic`).
+ */
+val PiGeistFamily: FontFamily = FontFamily(
+    Font(R.font.geist_regular, FontWeight.Normal, FontStyle.Normal),
+    Font(R.font.geist_medium, FontWeight.Medium, FontStyle.Normal),
+    Font(R.font.geist_semibold, FontWeight.SemiBold, FontStyle.Normal),
+    Font(R.font.geist_bold, FontWeight.Bold, FontStyle.Normal),
+    Font(R.font.geist_italic, FontWeight.Normal, FontStyle.Italic),
+    Font(R.font.geist_bold_italic, FontWeight.Bold, FontStyle.Italic),
+)
+
+/**
+ * Primary machine-language face: JetBrains Mono v2.304 (OFL-1.1), 6 complete static cuts
+ * (`Regular 400`, `Medium 500`, `SemiBold 600`, `Bold 700`, `Italic 400i`, `BoldItalic 700i`).
+ * Zero faux-bold or faux-italic synthesis across code fences, comments, `<kbd>`, diffs, and headers.
+ */
+val PiJetBrainsMonoFamily: FontFamily = FontFamily(
+    Font(R.font.jetbrains_mono_regular, FontWeight.Normal, FontStyle.Normal),
+    Font(R.font.jetbrains_mono_medium, FontWeight.Medium, FontStyle.Normal),
+    Font(R.font.jetbrains_mono_semibold, FontWeight.SemiBold, FontStyle.Normal),
+    Font(R.font.jetbrains_mono_bold, FontWeight.Bold, FontStyle.Normal),
+    Font(R.font.jetbrains_mono_italic, FontWeight.Normal, FontStyle.Italic),
+    Font(R.font.jetbrains_mono_bold_italic, FontWeight.Bold, FontStyle.Italic),
+)
+
+/**
+ * Geometric machine-language face: Vercel Geist Mono v1.9.2 (OFL-1.1), 6 complete static cuts
+ * (`Regular 400`, `Medium 500`, `SemiBold 600`, `Bold 700`, `Italic 400i`, `BoldItalic 700i`).
+ */
+val PiGeistMonoFamily: FontFamily = FontFamily(
+    Font(R.font.geist_mono_regular, FontWeight.Normal, FontStyle.Normal),
+    Font(R.font.geist_mono_medium, FontWeight.Medium, FontStyle.Normal),
+    Font(R.font.geist_mono_semibold, FontWeight.SemiBold, FontStyle.Normal),
+    Font(R.font.geist_mono_bold, FontWeight.Bold, FontStyle.Normal),
+    Font(R.font.geist_mono_italic, FontWeight.Normal, FontStyle.Italic),
+    Font(R.font.geist_mono_bold_italic, FontWeight.Bold, FontStyle.Italic),
+)
+
+/** Default static monospace alias; runtime code widgets should prefer `PiTheme.typography.codeFontFamily()`. */
+val PiMonoFamily: FontFamily = PiJetBrainsMonoFamily
 
 /**
  * The bundled reading face for the transcript's Markdown body: a **cut-down Source Han
@@ -485,42 +535,47 @@ data class PiTextStyles(
          */
         val Default = PiTextStyles(
             meta = TextStyle(
-                fontFamily = FontFamily.Default,
+                fontFamily = PiInterFamily,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
                 fontWeight = FontWeight.Normal,
+                fontFeatureSettings = PiFontFeatures.INTER_UI,
             ).piPrecise(),
             mono = TextStyle(
-                fontFamily = PiMonoFamily,
+                fontFamily = PiJetBrainsMonoFamily,
                 fontSize = 13.sp,
                 lineHeight = 20.sp,
+                fontFeatureSettings = PiFontFeatures.CODE_LIGATURES_OFF,
             ).piPrecise(),
             monoSmall = TextStyle(
-                fontFamily = PiMonoFamily,
+                fontFamily = PiJetBrainsMonoFamily,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
+                fontFeatureSettings = PiFontFeatures.CODE_LIGATURES_OFF,
             ).piPrecise(),
             prose = TextStyle(
-                fontFamily = FontFamily.Default,
+                fontFamily = PiInterFamily,
                 fontSize = 14.sp,
                 lineHeight = 23.sp,
                 fontWeight = FontWeight.Normal,
+                fontFeatureSettings = PiFontFeatures.INTER_UI,
             ).piPrecise(),
             code = TextStyle(
-                fontFamily = PiMonoFamily,
+                fontFamily = PiJetBrainsMonoFamily,
                 fontSize = 13.sp,
                 lineHeight = 19.sp,
+                fontFeatureSettings = PiFontFeatures.CODE_LIGATURES_ON,
             ).piPrecise(),
         )
     }
 }
 
 /**
- * Numbers in the status row must not jitter as they tick. Compose's
- * `FontFeatureSetting("tnum")` is unavailable on all API levels we support via
- * FontFamily.Default, so token/cost text uses the monospace family instead.
+ * Numbers in the status row must not jitter as they tick; always uses the active monospace
+ * family with tabular numerals, slashed zero, and literal characters (no ligatures).
  */
-val PiTextStyles.numeric: TextStyle get() = mono
+val PiTextStyles.numeric: TextStyle
+    get() = mono.copy(fontFeatureSettings = PiFontFeatures.CODE_LIGATURES_OFF)
 
 /** Shift a role's size and its leading together, never below 1sp. */
 private fun TextStyle.shifted(deltaSp: Int): TextStyle = copy(
@@ -546,43 +601,6 @@ val LocalPiTextStyles = staticCompositionLocalOf { PiTypographyProfile.Default.s
  */
 val LocalPiTypographyProfile = staticCompositionLocalOf { PiTypographyProfile.Default }
 
-/**
- * The colours Android paints a **text selection** with — the long-press highlight
- * and its drag handles.
- *
- * ## Why the highlight is `selectedBg`
- *
- * pi marks "this region is selected" with exactly one token, and it is a
- * *background* token: `ThemeBg` is the union pi partitions its background colours
- * into (`theme.ts:92-99`), and `selectedBg` is the one pi spends on selection —
- * a whole session row (`session-selector.ts:507`, `theme.bg("selectedBg", line)`), a
- * whole tree row (`tree-selector.ts:751-752`) and the jump-to-latest pill
- * (`tui-renderer.ts:32`). A Compose selection highlight is the same thing at a
- * smaller size, so it takes the same token. Opaque, not tinted: pi paints its
- * selected rows with an opaque `bg`, and the pair that has to survive is the one
- * `searchMatchBg`/`searchMatchText` already relies on — `selectedBg` under `text`
- * measures **7.52:1** in `dark` and **10.37:1** in `light`.
- *
- * ## Why the handles are `accent`
- *
- * A terminal has no selection handles, so pi declares no token for them, and this is
- * the one half of the pair that stays the platform's choice: Material's own
- * `DefaultTextSelectionColors` sources `handleColor` from `colorScheme.primary`
- * (`foundation`, `TextSelectionColors.kt`), and this palette maps `primary` to
- * `accent` (`colorScheme()` below). Handing the handles `selectedBg` instead would
- * make them near-invisible against a light page (`#D0D0E0` on `#F8F8F8`), and the
- * handle is an *affordance*, not the selected region.
- *
- * ## Why this is not a departure from the frozen board
- *
- * The board draws no selection style at all — a browser's own `::selection` is what
- * its prototype shows — so nothing here is contradicted. What the board *did* freeze
- * is the mechanism, in `07-construction-decisions.md:311`: 「长按文本 = 系统自由选择」,
- * implemented as one `SelectableContent` ([androidx.compose.foundation.text.selection.SelectionContainer])
- * scope per block. Until this provider existed that mechanism ran on Material's
- * default colours, i.e. `accent` at 40 % behind the text — a colour pi would never
- * have chosen for it. This is the missing half of that same decision.
- */
 private val PiPalette.textSelectionColors: TextSelectionColors
     get() = TextSelectionColors(handleColor = accent, backgroundColor = selectedBg)
 
@@ -672,51 +690,59 @@ private fun PiPalette.colorScheme(): androidx.compose.material3.ColorScheme {
 }
 
 /**
- * All 15 M3 Typography slots aligned to Pi's precise font metrics and `textScaleDelta` (−1/0/+1/+2 sp).
+ * All 15 M3 Typography slots aligned to Pi's active Studio UI font family, OpenType features,
+ * balanced heading/paragraph line breaks, precise font metrics, and `textScaleDelta` (−1/0/+1/+2 sp).
  */
-private fun piTypography(textScaleDelta: Int = 0): Typography {
-    fun TextStyle.shift(): TextStyle = copy(
+private fun piTypography(
+    textScaleDelta: Int = 0,
+    uiFontFamily: FontFamily = PiInterFamily,
+    uiFontFeatures: String? = PiFontFeatures.INTER_UI,
+): Typography {
+    fun TextStyle.shift(lineBreak: LineBreak = LineBreak.Simple): TextStyle = copy(
+        fontFamily = uiFontFamily,
         fontSize = (fontSize.value + textScaleDelta).coerceAtLeast(1f).sp,
         lineHeight = (lineHeight.value + textScaleDelta).coerceAtLeast(1f).sp,
+        fontFeatureSettings = uiFontFeatures,
+        lineBreak = lineBreak,
     ).piPrecise()
     val base = Typography()
     return base.copy(
         displayLarge = base.displayLarge.copy(
             fontSize = 36.sp, lineHeight = 44.sp, fontWeight = FontWeight.SemiBold,
-        ).shift(),
+        ).shift(LineBreak.Heading),
         displayMedium = base.displayMedium.copy(
             fontSize = 32.sp, lineHeight = 40.sp, fontWeight = FontWeight.SemiBold,
-        ).shift(),
+        ).shift(LineBreak.Heading),
         displaySmall = base.displaySmall.copy(
             fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Medium,
-        ).shift(),
+        ).shift(LineBreak.Heading),
         headlineLarge = base.headlineLarge.copy(
             fontSize = 26.sp, lineHeight = 34.sp, fontWeight = FontWeight.SemiBold,
-        ).shift(),
+        ).shift(LineBreak.Heading),
         headlineMedium = base.headlineMedium.copy(
             fontSize = 24.sp, lineHeight = 31.sp, fontWeight = FontWeight.SemiBold,
-        ).shift(),
+        ).shift(LineBreak.Heading),
         headlineSmall = base.headlineSmall.copy(
             fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold,
-        ).shift(),
+        ).shift(LineBreak.Heading),
         titleLarge = base.titleLarge.copy(
             fontSize = 19.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold,
-        ).shift(),
+        ).shift(LineBreak.Heading),
         titleMedium = base.titleMedium.copy(
             fontSize = 17.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold,
-        ).shift(),
+        ).shift(LineBreak.Heading),
         titleSmall = base.titleSmall.copy(
             fontSize = 15.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold,
-        ).shift(),
+        ).shift(LineBreak.Heading),
         bodyLarge = base.bodyLarge.copy(
             fontSize = 15.sp, lineHeight = 23.sp, fontWeight = FontWeight.Normal,
-        ).shift(),
+        ).shift(LineBreak.Paragraph),
         bodyMedium = base.bodyMedium.copy(
             fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Normal,
-        ).shift(),
+        ).shift(LineBreak.Paragraph),
         bodySmall = base.bodySmall.copy(
             fontSize = 13.sp, lineHeight = 19.sp, fontWeight = FontWeight.Normal,
-        ).shift(),
+        ).shift(LineBreak.Paragraph),
         labelLarge = base.labelLarge.copy(
             fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium,
         ).shift(),
@@ -741,23 +767,23 @@ private fun piShapes(): Shapes = Shapes(
 fun PiTheme(
     dark: Boolean = true,
     palette: PiPalette = if (dark) PiPalette.Dark else PiPalette.Light,
-    /**
-     * The resolved 排版 preset (`app.appearance.typography` / `.lineHeight` /
-     * `.fontSize`). It replaces the old bare `textScaleDelta`: the same offset now
-     * arrives inside the profile, together with the sizes, gaps, headings and radii
-     * the preset decides. `MainActivity` resolves it from `UiPrefs`.
-     */
     typographyProfile: PiTypographyProfile = PiTypographyProfile.Default,
     content: @Composable () -> Unit,
 ) {
-    // No `remember`: the profile is a value the caller already built and cached
-    // (`UiPrefs.typographyProfile`, built once in `readPrefs`), so its `styles` field
-    // costs a field read — the previous `remember(textScaleDelta)` was allocating a
-    // five-`TextStyle` `PiTextStyles` right here on every offset change.
     val styles = typographyProfile.styles
     val colorScheme = androidx.compose.runtime.remember(palette) { palette.colorScheme() }
-    val typography = androidx.compose.runtime.remember(typographyProfile.fontSizeOffsetSp) {
-        piTypography(typographyProfile.fontSizeOffsetSp)
+    val uiFontFamily = typographyProfile.uiFontFamily()
+    val uiFontFeatures = typographyProfile.uiFontFeatures()
+    val typography = androidx.compose.runtime.remember(
+        typographyProfile.fontSizeOffsetSp,
+        uiFontFamily,
+        uiFontFeatures,
+    ) {
+        piTypography(
+            textScaleDelta = typographyProfile.fontSizeOffsetSp,
+            uiFontFamily = uiFontFamily,
+            uiFontFeatures = uiFontFeatures,
+        )
     }
     val shapes = androidx.compose.runtime.remember { piShapes() }
     CompositionLocalProvider(

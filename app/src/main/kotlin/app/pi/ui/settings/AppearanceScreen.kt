@@ -9,6 +9,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -62,6 +64,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -71,7 +74,11 @@ import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.components.PiType
-import app.pi.ui.theme.PiMonoFamily
+import app.pi.ui.theme.PiFontFeatures
+import app.pi.ui.theme.PiGeistFamily
+import app.pi.ui.theme.PiGeistMonoFamily
+import app.pi.ui.theme.PiInterFamily
+import app.pi.ui.theme.PiJetBrainsMonoFamily
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiProseFamily
 import app.pi.ui.theme.PiSpacing
@@ -141,6 +148,8 @@ fun AppearanceScreen(
     }
 
     val proseFont = remember(store, freshness) { PiTypographyProfile.proseFontOf(readStr("app.appearance.proseFont", "sans")) }
+    val codeFont = remember(store, freshness) { PiTypographyProfile.codeFontOf(readStr("app.appearance.codeFont", "jetbrains")) }
+    val codeLigatures = remember(store, freshness) { readBool("app.appearance.codeLigatures", true) }
     val typography = remember(store, freshness) { PiTypographyProfile.presetOf(readStr("app.appearance.typography", "comfortable")) }
     val fontSize = remember(store, freshness) { PiTypographyProfile.fontSizeOf(readStr("app.appearance.fontSize", "normal")) }
     val lineHeight = remember(store, freshness) { PiTypographyProfile.lineHeightOf(readStr("app.appearance.lineHeight", "normal")) }
@@ -185,35 +194,31 @@ fun AppearanceScreen(
         fixedTheme
     }
 
+    val activeProfile = PiTheme.typography
+    val proseSz = activeProfile.styles.prose.fontSize.value.toInt()
+    val proseLh = activeProfile.styles.prose.lineHeight.value.toInt()
+    val lhRatioText = remember(proseSz, proseLh) {
+        String.format(java.util.Locale.US, "%.2f×", proseLh.toFloat() / proseSz.coerceAtLeast(1))
+    }
+    val thinkingDisplay = when {
+        hideThinking -> "hidden"
+        thinkingCollapsed -> "collapsed"
+        else -> "expanded"
+    }
+
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
             title = tr("外观", "Appearance"),
             onBack = onBack,
             scrolled = scrolled,
             actions = {
-                Surface(
+                app.pi.ui.components.PiSecondaryButton(
+                    label = tr("导入", "Import"),
+                    leadingIcon = Icons.Outlined.FileUpload,
+                    compact = true,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     onClick = { showImportSheet = true },
-                    shape = RoundedCornerShape(percent = 50),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        Icon(
-                            Icons.Outlined.FileUpload,
-                            contentDescription = null,
-                            modifier = Modifier.size(15.dp),
-                            tint = PiTheme.palette.accent,
-                        )
-                        Text(
-                            tr("导入", "Import"),
-                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                }
+                )
             },
         )
 
@@ -344,7 +349,7 @@ fun AppearanceScreen(
                             Column(Modifier.weight(1f)) {
                                 Text(
                                     tr("跟随系统浅/深色", "Follow System Light/Dark"),
-                                    style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                                    style = PiType.rowTitle,
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
                                 Text(
@@ -421,9 +426,80 @@ fun AppearanceScreen(
             // 3. Typography & Reading Section (All inline 1-tap selectors!)
             item(key = "typography") {
                 Column(verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupHeaderGap)) {
-                    AppearanceSectionHeader(tr("阅读与排版", "Reading & Typography"))
+                    AppearanceSectionHeader(tr("字体与排版", "Typography & Reading"))
                     PiSettingsCard {
-                        // Reading Font cards (styled in their own FontFamily)
+                        // 1. UI & Reading Font cards (each rendered in its authentic FontFamily)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                tr("界面与阅读字体", "UI & Reading Font"),
+                                style = PiType.rowTitle,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal),
+                            )
+                            val activeCodeFamily = if (codeFont == PiTypographyProfile.CODE_GEIST_MONO) {
+                                PiGeistMonoFamily
+                            } else {
+                                PiJetBrainsMonoFamily
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                FontChoiceTile(
+                                    sample = tr("Aa 精致", "Aa Clean"),
+                                    label = "Inter",
+                                    fontFamily = PiInterFamily,
+                                    fontFeatures = PiFontFeatures.INTER_UI,
+                                    selected = proseFont == PiTypographyProfile.FONT_SANS,
+                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_SANS) },
+                                    modifier = Modifier.width(96.dp),
+                                )
+                                FontChoiceTile(
+                                    sample = tr("Aa 几何", "Aa Sharp"),
+                                    label = "Geist",
+                                    fontFamily = PiGeistFamily,
+                                    selected = proseFont == PiTypographyProfile.FONT_GEIST,
+                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_GEIST) },
+                                    modifier = Modifier.width(96.dp),
+                                )
+                                FontChoiceTile(
+                                    sample = tr("Aa 宋体", "Aa Serif"),
+                                    label = tr("思源宋体", "Serif"),
+                                    fontFamily = PiProseFamily,
+                                    selected = proseFont == PiTypographyProfile.FONT_SERIF,
+                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_SERIF) },
+                                    modifier = Modifier.width(96.dp),
+                                )
+                                FontChoiceTile(
+                                    sample = "Aa Mono",
+                                    label = tr("等宽阅读", "Mono"),
+                                    fontFamily = activeCodeFamily,
+                                    selected = proseFont == PiTypographyProfile.FONT_MONO,
+                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_MONO) },
+                                    modifier = Modifier.width(96.dp),
+                                )
+                                FontChoiceTile(
+                                    sample = tr("Aa 系统", "Aa Native"),
+                                    label = tr("跟随系统", "System"),
+                                    fontFamily = FontFamily.Default,
+                                    selected = proseFont == PiTypographyProfile.FONT_SYSTEM,
+                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_SYSTEM) },
+                                    modifier = Modifier.width(96.dp),
+                                )
+                            }
+                        }
+
+                        PiSettingsHairline()
+
+                        // 2. Code & Terminal Font selector
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -434,36 +510,31 @@ fun AppearanceScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
-                                tr("阅读字体", "Reading Font"),
-                                style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                                tr("代码与终端字体", "Code & Terminal Font"),
+                                style = PiType.rowTitle,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
+                            val ligFeat = if (codeLigatures) PiFontFeatures.CODE_LIGATURES_ON else PiFontFeatures.CODE_LIGATURES_OFF
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 FontChoiceTile(
-                                    sample = tr("Aa 现代", "Aa Sans"),
-                                    label = tr("无衬线", "Sans"),
-                                    fontFamily = FontFamily.Default,
-                                    selected = proseFont == PiTypographyProfile.FONT_SANS,
-                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_SANS) },
+                                    sample = "a -> b != 0",
+                                    label = "JetBrains Mono",
+                                    fontFamily = PiJetBrainsMonoFamily,
+                                    fontFeatures = ligFeat,
+                                    selected = codeFont == PiTypographyProfile.CODE_JETBRAINS,
+                                    onClick = { writeStr("app.appearance.codeFont", PiTypographyProfile.CODE_JETBRAINS) },
                                     modifier = Modifier.weight(1f),
                                 )
                                 FontChoiceTile(
-                                    sample = tr("Aa 宋体", "Aa Serif"),
-                                    label = tr("思源宋体", "Serif"),
-                                    fontFamily = PiProseFamily,
-                                    selected = proseFont == PiTypographyProfile.FONT_SERIF,
-                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_SERIF) },
-                                    modifier = Modifier.weight(1f),
-                                )
-                                FontChoiceTile(
-                                    sample = "Aa Mono",
-                                    label = tr("等宽", "Mono"),
-                                    fontFamily = PiMonoFamily,
-                                    selected = proseFont == PiTypographyProfile.FONT_MONO,
-                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_MONO) },
+                                    sample = "a -> b != 0",
+                                    label = "Geist Mono",
+                                    fontFamily = PiGeistMonoFamily,
+                                    fontFeatures = ligFeat,
+                                    selected = codeFont == PiTypographyProfile.CODE_GEIST_MONO,
+                                    onClick = { writeStr("app.appearance.codeFont", PiTypographyProfile.CODE_GEIST_MONO) },
                                     modifier = Modifier.weight(1f),
                                 )
                             }
@@ -471,8 +542,18 @@ fun AppearanceScreen(
 
                         PiSettingsHairline()
 
+                        AppearanceSwitchRow(
+                            title = tr("代码连字", "Code Ligatures"),
+                            subtitle = tr("代码块启用 =>  !=  -> 连字，路径与 Diff 保持字面符号", "Render =>  !=  -> ligatures in code blocks; paths & diffs stay literal"),
+                            checked = codeLigatures,
+                            onCheckedChange = { writeBool("app.appearance.codeLigatures", it) },
+                        )
+
+                        PiSettingsHairline()
+
                         InlineSegmentRow(
-                            title = tr("排版密度", "Density"),
+                            title = tr("排版节奏", "Reading Rhythm"),
+                            subtitle = tr("段距 ${activeProfile.markdownBlock.value.toInt()}dp", "${activeProfile.markdownBlock.value.toInt()}dp gap"),
                             options = listOf(
                                 PiTypographyProfile.COMPACT to tr("紧凑", "Compact"),
                                 PiTypographyProfile.COMFORTABLE to tr("舒适", "Cozy"),
@@ -486,6 +567,7 @@ fun AppearanceScreen(
 
                         InlineSegmentRow(
                             title = tr("字号", "Font Size"),
+                            subtitle = "${proseSz}sp",
                             options = listOf(
                                 "small" to tr("小", "S"),
                                 "normal" to tr("标准", "M"),
@@ -500,6 +582,7 @@ fun AppearanceScreen(
 
                         InlineSegmentRow(
                             title = tr("行距", "Line Height"),
+                            subtitle = lhRatioText,
                             options = listOf(
                                 "tight" to tr("紧", "Tight"),
                                 "normal" to tr("标准", "Normal"),
@@ -517,6 +600,42 @@ fun AppearanceScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupHeaderGap)) {
                     AppearanceSectionHeader(tr("对话显示与渲染", "Chat Display & Rendering"))
                     PiSettingsCard {
+                        InlineSegmentRow(
+                            title = tr("思考过程", "Thinking Display"),
+                            subtitle = when (thinkingDisplay) {
+                                "hidden" -> tr("后台照常推理，仅隐藏卡片", "Runs silently, hidden")
+                                "expanded" -> tr("直接展开推理全文", "Always expanded")
+                                else -> tr("收起为单行摘要，点击展开", "Compact summary")
+                            },
+                            options = listOf(
+                                "expanded" to tr("展开", "Expanded"),
+                                "collapsed" to tr("折叠", "Collapsed"),
+                                "hidden" to tr("隐藏", "Hidden"),
+                            ),
+                            selected = thinkingDisplay,
+                            onSelect = { mode ->
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                when (mode) {
+                                    "hidden" -> {
+                                        store.write("hideThinkingBlock", JsonPrimitive(true))
+                                        onSettingWritten("hideThinkingBlock")
+                                    }
+                                    "expanded" -> {
+                                        store.write("hideThinkingBlock", JsonPrimitive(false))
+                                        store.write("app.appearance.thinkingCollapsedByDefault", JsonPrimitive(false))
+                                        onSettingWritten("hideThinkingBlock")
+                                        onSettingWritten("app.appearance.thinkingCollapsedByDefault")
+                                    }
+                                    else -> {
+                                        store.write("hideThinkingBlock", JsonPrimitive(false))
+                                        store.write("app.appearance.thinkingCollapsedByDefault", JsonPrimitive(true))
+                                        onSettingWritten("hideThinkingBlock")
+                                        onSettingWritten("app.appearance.thinkingCollapsedByDefault")
+                                    }
+                                }
+                            },
+                        )
+                        PiSettingsHairline()
                         AppearanceSwitchRow(
                             title = tr("显示时间戳", "Show Timestamps"),
                             subtitle = tr("消息旁显示时间，跨天插入日期分隔", "Show message times and day dividers"),
@@ -524,25 +643,10 @@ fun AppearanceScreen(
                             onCheckedChange = { writeBool("app.appearance.showTimestamps", it) },
                         )
                         PiSettingsHairline()
-                        AppearanceSwitchRow(
-                            title = tr("思考块默认折叠", "Collapse Thinking by Default"),
-                            subtitle = tr("收起为单行摘要，点击随时展开", "Show compact summary line; tap to expand"),
-                            checked = thinkingCollapsed,
-                            enabled = !hideThinking,
-                            onCheckedChange = { writeBool("app.appearance.thinkingCollapsedByDefault", it) },
-                        )
-                        PiSettingsHairline()
-                        AppearanceSwitchRow(
-                            title = tr("隐藏思考块", "Hide Thinking Blocks"),
-                            subtitle = tr("思考照常运行，仅不在对话流中展示", "Reasoning still runs, hidden from transcript"),
-                            checked = hideThinking,
-                            onCheckedChange = { writeBool("hideThinkingBlock", it) },
-                        )
-                        PiSettingsHairline()
                         InlineSegmentRow(
                             title = tr("Mermaid 图表渲染", "Mermaid Diagrams"),
                             options = listOf(
-                                "streaming" to tr("流式实时", "Streaming"),
+                                "streaming" to tr("实时", "Streaming"),
                                 "final" to tr("完成后", "Final"),
                                 "off" to tr("关闭", "Off"),
                             ),
@@ -680,8 +784,14 @@ private fun LiveAppearancePreviewCard(
 ) {
     val palette = PiTheme.palette
     val profile = PiTheme.typography
-    val proseStyle = profile.styles.prose.copy(fontFamily = profile.proseFontFamily())
-    val codeStyle = profile.styles.code
+    val proseStyle = profile.styles.prose.copy(
+        fontFamily = profile.proseFontFamily(),
+        fontFeatureSettings = profile.proseFontFeatures(),
+    )
+    val codeStyle = profile.styles.code.copy(
+        fontFamily = profile.codeFontFamily(),
+        fontFeatureSettings = profile.codeFontFeatures(allowLigatures = true),
+    )
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -695,13 +805,22 @@ private fun LiveAppearancePreviewCard(
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(profile.blockSpacing.coerceAtMost(12.dp)),
         ) {
-            // Header badges: active theme + resolved prose metrics
+            // Header badges: active theme + active font pair & resolved prose metrics
+            val proseFontTag = when (profile.proseFont) {
+                PiTypographyProfile.FONT_GEIST -> "Geist"
+                PiTypographyProfile.FONT_SERIF -> tr("宋体", "Serif")
+                PiTypographyProfile.FONT_MONO -> "Mono"
+                PiTypographyProfile.FONT_SYSTEM -> tr("系统", "Sys")
+                else -> "Inter"
+            }
+            val codeFontTag = if (profile.codeFont == PiTypographyProfile.CODE_GEIST_MONO) "Geist Mono" else "JB Mono"
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(
+                    modifier = Modifier.weight(1f, fill = false),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -715,12 +834,17 @@ private fun LiveAppearancePreviewCard(
                         activeThemeName,
                         style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
                         color = palette.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    "${proseStyle.fontSize.value.toInt()}sp / ${proseStyle.lineHeight.value.toInt()}sp",
+                    "$proseFontTag · $codeFontTag · ${proseStyle.fontSize.value.toInt()}/${proseStyle.lineHeight.value.toInt()}",
                     style = PiTheme.text.monoSmall,
                     color = palette.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
 
@@ -787,20 +911,30 @@ private fun LiveAppearancePreviewCard(
                 }
             }
 
-            // Assistant prose + inline code
+            // Assistant prose + inline code + bold/italic specimen
             val sampleProse = buildAnnotatedString {
-                append(tr("已对齐官方 ", "Aligned with official "))
+                append(tr("已对齐官方 ", "Aligned with "))
                 withStyle(
                     SpanStyle(
-                        fontFamily = PiMonoFamily,
+                        fontFamily = profile.codeFontFamily(),
                         fontSize = profile.inlineCodeSizeSp.sp,
+                        fontWeight = profile.inlineCodeWeight,
                         color = palette.mdCode,
-                        background = palette.borderMuted.copy(alpha = 0.38f),
+                        background = palette.borderMuted.copy(alpha = 0.34f),
+                        fontFeatureSettings = profile.codeFontFeatures(allowLigatures = false),
                     ),
                 ) {
-                    append(" Pi 1.6.0 ")
+                    append("\u2009Pi 1.6.0\u2009")
                 }
-                append(tr(" 主题规范，支持实时预览与无损导入。", " themes with live preview and clean import."))
+                append(tr(" 规范，", " themes with "))
+                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                    append(tr("多字重", "crisp weights"))
+                }
+                append(tr(" 与 ", " & "))
+                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                    append("true italic")
+                }
+                append(tr(" 即改即见。", " live preview."))
             }
             Text(
                 text = sampleProse,
@@ -808,7 +942,7 @@ private fun LiveAppearancePreviewCard(
                 color = palette.text,
             )
 
-            // Mini syntax-highlighted code snippet
+            // Mini syntax-highlighted code snippet (demonstrates italic comment, Medium keyword, & ligatures)
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(10.dp),
@@ -816,19 +950,23 @@ private fun LiveAppearancePreviewCard(
                 border = BorderStroke(PiSpacing.hairlineThin, palette.mdCodeBlockBorder.copy(alpha = 0.5f)),
             ) {
                 val codeSample = buildAnnotatedString {
-                    withStyle(SpanStyle(color = palette.syntaxKeyword)) { append("val ") }
-                    withStyle(SpanStyle(color = palette.syntaxVariable)) { append("theme") }
+                    withStyle(SpanStyle(color = palette.syntaxComment, fontStyle = FontStyle.Italic)) {
+                        append("// Studio typography & ligatures\n")
+                    }
+                    withStyle(SpanStyle(color = palette.syntaxKeyword, fontWeight = FontWeight.Medium)) { append("val ") }
+                    withStyle(SpanStyle(color = palette.syntaxVariable)) { append("ok") }
                     withStyle(SpanStyle(color = palette.syntaxOperator)) { append(" = ") }
-                    withStyle(SpanStyle(color = palette.syntaxFunction)) { append("loadTheme") }
+                    withStyle(SpanStyle(color = palette.syntaxFunction)) { append("load") }
                     withStyle(SpanStyle(color = palette.syntaxPunctuation)) { append("(") }
                     withStyle(SpanStyle(color = palette.syntaxString)) { append("\"$activeThemeName\"") }
-                    withStyle(SpanStyle(color = palette.syntaxPunctuation)) { append(")") }
+                    withStyle(SpanStyle(color = palette.syntaxPunctuation)) { append(") ") }
+                    withStyle(SpanStyle(color = palette.syntaxOperator)) { append("!= null -> true") }
                 }
                 Text(
                     text = codeSample,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                     style = codeStyle,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -955,23 +1093,23 @@ private fun ThemeGalleryCard(
                 if (onDelete != null) {
                     Box(
                         modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .size(38.dp)
+                            .align(Alignment.TopEnd)
+                            .size(34.dp)
                             .clip(CircleShape)
                             .clickable(onClickLabel = tr("删除主题", "Delete theme"), onClick = onDelete),
                         contentAlignment = Alignment.Center,
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(24.dp)
+                                .size(22.dp)
                                 .clip(CircleShape)
-                                .background(p.cardBg.copy(alpha = 0.88f)),
+                                .background(p.cardBg.copy(alpha = 0.90f)),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
                                 Icons.Outlined.DeleteOutline,
                                 contentDescription = tr("删除主题", "Delete theme"),
-                                modifier = Modifier.size(14.dp),
+                                modifier = Modifier.size(13.dp),
                                 tint = p.error,
                             )
                         }
@@ -1120,7 +1258,7 @@ private fun SystemPaletteQuickRow(
             Column(Modifier.weight(1f)) {
                 Text(
                     tr("system 主题底色", "System Theme Base"),
-                    style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                    style = PiType.rowTitle,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
@@ -1131,29 +1269,14 @@ private fun SystemPaletteQuickRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Surface(
+            Spacer(Modifier.width(8.dp))
+            app.pi.ui.components.PiSecondaryButton(
+                label = tr("调色", "Tune"),
+                leadingIcon = Icons.Outlined.Tune,
+                compact = true,
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
                 onClick = onOpenCustom,
-                shape = RoundedCornerShape(percent = 50),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Icon(
-                        Icons.Outlined.Tune,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                        tint = PiTheme.palette.accent,
-                    )
-                    Text(
-                        tr("调色", "Tune"),
-                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-            }
+            )
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1198,6 +1321,7 @@ private fun FontChoiceTile(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    fontFeatures: String? = null,
 ) {
     val bg = if (selected) PiTheme.palette.selectedBg else MaterialTheme.colorScheme.surfaceContainer
     val border = if (selected) PiTheme.palette.accent else MaterialTheme.colorScheme.outlineVariant
@@ -1222,15 +1346,18 @@ private fun FontChoiceTile(
                     fontSize = 15.sp,
                     lineHeight = 20.sp,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    fontFeatureSettings = fontFeatures,
                 ),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = label,
                 style = PiTheme.text.meta,
                 color = if (selected) PiTheme.palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -1245,6 +1372,11 @@ private fun InlineSegmentRow(
     subtitle: String? = null,
     enabled: Boolean = true,
 ) {
+    val isDark = PiTheme.isDark
+    val trackBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceContainer
+    val activeBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerHighest else Color.White
+    val trackBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f)
+    val activeBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.75f else 0.90f)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1262,21 +1394,28 @@ private fun InlineSegmentRow(
         ) {
             Text(
                 text = title,
-                style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                style = PiType.rowTitle,
                 color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f, fill = false),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             if (subtitle != null) {
+                Spacer(Modifier.width(8.dp))
                 Text(
                     text = subtitle,
-                    style = PiTheme.text.meta,
+                    style = PiTheme.text.monoSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer,
+            color = trackBg,
+            border = BorderStroke(PiSpacing.hairlineThin, trackBorder),
         ) {
             Row(
                 modifier = Modifier
@@ -1289,12 +1428,12 @@ private fun InlineSegmentRow(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (active) MaterialTheme.colorScheme.surfaceContainerHighest else Color.Transparent)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(if (active) activeBg else Color.Transparent)
                             .border(
                                 width = if (active) PiSpacing.hairlineThin else 0.dp,
-                                color = if (active) PiTheme.palette.accent.copy(alpha = 0.55f) else Color.Transparent,
-                                shape = RoundedCornerShape(8.dp),
+                                color = if (active) activeBorder else Color.Transparent,
+                                shape = RoundedCornerShape(7.dp),
                             )
                             .clickable(enabled = enabled) { onSelect(wire) }
                             .padding(vertical = 8.dp, horizontal = 4.dp),
@@ -1338,7 +1477,7 @@ private fun AppearanceSwitchRow(
         Column(Modifier.weight(1f)) {
             Text(
                 text = title,
-                style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                style = PiType.rowTitle,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
@@ -1407,9 +1546,12 @@ private fun ThemeImportSheet(
     }
 
     app.pi.ui.components.PiSheet(onDismiss = onDismiss) {
+        val sheetCardBg = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg
+        val sheetPalette = PiTheme.palette
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .padding(
                     start = PiSettingsMetrics.pageHorizontal,
                     end = PiSettingsMetrics.pageHorizontal,
@@ -1435,29 +1577,19 @@ private fun ThemeImportSheet(
             }
 
             // Quick actions: Pick file / Paste clipboard
-            val actionShape = RoundedCornerShape(9.dp)
-            val sheetPalette = PiTheme.palette
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Surface(
+                app.pi.ui.components.PiSecondaryButton(
+                    label = tr("选择 .json 文件", "Pick .json"),
+                    leadingIcon = Icons.Outlined.FolderOpen,
                     onClick = { openDoc.launch(arrayOf("application/json", "text/plain", "*/*")) },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    shape = actionShape,
-                    color = sheetPalette.cardBg,
-                    border = BorderStroke(PiSpacing.hairlineThin, sheetPalette.borderMuted),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-                    ) {
-                        Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = sheetPalette.accent, modifier = Modifier.size(16.dp))
-                        Text(tr("选择 .json 文件", "Pick .json"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = sheetPalette.text)
-                    }
-                }
-                Surface(
+                    modifier = Modifier.weight(1f),
+                )
+                app.pi.ui.components.PiSecondaryButton(
+                    label = tr("粘贴剪贴板", "Paste"),
+                    leadingIcon = Icons.Outlined.ContentPaste,
                     onClick = {
                         val cm = context.getSystemService(ClipboardManager::class.java)
                         val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
@@ -1468,20 +1600,8 @@ private fun ThemeImportSheet(
                             importError = tr("剪贴板为空", "Clipboard is empty")
                         }
                     },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    shape = actionShape,
-                    color = sheetPalette.cardBg,
-                    border = BorderStroke(PiSpacing.hairlineThin, sheetPalette.borderMuted),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-                    ) {
-                        Icon(Icons.Outlined.ContentPaste, contentDescription = null, tint = sheetPalette.accent, modifier = Modifier.size(16.dp))
-                        Text(tr("粘贴剪贴板", "Paste"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = sheetPalette.text)
-                    }
-                }
+                    modifier = Modifier.weight(1f),
+                )
             }
 
             // Live color swatch preview when JSON is valid
@@ -1536,7 +1656,7 @@ private fun ThemeImportSheet(
                 label = tr("主题名称（可选，默认读取 JSON 中的 name）", "Theme name (optional; defaults to JSON name)"),
                 placeholder = preview?.name ?: "my-theme",
                 height = PiNumberFieldHeight,
-                container = sheetPalette.cardBg,
+                container = sheetCardBg,
                 idleBorder = sheetPalette.borderMuted,
             )
 
@@ -1550,7 +1670,7 @@ private fun ThemeImportSheet(
                 minHeight = 148.dp,
                 maxLines = 10,
                 contentPadding = PiFieldPaddingBlock,
-                container = sheetPalette.cardBg,
+                container = sheetCardBg,
                 idleBorder = sheetPalette.borderMuted,
             )
 
@@ -1563,26 +1683,15 @@ private fun ThemeImportSheet(
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Surface(
+            val canImport = preview != null && !importing
+            app.pi.ui.components.PiSheetActionBar {
+                app.pi.ui.components.PiSecondaryButton(
+                    label = tr("取消", "Cancel"),
                     onClick = onDismiss,
-                    modifier = Modifier.height(42.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    color = sheetPalette.cardBg,
-                    border = BorderStroke(PiSpacing.hairlineThin, sheetPalette.borderMuted),
-                ) {
-                    Box(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(tr("取消", "Cancel"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = sheetPalette.text)
-                    }
-                }
-                val canImport = preview != null && !importing
-                Surface(
+                )
+                app.pi.ui.components.PiPrimaryButton(
+                    label = tr("导入并应用", "Import & Apply"),
+                    enabled = canImport,
                     onClick = {
                         importing = true
                         importError = null
@@ -1604,20 +1713,8 @@ private fun ThemeImportSheet(
                             }
                         }
                     },
-                    enabled = canImport,
-                    modifier = Modifier.weight(1f).height(42.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (canImport) sheetPalette.accent else sheetPalette.cardBg,
-                    border = if (canImport) null else BorderStroke(PiSpacing.hairlineThin, sheetPalette.borderMuted),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            tr("导入并应用", "Import & Apply"),
-                            style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
-                            color = if (canImport) sheetPalette.contrastOn(sheetPalette.accent) else sheetPalette.muted,
-                        )
-                    }
-                }
+                    modifier = Modifier.weight(1f),
+                )
             }
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
         }
