@@ -226,15 +226,15 @@ internal fun ChatTopBar(
                         )
                     }
                 }
-                if (wideScreen) {
-                    PiTopBarIcon(
-                        onClick = {
-                            hideIme()
-                            onOpenWorkspace()
-                        },
-                        contentDescription = tr("项目与文件", "Project & Files"),
-                        icon = Icons.Filled.FolderOpen,
-                    )
+                PiTopBarIcon(
+                    onClick = {
+                        hideIme()
+                        onOpenWorkspace()
+                    },
+                    contentDescription = tr("项目与文件", "Project & Files"),
+                    icon = Icons.Filled.FolderOpen,
+                )
+                if (wideScreen || searchOpen) {
                     PiTopBarIcon(
                         onClick = { onToggleSearch(false) },
                         contentDescription = if (searchOpen) tr("关闭对话内查找", "Close search") else tr("在对话里查找", "Search in chat"),
