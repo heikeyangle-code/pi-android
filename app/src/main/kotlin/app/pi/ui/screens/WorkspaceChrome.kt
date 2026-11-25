@@ -664,10 +664,10 @@ internal val WsBinaryFileGlyph: ImageVector = ImageVector.Builder(
     fill = SolidColor(Color.Black),
 ).build()
 
-/** 一张卡（稿子的 `Card`）：`surf-low` 底、圆角 10、左右 14 的页边。 */
-@Composable
 internal val LocalInsideWsSheet = compositionLocalOf { false }
 
+/** 一张卡（稿子的 `Card`）：`surf-low` 底、圆角 10、左右 14 的页边。 */
+@Composable
 internal fun WsCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val bg = if (LocalInsideWsSheet.current) {
         PiSheetChromeMetrics.sheetCardBg
@@ -779,7 +779,7 @@ internal fun WsSheet(
                     Text(
                         text = title,
                         modifier = Modifier.weight(1f),
-                        style = PiType.sheetTitle,
+                        style = PiType.title,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,

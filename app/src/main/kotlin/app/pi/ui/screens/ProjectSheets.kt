@@ -1019,7 +1019,7 @@ internal fun WorkspaceLocationSheet(
             ) {
                 Text(
                     text = tr("当前路径", "CURRENT PATH"),
-                    style = PiType.sectionHeader,
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                     color = palette.muted,
                 )
                 Text(

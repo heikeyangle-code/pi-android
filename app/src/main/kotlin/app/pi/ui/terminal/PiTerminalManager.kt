@@ -370,7 +370,7 @@ object PiTerminalManager {
         return clean
     }
 
-    private val USER_HOST_PREFIX = Regex("^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:\s*")
+    private val USER_HOST_PREFIX = Regex("""^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:\s*""")
 
     private class TabSessionClient(
         private val app: Context,

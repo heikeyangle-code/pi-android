@@ -926,7 +926,7 @@ internal fun WorkspaceInlineSearchSortBar(
     ) {
         Text(
             text = tr("文件", "Files"),
-            style = PiType.sectionHeader,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
             color = palette.muted,
             maxLines = 1,
         )
@@ -1254,11 +1254,6 @@ private fun PathBarIconButton(
             contentDescription = description,
             modifier = Modifier.size(16.dp),
             tint = if (accent) palette.accent else palette.muted,
-        )
-    }
-}
-
-te.accent else palette.muted,
         )
     }
 }

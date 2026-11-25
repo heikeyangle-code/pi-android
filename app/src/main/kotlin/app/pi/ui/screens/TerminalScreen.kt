@@ -369,7 +369,7 @@ private fun TerminalTabHeader(
             PiDialogBody(
                 tr(
                     "「${target.title}」中的 Shell 进程仍在运行，关闭标签将结束该进程。",
-                    "The shell process in "${target.title}" is still running. Closing this tab will terminate it.",
+                    "The shell process in \"${target.title}\" is still running. Closing this tab will terminate it.",
                 ),
             )
             PiDialogActions {

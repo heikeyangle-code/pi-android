@@ -258,6 +258,8 @@ fun ProjectScreen(
         crumbs = guestPath.trim('/').split('/').filter { it.isNotEmpty() }
     }
 
+    var externalPicker by remember { mutableStateOf(false) }
+
     fun jumpToPhoneStorage(hostPath: String) {
         if (storageAccessGranted(context)) {
             browsingHostFs = true
@@ -403,8 +405,6 @@ fun ProjectScreen(
     var workspaceDelete by remember { mutableStateOf<WorkspaceStore.Preview.Ok?>(null) }
     /** 这一轮回合正跑着、用户选了别的工作区时，先问一次的那一格。 */
     var workspaceInterrupt by remember { mutableStateOf<WorkspaceStore.Entry?>(null) }
-    /** 「从设备目录选择」那一层（权限说明 + 真目录浏览器）。 */
-    var externalPicker by remember { mutableStateOf(false) }
 
     fun say(text: String, tone: StateTone = StateTone.Muted) {
         snack = WorkspaceSnack(text, tone)
