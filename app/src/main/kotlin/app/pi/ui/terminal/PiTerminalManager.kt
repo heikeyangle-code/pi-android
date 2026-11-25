@@ -344,6 +344,34 @@ object PiTerminalManager {
         return if (leaf.isBlank()) "bash" else "bash · $leaf"
     }
 
+    /**
+     * Strips noisy `user@host:` OSC title prefixes (e.g. `root@localhost: /root/projects/demo`)
+     * and shortens home/long paths so narrow tab pills never clip to `root@localho…`.
+     */
+    internal fun formatTabTitle(raw: String, fallback: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return fallback
+        val stripped = USER_HOST_PREFIX.replaceFirst(trimmed, "").trim()
+        val candidate = stripped.ifEmpty { trimmed }
+        val shortened = if (candidate.startsWith("/")) {
+            app.pi.runtime.GuestWorkspacePath.shortenForDisplay(candidate)
+        } else {
+            candidate
+        }
+        val clean = shortened.trimEnd('/').ifEmpty { "/" }
+        if (clean.length <= 20) return clean
+        val segments = clean.split('/').filter { it.isNotEmpty() }
+        if (segments.size >= 2) {
+            val leaf = segments.last()
+            val parent = segments[segments.lastIndex - 1]
+            val compact = if (clean.startsWith("~/") && segments.size == 2) "~/$leaf" else "$parent/$leaf"
+            return if (compact.length <= 22) compact else leaf
+        }
+        return clean
+    }
+
+    private val USER_HOST_PREFIX = Regex("^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:\s*")
+
     private class TabSessionClient(
         private val app: Context,
         private val tabId: Int,
@@ -361,7 +389,8 @@ object PiTerminalManager {
             val raw = changedSession.title?.trim().orEmpty()
             if (raw.isNotEmpty()) {
                 mainHandler.post {
-                    tabOrNull()?.title = raw
+                    val tab = tabOrNull() ?: return@post
+                    tab.title = formatTabTitle(raw, tab.title)
                 }
             }
         }

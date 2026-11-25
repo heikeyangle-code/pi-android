@@ -1,41 +1,25 @@
 package app.pi.ui.screens
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,46 +34,29 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.vector.PathParser
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import app.pi.i18n.tr
-import app.pi.ui.components.PiSheetChromeFrame
+import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiSheetChromeMetrics
-import app.pi.ui.components.PiSheetHandle
 import app.pi.ui.components.PiType
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiShapes
@@ -97,8 +64,6 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateTone
 import app.pi.ui.theme.stateToneColor
-import kotlin.math.roundToInt
-import kotlinx.coroutines.launch
 
 /**
  * 工作区这一屏自己的 v2 构件。
@@ -701,13 +666,20 @@ internal val WsBinaryFileGlyph: ImageVector = ImageVector.Builder(
 
 /** 一张卡（稿子的 `Card`）：`surf-low` 底、圆角 10、左右 14 的页边。 */
 @Composable
+internal val LocalInsideWsSheet = compositionLocalOf { false }
+
 internal fun WsCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val bg = if (LocalInsideWsSheet.current) {
+        PiSheetChromeMetrics.sheetCardBg
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerLow
+    }
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = PiSettingsMetrics.pageHorizontal),
         shape = RoundedCornerShape(WsShape.medium),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = bg,
     ) {
         Column { content() }
     }
@@ -760,47 +732,10 @@ internal fun WsCardSlice(
 // ------------------------------------------------------------------ Sheet ----
 
 /**
- * 这一屏自绘的底部 sheet（稿子的 `Sheet`，`workspace-final.html:514-532`）。
- *
- * ## 为什么不是 M3 的 `ModalBottomSheet`
- *
- * 本屏原来三处底部面板都是 `ModalBottomSheet`。它白送三件事（下滑关闭、点 scrim
- * 关闭、返回键关闭），但也自带一副改不掉的壳：它自己的抓手与顶距、28 的圆角、
- * 正文槽的留白，而且**标题行里没有那个 ✕** —— 稿子的 sheet 有。这一屏要的是
- * `.b-sheet` 的那套几何（上圆角 16、`surf-high`、抓手 `32×3`、头 `12px 14px 8px`，
- * 以及 ✕ 与页脚槽），所以壳改自绘；白送的三件事在这里补回来：
- *
- *  - **下滑关闭**：抓手与标题行那一带由 [draggable] 拖（内容区自己滚动时不会被抢），
- *    内容区拉到顶以后的余量由 [nestedScroll] 交给 sheet —— 松手过 [WsSheetDismiss]
- *    或甩得够快就关，否则弹回；
- *  - **点 scrim 关闭**：scrim 是整屏一层 `rgba(0,0,0,.32)`，自己吃掉点击；
- *  - **返回键关闭**：这一层是 `Dialog` 窗口，`dismissOnBackPress` 把按键交给
- *    `onDismissRequest`（见下面那段注释）—— 与旧的 `ModalBottomSheet` 同一条路径，
- *    所以这一屏**仍然没有**自己的 `BackHandler`。
- *
- * ## 外观来自共用件，行为仍在这一屏
- *
- * 底色、顶部圆角、遮罩、把手、头部与页脚的间距都来自 `ui/components/PiSheetChrome.kt`
- * （`PiSheetChromeMetrics` / `PiSheetHandle` / `PiSheetChromeFrame`），与 M3 那套弹层
- * （`PiSheet`）读同一份常量 —— 这样两个壳并排打开时「看起来是同一个东西」不靠人记。
- * 留在本文件的只有行为：`Dialog` 这一层、80% 的高度上限、fade/rise 入场、拖拽与
- * nestedScroll，一行都没动。把它们也搬进共用件，等于把两套壳本来**应当**不同的部分
- * 耦合起来。
- *
- * **稿子那条 1px 上沿描边这一版去掉了。** 理由：M3 那套弹层（聊天六个、设置三处）
- * 从来没有这条线，弹层的底是 `surfaceContainerHigh`，与页面的分界已经由遮罩压暗 +
- * 两个上圆角给出，多一条亮线只会让自绘面板比别的弹层多一个框，并排打开时最扎眼。
- * 「一致」只能一起加或一起不加，而一起加等于改掉九个已经稳定的 M3 弹层 —— 不成比例，
- * 所以统一为都没有。完整理由与仍保留的 `topEdge` 逃生口写在 `PiSheetChromeFrame` 的
- * KDoc 里。
- *
- * @param subtitle 副标题：12 muted，`margin-top:4`（稿子 `Sheet` 的 `p.sub`）。
- * @param subtitleMono 副标题是路径这类机器输出时用等宽（稿子菜单面板的 `p.sub`
- *   就是一个 `span.mono`）。
- * @param trailing 标题右侧的可选槽位（稿子 `p.right`）；这一屏目前没有面板用它。
- * @param footer 可选页脚：`10px 14px 14px`（稿子 `p.footer`），上方那条 1px 分隔线仍在
- *   —— 它是正文与页脚之间的线，不是面板的上沿，两套壳里只有这一套有页脚槽。
- * @param maxBodyHeight 内容区上限，稿子默认 420（切换工作区那一处传 520）。
+ * Unified Studio bottom sheet wrapper for workspace flows — delegates directly to [PiSheet]
+ * with a consistent header (title, optional mono/meta subtitle, optional trailing CTA,
+ * tonal close circle), scrollable body with automatic [LocalInsideWsSheet] card polarity,
+ * optional footer note, and `imePadding()` + `navigationBarsPadding()`.
  */
 @Composable
 internal fun WsSheet(
@@ -815,333 +750,111 @@ internal fun WsSheet(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val palette = PiTheme.palette
-    // 形状、底色、遮罩都不在这里定义：它们在 `ui/components/PiSheetChrome.kt` 里，与 M3
-    // 那套弹层（`PiSheet`）读同一份常量。这一层只留行为。
-    // 关闭回调每次重组都是新的一份 lambda，而下面两个 `remember` 只建一次 —— 用
-    // `rememberUpdatedState` 收住它，免得手势一直拿着第一次那一份。
-    val close = rememberUpdatedState(onClose)
-    val scope = rememberCoroutineScope()
-    var dragOffset by remember { mutableFloatStateOf(0f) }
-    var dragging by remember { mutableStateOf(false) }
-    val dismissAt = with(LocalDensity.current) { WsSheetDismiss.toPx() }
-
-    // 入场：稿子 `.b-sheetwrap{animation:bFade .13s ease both}`（整层，scrim 与面板）+
-    // `.b-sheet{animation:bRise .16s cubic-bezier(.2,.7,.3,1) both}`（面板自己：淡入 +
-    // `translateY(14px)`）。**只做入场** —— 稿子没写退场，关掉就直接消失。
-    //
-    // 两条动画都只是「当前值」：透明度进 `graphicsLayer`、位移与拖动量相加进 `offset`，
-    // 不动布局、不动命中区、不碰 Dialog 的窗口，所以返回键 / 点 scrim / 拖动都不受影响
-    // （拖动中途动画还在跑也只是两个偏移相加，没有状态机）；首帧的面板已经在最终布局上
-    // （只是透明），系统把动画时长缩成 0 时它一上来就落在终点，不会「面板不出来」。
-    val fade = remember { Animatable(0f) }
-    val rise = remember { Animatable(0f) }
-    LaunchedEffect(Unit) {
-        launch { fade.animateTo(1f, tween(WsSheetFadeMillis, easing = WsSheetFadeEasing)) }
-        launch { rise.animateTo(1f, tween(WsSheetRiseMillis, easing = WsSheetRiseEasing)) }
-    }
-    val riseDistance = with(LocalDensity.current) { WsSheetRiseDistance.toPx() }
-
-    /** 手一松：够远了（或甩得够快）就关；只是拉下来一点就弹回原位。 */
-    fun release(velocity: Float) {
-        if (!dragging) return
-        dragging = false
-        if (dragOffset > dismissAt || velocity > WsSheetFlingVelocity) {
-            close.value()
-        } else if (dragOffset > 0f) {
-            scope.launch {
-                animate(
-                    initialValue = dragOffset,
-                    targetValue = 0f,
-                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                ) { value, _ -> dragOffset = value }
-            }
-        }
-    }
-
-    // 内容区自己滚不动之后的余量：往下拉到顶时余量变成 sheet 的下滑（`ModalBottomSheet`
-    // 里这是白送的），往上推时先把已经拉下来的 sheet 收回原位。
-    val nested = remember {
-        object : NestedScrollConnection {
-            // 手指往上推（available.y < 0）：先把已经拉下来的面板收回原位，再轮到列表滚。
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (dragOffset <= 0f || available.y >= 0f) return Offset.Zero
-                val taken = minOf(dragOffset, -available.y)
-                dragOffset -= taken
-                return Offset(0f, -taken)
-            }
-
-            // 手指往下拉（available.y > 0）而列表已在顶、没消费完的余量：变成面板的下滑。
-            // 往上推到底的余量（< 0）什么也不做 —— 以前这里符号反了：列表一滑到底，
-            // 余量就把整个面板往下拉，松手即关闭（「往上一滑到底界面就退出」）。
-            override fun onPostScroll(
-                consumed: Offset,
-                available: Offset,
-                source: NestedScrollSource,
-            ): Offset {
-                if (available.y <= 0f) return Offset.Zero
-                dragging = true
-                dragOffset += available.y
-                return Offset(0f, available.y)
-            }
-        }
-    }
-
-    val drag = rememberDraggableState { delta ->
-        dragging = true
-        dragOffset = (dragOffset + delta).coerceAtLeast(0f)
-    }
-
-    // 这一层是**窗口**，不是屏内的一个 Box。理由有两条，缺一条都会回到 M3 那副壳：
-    //
-    //  1. 稿子的 `.b-sheetwrap` 是 `position:absolute; inset:0; z-index:8` —— 连手机屏
-    //     底部那条 tab bar 一起盖住。而 `Scaffold` 的底栏是**画在 body 之上**的（M3 的
-    //     `ScaffoldLayout` 先 place body、再 place bottomBar，这正是 `PiRoot` 里
-    //     `ExtensionUiHost` 得把提示条抬到底栏之上那条注释的原因）；画在 body 里的浮层
-    //     会被底栏压掉一截，面板最下面那一行与页脚就露不全。
-    //  2. 返回键。Compose 的 `Dialog` 是独立窗口，`dismissOnBackPress` 直接把按键交给
-    //     `onDismissRequest` —— 与旧的 `ModalBottomSheet` 同一条路径，也和
-    //     `ui/blocks/PiImageViewer.kt` 记下的全应用惯例一致（浮层用窗口，屏里不再出现
-    //     第二个 `BackHandler`，全应用只有 `PiRoot` 那一处）。
-    Dialog(
-        onDismissRequest = { close.value() },
-        properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-            usePlatformDefaultWidth = false,
-            // 和旧的 `ModalBottomSheet` 一样铺满整屏（含系统栏那一带），面板才能贴到屏底。
-            decorFitsSystemWindows = false,
-        ),
+    PiSheet(
+        onDismiss = onClose,
+        modifier = modifier,
     ) {
-        ClearSheetPlatformDim()
-
-        BoxWithConstraints(modifier.fillMaxSize()) {
-            val panelCap = maxHeight * WsSheetMaxHeight
-
-            // scrim：整屏、共用件里那层 `0x52`（≈ 0.32）的黑、点它关闭（不给自己加 ripple）。
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    // 整层淡入 .13s（`.b-sheetwrap` 的 `bFade`）——缩放在图层上，命中区
-                    // 不受影响：scrim 从第一帧起就能点。
-                    .graphicsLayer { alpha = fade.value }
-                    .background(PiSheetChromeMetrics.scrim)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { close.value() },
-                    ),
-            )
-
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding(),
+        ) {
+            // Header
             Column(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .heightIn(max = panelCap)
-                    .offset {
-                        IntOffset(
-                            0,
-                            dragOffset.roundToInt() +
-                                ((1f - rise.value) * riseDistance).roundToInt(),
+                    .padding(
+                        start = PiSheetChromeMetrics.headHorizontal,
+                        end = PiSheetChromeMetrics.headHorizontal,
+                        top = 2.dp,
+                        bottom = PiSheetChromeMetrics.headBottom,
+                    ),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(WsSheetHeadGap),
+                ) {
+                    Text(
+                        text = title,
+                        modifier = Modifier.weight(1f),
+                        style = PiType.sheetTitle,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    trailing?.invoke()
+                    Box(
+                        modifier = Modifier
+                            .size(WsSheetCloseSize)
+                            .clip(CircleShape)
+                            .background(PiSheetChromeMetrics.sheetControlBg)
+                            .clickable(onClick = onClose),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = tr("关闭", "Close"),
+                            modifier = Modifier.size(WsSheetCloseIconSize),
+                            tint = palette.muted,
                         )
                     }
-                    // 面板自己的淡入（`bRise` 的 `opacity:0`）叠在整层那次淡入上：CSS 里
-                    // 两层 `opacity` 是相乘的，这里照乘。
-                    .graphicsLayer { alpha = fade.value * rise.value }
-                    .draggable(
-                        state = drag,
-                        orientation = Orientation.Vertical,
-                        onDragStopped = { velocity -> release(velocity) },
+                }
+                if (subtitle != null) {
+                    Text(
+                        text = subtitle,
+                        modifier = Modifier.padding(top = WsSheetSubtitleGap),
+                        style = if (subtitleMono) PiTheme.text.monoSmall else PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    .nestedScroll(nested)
-                    // 手指抬起的那一帧收尾：列表那条路径（余量拖动）没有 `onDragStopped`，
-                    // 只在 Final pass 上看一眼「还有没有按着」最省事，也不吃事件。
-                    .pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val event = awaitPointerEvent(PointerEventPass.Final)
-                                if (dragging && event.changes.none { it.pressed }) release(0f)
-                            }
-                        }
-                    },
-            ) {
-                // 面板的视觉壳（底色 + 顶部圆角 + 上沿）交给共用件，这一层只留行为：
-                // 它自己是 Dialog、面板封顶 80% 高、fade/rise 与拖拽都还挂在外层 Column 上。
-                // frame 不接手势、动画、高度，所以外层 Column 的约束与内容结构都没有变。
-                PiSheetChromeFrame(modifier = Modifier.fillMaxWidth()) {
-                    // 系统栏那一条内边距放在面板**里面**：内容抬到导航栏之上，面板底色照样
-                    // 铺到屏底 —— 旧的 `ModalBottomSheet` 用 `contentWindowInsets` 做的也正是
-                    // 这件事（内容让开，表面不让）。
-                    Column(
-                        Modifier.windowInsetsPadding(
-                            WindowInsets.navigationBars.only(WindowInsetsSides.Bottom),
-                        ),
-                    ) {
-                        // 抓手：共用件，32×3、圆角 2、`outlineVariant`、上方 8 下方 6。
-                        // 原来这一段在本文件里手画了一份（圆角与颜色各写一遍），两个壳的把手于是
-                        // 各自漂移；现在只画一次，M3 那套弹层读的是同一个组件。
-                        PiSheetHandle()
-
-                        // 头：`padding:12px 14px 8px`，一行标题（`PiType.title`，17/24 SemiBold
-                        // + 可选槽位 + ✕），
-                        // 下面可选一行副标题（12 muted，`margin-top:4`）。
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(
-                                    start = PiSheetChromeMetrics.headHorizontal,
-                                    end = PiSheetChromeMetrics.headHorizontal,
-                                    top = PiSheetChromeMetrics.headTop,
-                                    bottom = PiSheetChromeMetrics.headBottom,
-                                ),
-                        ) {
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(WsSheetHeadGap),
-                            ) {
-                                Text(
-                                    title,
-                                    modifier = Modifier.weight(1f),
-                                    style = PiType.title,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                trailing?.invoke()
-                                Box(
-                                    Modifier
-                                        // `margin-right:-6`：✕ 往右探出头的右边距 6px。
-                                        .offset(x = WsSheetCloseOverhang)
-                                        .size(WsSheetCloseSize)
-                                        .clip(RoundedCornerShape(WsSheetCloseRadius))
-                                        .clickable(onClick = { close.value() }),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        Icons.Filled.Close,
-                                        contentDescription = tr("关闭", "Close"),
-                                        modifier = Modifier.size(WsSheetCloseIconSize),
-                                        tint = palette.muted,
-                                    )
-                                }
-                            }
-                            if (subtitle != null) {
-                                Text(
-                                    subtitle,
-                                    modifier = Modifier.padding(top = WsSheetSubtitleGap),
-                                    style = if (subtitleMono) {
-                                        PiTheme.text.monoSmall
-                                    } else {
-                                        PiTheme.text.meta
-                                    },
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-
-                        // 内容区：稿子 `.b-scroll` 的 `maxHeight:420` / `padding-bottom:8`。
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = maxBodyHeight)
-                                .verticalScroll(rememberScrollState()),
-                        ) {
-                            Column(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = WsSheetBodyBottom),
-                                content = content,
-                            )
-                        }
-
-                        if (footer != null) {
-                            HorizontalDivider(
-                                thickness = PiSettingsMetrics.hairline,
-                                color = palette.borderMuted,
-                            )
-                            Text(
-                                footer,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(
-                                        start = PiSheetChromeMetrics.footerHorizontal,
-                                        end = PiSheetChromeMetrics.footerHorizontal,
-                                        top = PiSheetChromeMetrics.footerTop,
-                                        bottom = PiSheetChromeMetrics.footerBottom,
-                                    ),
-                                style = PiTheme.text.meta,
-                                color = palette.muted,
-                            )
-                        }
-                    }
                 }
             }
-        }
-    }
-}
 
-/**
- * 清掉平台给 dialog 窗口加的那层 dim：[WsSheet] 自己画 0.32 的 scrim，不清就会叠成比稿子
- * 任何一处都深的一层。与 `ui/components/PiDialog.kt` 的 `ClearPlatformDim`、
- * `ui/blocks/PiImageViewer.kt` 的 `ClearViewerPlatformDim` 是同一手法 —— 那个 helper 是
- * 文件私有的，`ui/components/PiDialog.kt` 里那份也一样，所以照那两处的先例在这里再来一份。
- */
-@Composable
-private fun ClearSheetPlatformDim() {
-    val view = LocalView.current
-    remember(view) {
-        (view.parent as? DialogWindowProvider)?.window?.let { w ->
-            w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            w.setDimAmount(0f)
-        }
-        true
-    }
-    SideEffect {
-        (view.parent as? DialogWindowProvider)?.window?.let { w ->
-            if ((w.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0 || w.attributes.dimAmount != 0f) {
-                w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                w.setDimAmount(0f)
+            // Scrollable body
+            CompositionLocalProvider(LocalInsideWsSheet provides true) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = maxBodyHeight)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = WsSheetBodyBottom),
+                        content = content,
+                    )
+                }
+            }
+
+            if (footer != null) {
+                HorizontalDivider(
+                    thickness = PiSettingsMetrics.hairline,
+                    color = palette.borderMuted,
+                )
+                Text(
+                    text = footer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = PiSheetChromeMetrics.footerHorizontal,
+                            end = PiSheetChromeMetrics.footerHorizontal,
+                            top = PiSheetChromeMetrics.footerTop,
+                            bottom = PiSheetChromeMetrics.footerBottom,
+                        ),
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
+                )
             }
         }
     }
 }
 
-/**
- * `Sheet` 里没有对应 token、也不属于弹层公共外观的几个数：`gap:8` / ✕ 的 28 与 -6 /
- * `mt 4` / 正文底部 8。尺寸与颜色里凡是两套弹层共用的（圆角、把手、遮罩、头部与页脚的
- * 间距），都在 `ui/components/PiSheetChrome.kt`；这里留下的只服务这一套自绘外壳的 ✕ 行
- * 与正文，M3 那套弹层没有对应物。
- */
 private val WsSheetHeadGap = 8.dp
-private val WsSheetCloseSize = 28.dp
-private val WsSheetCloseRadius = 8.dp
+private val WsSheetCloseSize = 34.dp
 private val WsSheetCloseIconSize = 16.dp
-private val WsSheetCloseOverhang = 6.dp
 private val WsSheetSubtitleGap = 4.dp
-private val WsSheetBodyBottom = 8.dp
-
-/** 稿子 `.b-sheetwrap{animation:bFade .13s ease both}`：整层（scrim + 面板）淡入。 */
-private const val WsSheetFadeMillis = 130
-
-/** 稿子 `.b-sheet{animation:bRise .16s cubic-bezier(.2,.7,.3,1) both}`：面板自己上移并淡入。 */
-private const val WsSheetRiseMillis = 160
-
-/** `.bRise` 的 `translateY(14px)`。 */
-private val WsSheetRiseDistance = 14.dp
-
-/** CSS 的 `ease`＝`cubic-bezier(.25,.1,.25,1)`。 */
-private val WsSheetFadeEasing = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f)
-
-/** 稿子给 `.bRise` 的那条贝塞尔：`cubic-bezier(.2,.7,.3,1)`。 */
-private val WsSheetRiseEasing = CubicBezierEasing(0.2f, 0.7f, 0.3f, 1f)
-
-/** `.b-sheet{max-height:80%}`，面板再高也不超过屏幕的八成。 */
-private const val WsSheetMaxHeight = 0.8f
-
-/** 拉过这个距离松手就关（不到就弹回）。 */
-private val WsSheetDismiss = 64.dp
-
-/** 或者甩得比这个快（px/s）也关。 */
-private const val WsSheetFlingVelocity = 900f
+private val WsSheetBodyBottom = 10.dp

@@ -23,7 +23,13 @@ import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileCopy
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.FolderSpecial
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -43,7 +49,13 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -57,6 +69,7 @@ import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
 import app.pi.ui.components.PiDialogBody
 import app.pi.ui.components.PiDialogTitle
+import app.pi.ui.components.PiSheetChromeMetrics
 import app.pi.ui.components.PiType
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiShapes
@@ -871,4 +884,308 @@ internal fun workspaceDisplayPath(workspace: File, file: File): String {
     val base = runCatching { workspace.canonicalPath }.getOrDefault(workspace.absolutePath).trimEnd('/')
     val created = runCatching { file.canonicalPath }.getOrDefault(file.absolutePath)
     return if (base.isNotEmpty() && created.startsWith("$base/")) created.removePrefix("$base/") else created
+}
+
+// ================================================================ 浮层：快速位置跳转
+
+private data class QuickLocationItem(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val active: Boolean,
+    val onClick: () -> Unit,
+)
+
+/**
+ * Studio location & ancestor jump sheet:
+ * - Current real path copy card (`sheetCardBg`)
+ * - 2×3 Studio quick-location grid (Current Project, Container `/`, Home `/root`,
+ *   Pi Config `~/.pi/agent`, Temp `/tmp`, Phone Storage `/storage/emulated/0`)
+ * - Full real ancestor chain with `CWD` and `当前` badges.
+ */
+@Composable
+internal fun WorkspaceLocationSheet(
+    currentPath: String,
+    projectGuestPath: String,
+    browsingHostFs: Boolean,
+    crumbs: List<String>,
+    onClose: () -> Unit,
+    onCopyPath: (String) -> Unit,
+    onJumpProject: () -> Unit,
+    onJumpContainer: (String) -> Unit,
+    onJumpPhoneStorage: (String) -> Unit,
+    onJumpCrumbDepth: (Int) -> Unit,
+) {
+    val palette = PiTheme.palette
+    val haptic = LocalHapticFeedback.current
+    @Suppress("DEPRECATION")
+    val clipboard = LocalClipboardManager.current
+    val prettyCurrent = remember(currentPath, browsingHostFs) {
+        if (browsingHostFs) currentPath else app.pi.runtime.GuestWorkspacePath.shortenForDisplay(currentPath)
+    }
+    val prettyProject = remember(projectGuestPath) {
+        app.pi.runtime.GuestWorkspacePath.shortenForDisplay(projectGuestPath)
+    }
+
+    val quickItems = listOf(
+        QuickLocationItem(
+            title = tr("当前项目", "Current Project"),
+            subtitle = prettyProject,
+            icon = Icons.Filled.FolderSpecial,
+            active = currentPath.trimEnd('/') == projectGuestPath.trimEnd('/'),
+            onClick = {
+                onClose()
+                onJumpProject()
+            },
+        ),
+        QuickLocationItem(
+            title = tr("容器根 /", "Container /"),
+            subtitle = "/",
+            icon = Icons.Filled.Dns,
+            active = !browsingHostFs && crumbs.isEmpty(),
+            onClick = {
+                onClose()
+                onJumpContainer("/")
+            },
+        ),
+        QuickLocationItem(
+            title = tr("主目录", "Home ~"),
+            subtitle = "/root",
+            icon = Icons.Filled.Home,
+            active = !browsingHostFs && currentPath == "/root",
+            onClick = {
+                onClose()
+                onJumpContainer("/root")
+            },
+        ),
+        QuickLocationItem(
+            title = tr("Pi 配置", "Pi Config"),
+            subtitle = "~/.pi/agent",
+            icon = Icons.Filled.Tune,
+            active = !browsingHostFs && currentPath == "/root/.pi/agent",
+            onClick = {
+                onClose()
+                onJumpContainer("/root/.pi/agent")
+            },
+        ),
+        QuickLocationItem(
+            title = tr("临时目录", "Temp"),
+            subtitle = "/tmp",
+            icon = Icons.Filled.Schedule,
+            active = !browsingHostFs && currentPath == "/tmp",
+            onClick = {
+                onClose()
+                onJumpContainer("/tmp")
+            },
+        ),
+        QuickLocationItem(
+            title = tr("手机存储", "Phone Storage"),
+            subtitle = "/storage/emulated/0",
+            icon = Icons.Filled.PhoneAndroid,
+            active = browsingHostFs && currentPath.startsWith("/storage/emulated/0"),
+            onClick = {
+                onClose()
+                onJumpPhoneStorage("/storage/emulated/0")
+            },
+        ),
+    )
+
+    WsSheet(
+        title = tr("跳转位置", "Jump to Location"),
+        onClose = onClose,
+        subtitle = if (browsingHostFs) {
+            tr("正在浏览设备本地文件系统", "Browsing Android device filesystem")
+        } else {
+            tr("正在浏览 Linux 容器文件系统", "Browsing Linux container filesystem")
+        },
+        maxBodyHeight = ROOT_SHEET_BODY_MAX,
+    ) {
+        // Real path copy card
+        val cardShape = RoundedCornerShape(12.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 4.dp)
+                .clip(cardShape)
+                .background(PiSheetChromeMetrics.sheetCardBg)
+                .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), cardShape)
+                .padding(start = 12.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = tr("当前路径", "CURRENT PATH"),
+                    style = PiType.sectionHeader,
+                    color = palette.muted,
+                )
+                Text(
+                    text = currentPath,
+                    style = PiTheme.text.monoSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(PiSheetChromeMetrics.sheetControlBg)
+                    .clickable {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        clipboard.setText(AnnotatedString(currentPath))
+                        onCopyPath(prettyCurrent)
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ContentCopy,
+                    contentDescription = tr("复制路径", "Copy path"),
+                    modifier = Modifier.size(16.dp),
+                    tint = palette.accent,
+                )
+            }
+        }
+
+        // 2x3 Studio quick-location tiles
+        WsSectionHeader(label = tr("常用位置", "Quick Locations"))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            quickItems.chunked(2).forEach { pair ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    pair.forEach { item ->
+                        QuickLocationTile(
+                            item = item,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (pair.size == 1) {
+                        Box(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+
+        // Full real ancestor chain
+        WsSectionHeader(label = tr("路径层级", "Path Hierarchy"))
+        val normalizedProject = projectGuestPath.trimEnd('/').ifEmpty { "/" }
+        val normalizedCurrent = currentPath.trimEnd('/').ifEmpty { "/" }
+        val ancestors = buildList {
+            add("/" to 0)
+            var acc = ""
+            crumbs.forEachIndexed { idx, seg ->
+                acc = "$acc/$seg"
+                add(acc to (idx + 1))
+            }
+        }
+        WsCard {
+            ancestors.forEachIndexed { idx, (fullPath, depth) ->
+                if (idx > 0) WsHairline(startInset = WsIconHairlineStart)
+                val isCwd = fullPath == normalizedProject
+                val isHere = fullPath == normalizedCurrent
+                val label = if (depth == 0) {
+                    if (browsingHostFs) tr("设备根 /", "Device /") else tr("容器根 /", "Container /")
+                } else {
+                    fullPath.substringAfterLast('/')
+                }
+                WsRow(
+                    title = label,
+                    mono = depth > 0,
+                    strong = isHere || isCwd,
+                    lead = { FolderGlyph() },
+                    meta = if (depth == 0) "/" else app.pi.runtime.GuestWorkspacePath.shortenForDisplay(fullPath),
+                    badge = when {
+                        isCwd && isHere -> {
+                            {
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    WsBadge(text = "CWD", tone = StateTone.Accent)
+                                    WsBadge(text = tr("当前", "Here"), tone = StateTone.Success)
+                                }
+                            }
+                        }
+                        isCwd -> {
+                            { WsBadge(text = "CWD", tone = StateTone.Accent) }
+                        }
+                        isHere -> {
+                            { WsBadge(text = tr("当前", "Here"), tone = StateTone.Success) }
+                        }
+                        else -> null
+                    },
+                    onClick = {
+                        onClose()
+                        onJumpCrumbDepth(depth)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickLocationTile(
+    item: QuickLocationItem,
+    modifier: Modifier = Modifier,
+) {
+    val palette = PiTheme.palette
+    val shape = RoundedCornerShape(12.dp)
+    val bg = if (item.active) palette.accent.copy(alpha = 0.12f) else PiSheetChromeMetrics.sheetCardBg
+    val borderColor = if (item.active) palette.accent.copy(alpha = 0.45f) else palette.borderMuted.copy(alpha = 0.50f)
+    Row(
+        modifier = modifier
+            .clip(shape)
+            .background(bg)
+            .border(if (item.active) 1.dp else PiSpacing.hairlineThin, borderColor, shape)
+            .clickable(onClick = item.onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(
+                    if (item.active) palette.accent.copy(alpha = 0.18f)
+                    else PiSheetChromeMetrics.sheetControlBg,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = item.icon,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = if (item.active) palette.accent else palette.muted,
+            )
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(1.dp),
+        ) {
+            Text(
+                text = item.title,
+                style = PiType.rowTitle.copy(fontSize = 13.sp),
+                color = if (item.active) palette.accent else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = item.subtitle,
+                style = PiTheme.text.monoSmall,
+                color = palette.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
 }

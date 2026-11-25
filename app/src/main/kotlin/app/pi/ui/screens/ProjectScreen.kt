@@ -20,12 +20,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Icon
@@ -201,50 +200,86 @@ fun ProjectScreen(
     // 一条路径，宿主侧的 `<rootfs>/storage/emulated/0/…` 并不存在 —— 以前不管三七二十一都从
     // rootfs 拼，于是一选手机本地目录就是「无法读取目录 …/rootfs/storage/emulated/0/…」。
     // 外部工作区的浏览根改成宿主的 `/`，面包屑与路径都是真实路径。
-    val browseRoot = remember(guestRootfs, workspace) {
-        val root = runCatching { guestRootfs.canonicalPath }.getOrNull() ?: guestRootfs.absolutePath
-        val here = runCatching { workspace.canonicalPath }.getOrNull() ?: workspace.absolutePath
-        if (here == root || here.startsWith(root.trimEnd('/') + "/")) guestRootfs else File("/")
+    // Pre-resolve canonical paths off the main thread so LazyColumn item composition never does disk I/O.
+    val canonicalPaths by androidx.compose.runtime.produceState(
+        initialValue = guestRootfs.absolutePath.trimEnd('/') to workspace.absolutePath.trimEnd('/'),
+        key1 = guestRootfs.absolutePath,
+        key2 = workspace.absolutePath,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            val r = (runCatching { guestRootfs.canonicalPath }.getOrNull() ?: guestRootfs.absolutePath).trimEnd('/')
+            val w = (runCatching { workspace.canonicalPath }.getOrNull() ?: workspace.absolutePath).trimEnd('/')
+            r to w
+        }
     }
-    val homeCrumbs = remember(browseRoot, workspace) {
-        val root = runCatching { browseRoot.canonicalPath }.getOrNull() ?: browseRoot.absolutePath
-        val here = runCatching { workspace.canonicalPath }.getOrNull() ?: workspace.absolutePath
-        here.removePrefix(root).trimStart('/').split('/').filter { it.isNotEmpty() }
+    val rootfsCanonicalPath = canonicalPaths.first
+    val workspaceCanonicalPath = canonicalPaths.second
+    val workspaceInRootfs = workspaceCanonicalPath == rootfsCanonicalPath ||
+        workspaceCanonicalPath.startsWith("$rootfsCanonicalPath/")
+    val homeCrumbs = remember(workspaceCanonicalPath, rootfsCanonicalPath, workspaceInRootfs) {
+        val base = if (workspaceInRootfs) rootfsCanonicalPath else ""
+        workspaceCanonicalPath.removePrefix(base).trimStart('/').split('/').filter { it.isNotEmpty() }
     }
-    var crumbs by remember(workspace, browseRoot) { mutableStateOf(homeCrumbs) }
+    // Seamless dual-tree browsing: container rootfs (`/`) vs Android host storage (`/storage/emulated/0`).
+    var browsingHostFs by remember(workspace.absolutePath) { mutableStateOf(!workspaceInRootfs) }
+    val browseRoot = if (browsingHostFs) File("/") else guestRootfs
+    var crumbs by remember(workspace.absolutePath, homeCrumbs) { mutableStateOf(homeCrumbs) }
+    var locationSheet by remember { mutableStateOf(false) }
     var listing by remember { mutableStateOf<List<WorkspaceEntry>?>(null) }
     var listingError by remember { mutableStateOf<WorkspaceOpen.Failed?>(null) }
     val currentDir = remember(browseRoot, crumbs) {
         crumbs.fold(browseRoot) { dir, segment -> File(dir, segment) }
     }
-    // 面包屑是**从 rootfs 根算起**的，而 `relativeParent` 是给 `File(workspace, …)` 用的，
-    // 只能相对**工作区**。两者混用会把 `workspace/pi/workspaces/<name>` 再拼到 workspace 后面，
-    // 新建的文件因此落在 `…/workspace/workspace/pi/workspaces/…`（用户报的“新建不落在当前层”）。
-    val insideWorkspace = crumbs.size >= homeCrumbs.size && crumbs.subList(0, homeCrumbs.size) == homeCrumbs
+    val currentCanonicalDirPath = remember(browsingHostFs, rootfsCanonicalPath, crumbs) {
+        val prefix = if (browsingHostFs) "" else rootfsCanonicalPath
+        if (crumbs.isEmpty()) prefix.ifEmpty { "/" } else "$prefix/${crumbs.joinToString("/")}"
+    }
+    val currentLogicalPath = remember(crumbs) {
+        if (crumbs.isEmpty()) "/" else "/" + crumbs.joinToString("/")
+    }
+    val insideWorkspace = (browsingHostFs == !workspaceInRootfs) &&
+        crumbs.size >= homeCrumbs.size &&
+        crumbs.subList(0, homeCrumbs.size) == homeCrumbs
+    val atProjectRoot = insideWorkspace && crumbs.size == homeCrumbs.size
     val parentRelative = if (insideWorkspace) crumbs.drop(homeCrumbs.size).joinToString("/") else ""
     val whereLabel = if (insideWorkspace) {
         workspaceName + parentRelative.split('/').filter { it.isNotEmpty() }.joinToString("") { " / $it" }
     } else {
-        currentDir.absolutePath
+        if (browsingHostFs) currentLogicalPath else app.pi.runtime.GuestWorkspacePath.shortenForDisplay(currentLogicalPath)
     }
-    // 只有「换了目录」才清成加载态；同一目录里的刷新（agent 写了文件、自己新建/重命名之后）
-    // 保留旧列表直到新结果回来，列表不闪空、滚动位置不丢。
+
+    fun goHome() {
+        browsingHostFs = !workspaceInRootfs
+        crumbs = homeCrumbs
+    }
+
+    fun jumpToContainer(guestPath: String) {
+        browsingHostFs = false
+        crumbs = guestPath.trim('/').split('/').filter { it.isNotEmpty() }
+    }
+
+    fun jumpToPhoneStorage(hostPath: String) {
+        if (storageAccessGranted(context)) {
+            browsingHostFs = true
+            crumbs = hostPath.trim('/').split('/').filter { it.isNotEmpty() }
+        } else {
+            externalPicker = true
+        }
+    }
+
     var listedDir by remember { mutableStateOf<String?>(null) }
     var filterText by remember(currentDir.absolutePath) { mutableStateOf("") }
-    // 排序：默认最近修改在最上面；其余三种目录在文件前面。记在 rememberSaveable 里（只存序号）。
     var filterOpen by remember(currentDir.absolutePath) { mutableStateOf(false) }
 
-    // 手势/物理返回键与面包屑零冲突分工：
-    // - 侧滑返回按层级退回（收起筛选 → 回到上一级目录 → 回到项目根后再退回对话）；
-    // - 面包屑负责跨多级一键直达任意祖先目录。
-    val canStepUp = (insideWorkspace && crumbs.size > homeCrumbs.size) || (!insideWorkspace && crumbs.isNotEmpty())
+    // Gesture back: close search -> step up inside project -> return home if outside project -> exit to Chat.
     BackHandler(enabled = true) {
         when {
             filterOpen -> {
                 filterOpen = false
                 filterText = ""
             }
-            canStepUp -> crumbs = crumbs.dropLast(1)
+            insideWorkspace && crumbs.size > homeCrumbs.size -> crumbs = crumbs.dropLast(1)
+            !insideWorkspace -> goHome()
             else -> onBack()
         }
     }
@@ -253,14 +288,15 @@ fun ProjectScreen(
     var recursiveSearching by remember { mutableStateOf(false) }
     var sortIndex by rememberSaveable { mutableIntStateOf(WorkspaceSort.Newest.ordinal) }
     var sortMenu by remember { mutableStateOf(false) }
-    // pi 的 find / grep / `@` 补全都带 `--hidden`（点开头的照列），但**排除 `.git`**（补全里显式 `--exclude .git`，
-    // `find` 的兜底路径还排除 `node_modules`，`core/tools/find.js:79`），并遵守 .gitignore。这里照这个来：
-    // `.git` 与 `node_modules` 默认收起，其余（含 `.pi`、`.env`）照列；要看被忽略的，在排序菜单里打开。
-    // 不逐条解析 .gitignore —— 那是对 fd/rg 的近似，不是它们本身。
     var showIgnored by rememberSaveable { mutableStateOf(false) }
+    var hideDotFiles by rememberSaveable { mutableStateOf(false) }
     val sortMode = WorkspaceSort.entries[sortIndex.coerceIn(0, WorkspaceSort.entries.lastIndex)]
-    val sortedEntries = remember(listing, sortMode, filterText, showIgnored) {
-        val all = listing.orEmpty().filter { showIgnored || !(it.isDirectory && it.name in PI_IGNORED_DIRS) }
+    val sortedEntries = remember(listing, sortMode, filterText, showIgnored, hideDotFiles) {
+        val all = listing.orEmpty().filter { entry ->
+            val keepIgnored = showIgnored || !(entry.isDirectory && entry.name in PI_IGNORED_DIRS)
+            val keepDot = !hideDotFiles || !entry.name.startsWith(".")
+            keepIgnored && keepDot
+        }
         val q = filterText.trim()
         val filtered = if (q.isEmpty()) all else all.filter { it.name.contains(q, ignoreCase = true) }
         filtered.sortedWith(sortMode.comparator)
@@ -470,7 +506,11 @@ fun ProjectScreen(
     )
 
     fun openRelative(path: String, file: File, startInEdit: Boolean = false) {
-        viewer = targetFor(path, file, editable = true, startInEdit = startInEdit)
+        scope.launch {
+            viewer = withContext(Dispatchers.IO) {
+                targetFor(path, file, editable = true, startInEdit = startInEdit)
+            }
+        }
     }
 
     /**
@@ -659,10 +699,28 @@ fun ProjectScreen(
     }
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
+            val currentEntry = remember(workspaceEntries, state.workspace.name) {
+                workspaceEntries.firstOrNull { it.name == state.workspace.name }
+            }
+            val activeGuestPath = currentEntry?.guestPath ?: state.workspace.guestPath
+            val prettyProjectPath = remember(activeGuestPath) {
+                app.pi.runtime.GuestWorkspacePath.shortenForDisplay(activeGuestPath)
+            }
             PiTopBar(
                 onBack = onBack,
-                title = tr("项目与文件", "Project & Files"),
-                scrolled = scrolled,
+                scrolled = false,
+                titleContent = {
+                    ProjectTopBarSwitcher(
+                        workspaceName = workspaceName,
+                        relativePath = prettyProjectPath,
+                        isExternal = currentEntry?.external == true || state.workspace.isExternal,
+                        trustLabel = trustMeta,
+                        trustTrusted = trustTrusted,
+                        changedCount = if (engineDown) 0 else changed.size,
+                        runningCount = if (engineDown) 0 else runs.size,
+                        onSwitchProject = { rootSheet = true },
+                    )
+                },
                 actions = {
                     PiTopBarIcon(
                         onClick = {
@@ -672,7 +730,7 @@ fun ProjectScreen(
                                 } else {
                                     guestWorkspace.trimEnd('/') + "/" + parentRelative
                                 }
-                                browseRoot == guestRootfs -> "/" + crumbs.joinToString("/")
+                                !browsingHostFs -> currentLogicalPath
                                 else -> currentDir.absolutePath
                             }
                             session.requestNav(NavRequest.TerminalAt(targetGuestCwd))
@@ -681,9 +739,9 @@ fun ProjectScreen(
                         icon = Icons.Filled.Terminal,
                     )
                     PiTopBarIcon(
-                        onClick = { refreshTick++ },
-                        contentDescription = tr("刷新项目文件", "Refresh project files"),
-                        icon = Icons.Filled.Refresh,
+                        onClick = { newSheet = true },
+                        contentDescription = tr("新建文件或文件夹", "New file or folder"),
+                        icon = Icons.Filled.Add,
                     )
                     Box {
                         PiTopBarIcon(
@@ -697,33 +755,35 @@ fun ProjectScreen(
                             placement = PiMenuPlacement.Below,
                             items = buildList {
                                 add(
+                                    PiMenuItem(tr("切换或新建项目", "Switch or create project")) {
+                                        overflow = false
+                                        rootSheet = true
+                                    },
+                                )
+                                add(
+                                    PiMenuItem(tr("快速跳转位置…", "Jump to location…")) {
+                                        overflow = false
+                                        locationSheet = true
+                                    },
+                                )
+                                add(
+                                    PiMenuItem(tr("刷新当前目录", "Refresh folder")) {
+                                        overflow = false
+                                        refreshTick++
+                                    },
+                                )
+                                add(
                                     PiMenuItem(tr("导入手机文件到当前目录", "Import files into this folder")) {
                                         overflow = false
                                         importFilesLauncher.launch(arrayOf("*/*"))
                                     },
                                 )
                                 add(
-                                    PiMenuItem(tr("从设备目录打开或新建项目", "Open or create in device folder")) {
+                                    PiMenuItem(tr("从设备目录打开项目", "Open device folder as project")) {
                                         overflow = false
                                         externalPicker = true
                                     },
                                 )
-                                if (!insideWorkspace || crumbs != homeCrumbs) {
-                                    add(
-                                        PiMenuItem(tr("回到项目根目录", "Go to project root")) {
-                                            overflow = false
-                                            crumbs = homeCrumbs
-                                        },
-                                    )
-                                }
-                                if (crumbs.isNotEmpty()) {
-                                    add(
-                                        PiMenuItem(tr("浏览容器根目录 (/)", "Browse Container Root (/)")) {
-                                            overflow = false
-                                            crumbs = emptyList()
-                                        },
-                                    )
-                                }
                                 add(
                                     PiMenuItem(tr(".pi 扩展、资源与信任", ".pi extensions, resources & trust")) {
                                         overflow = false
@@ -741,78 +801,56 @@ fun ProjectScreen(
                     }
                 },
             )
+            // Sticky full-width Studio path bar pinned directly under PiTopBar (outside LazyColumn).
+            val canUseHereAsProject by androidx.compose.runtime.produceState(
+                initialValue = false,
+                key1 = currentDir.absolutePath,
+                key2 = atProjectRoot,
+                key3 = browsingHostFs,
+            ) {
+                value = if (atProjectRoot) {
+                    false
+                } else {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            currentDir.isDirectory && currentDir.canWrite() &&
+                                currentDir.absolutePath != "/" &&
+                                currentDir.canonicalPath != rootfsCanonicalPath
+                        }.getOrDefault(false)
+                    }
+                }
+            }
+            val locationPillLabel = when {
+                browsingHostFs -> "SD"
+                crumbs.firstOrNull() == "root" -> "~"
+                else -> "/"
+            }
+            WorkspacePathBar(
+                workspaceName = workspaceName,
+                inside = insideWorkspace,
+                homeSize = homeCrumbs.size,
+                crumbs = crumbs,
+                rootLabel = if (browsingHostFs) tr("设备 /", "Device /") else ROOTFS_CRUMB_LABEL,
+                locationLabel = locationPillLabel,
+                canSetAsProject = canUseHereAsProject,
+                onUp = { if (crumbs.isNotEmpty()) crumbs = crumbs.dropLast(1) },
+                onOpenLocations = { locationSheet = true },
+                onHome = { goHome() },
+                onGo = { index -> crumbs = crumbs.take(index) },
+                onSetAsProject = {
+                    if (browsingHostFs) {
+                        useExternalDirectory(currentDir.absolutePath)
+                    } else {
+                        openDirectoryAsProject(currentDir)
+                    }
+                },
+            )
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + PiSpacing.scrollBottom),
             ) {
                 run {
-                    // 项目 Hero 卡：当前项目、位置/信任/改动状态、以及切换项目 / 新建项目。
-                    item(key = "project-hero") {
-                        val currentEntry = remember(workspaceEntries, state.workspace.name) {
-                            workspaceEntries.firstOrNull { it.name == state.workspace.name }
-                        }
-                        val prettyPath = remember(currentEntry, state.workspace.guestPath) {
-                            app.pi.runtime.GuestWorkspacePath.shortenForDisplay(
-                                currentEntry?.guestPath ?: state.workspace.guestPath,
-                            )
-                        }
-                        WorkspaceHeroCard(
-                            workspaceName = workspaceName,
-                            relativePath = prettyPath,
-                            isExternal = currentEntry?.external == true || state.workspace.isExternal,
-                            trustLabel = trustMeta,
-                            trustTrusted = trustTrusted,
-                            changedCount = if (engineDown) 0 else changed.size,
-                            runningCount = if (engineDown) 0 else runs.size,
-                            onSwitchProject = { rootSheet = true },
-                            onNewProject = {
-                                inputDialog = WorkspaceInputDialog(
-                                    kind = WorkspaceInputKind.NewWorkspace,
-                                    title = tr("新建项目", "New Project"),
-                                    where = tr("选择保存位置并输入项目名称", "Choose location and enter a project name"),
-                                    relativeParent = null,
-                                    absoluteParent = null,
-                                    initial = "",
-                                )
-                            },
-                            onOpenTrust = { session.requestNav(NavRequest.SettingsFocus("hub:resources:project")) },
-                        )
-                    }
-                    // 精简路径面包屑条：不再与 Hero 卡重复显示项目切换胶囊或改动计数；
-                    // 浏览到子目录或外部目录时，可直接一键「设为项目」切换 Pi 的 cwd。
-                    item(key = "path-bar") {
-                        val atProjectRoot = insideWorkspace && crumbs.size == homeCrumbs.size
-                        // 文件系统检查移至 IO 线程，避免在组合期阻塞主线程。
-                        val canUseHereAsProject by androidx.compose.runtime.produceState(
-                            initialValue = false,
-                            key1 = currentDir.absolutePath,
-                            key2 = atProjectRoot,
-                        ) {
-                            value = if (atProjectRoot) {
-                                false
-                            } else {
-                                withContext(Dispatchers.IO) {
-                                    runCatching {
-                                        currentDir.isDirectory && currentDir.canWrite() &&
-                                            currentDir.absolutePath != "/" &&
-                                            currentDir.canonicalPath != guestRootfs.canonicalPath
-                                    }.getOrDefault(false)
-                                }
-                            }
-                        }
-                        WorkspacePathBar(
-                            workspaceName = workspaceName,
-                            inside = insideWorkspace,
-                            homeSize = homeCrumbs.size,
-                            crumbs = crumbs,
-                            rootLabel = ROOTFS_CRUMB_LABEL,
-                            canSetAsProject = canUseHereAsProject,
-                            onHome = { crumbs = homeCrumbs },
-                            onGo = { index -> crumbs = crumbs.take(index) },
-                            onSetAsProject = { openDirectoryAsProject(currentDir) },
-                        )
-                    }
                     if (engineDown) {
                         item {
                             WsNotice(
@@ -903,23 +941,31 @@ fun ProjectScreen(
                                             )
                                         },
                                         onClick = {
-                                            val resolved = resolveSession(file.path, guestWorkspace)
-                                            if (resolved != null) {
-                                                openRelative(resolved.displayPath, resolved.file)
-                                            } else {
-                                                say(tr("找不到这个文件：${file.path}", "File not found: ${file.path}"), StateTone.Warning)
+                                            scope.launch {
+                                                val resolved = withContext(Dispatchers.IO) {
+                                                    resolveSession(file.path, guestWorkspace)
+                                                }
+                                                if (resolved != null) {
+                                                    openRelative(resolved.displayPath, resolved.file)
+                                                } else {
+                                                    say(tr("找不到这个文件：${file.path}", "File not found: ${file.path}"), StateTone.Warning)
+                                                }
                                             }
                                         },
                                         onMenu = {
-                                            val resolved = resolveSession(file.path, guestWorkspace)
-                                            if (resolved == null) {
-                                                say(tr("找不到这个文件：${file.path}", "File not found: ${file.path}"), StateTone.Warning)
-                                            } else {
-                                                menuFor = menuTargetFor(
-                                                    resolved.displayPath,
-                                                    resolved.file,
-                                                    fromSession = true,
-                                                )
+                                            scope.launch {
+                                                val resolved = withContext(Dispatchers.IO) {
+                                                    resolveSession(file.path, guestWorkspace)
+                                                }
+                                                if (resolved == null) {
+                                                    say(tr("找不到这个文件：${file.path}", "File not found: ${file.path}"), StateTone.Warning)
+                                                } else {
+                                                    menuFor = menuTargetFor(
+                                                        resolved.displayPath,
+                                                        resolved.file,
+                                                        fromSession = true,
+                                                    )
+                                                }
                                             }
                                         },
                                     )
@@ -929,80 +975,22 @@ fun ProjectScreen(
                         }
                     }
 
-                    item {
-                        WsSectionHeader(
-                            label = tr("全部文件", "Files"),
-                            count = if (listingError != null) null else "${listing?.size ?: 0}",
-                            aside = if (listingError != null) {
-                                null
-                            } else {
-                                {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box {
-                                            Row(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(WsShape.small))
-                                                    .clickable { sortMenu = true }
-                                                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                            ) {
-                                                Text(
-                                                    sortMode.label,
-                                                    style = PiTheme.text.meta,
-                                                    color = PiTheme.palette.muted,
-                                                    maxLines = 1,
-                                                )
-                                                Icon(
-                                                    Icons.Filled.KeyboardArrowDown,
-                                                    contentDescription = tr("排序方式", "Sort order"),
-                                                    modifier = Modifier.size(14.dp),
-                                                    tint = PiTheme.palette.muted,
-                                                )
-                                            }
-                                            if (sortMenu) PiMenu(
-                                                expanded = true,
-                                                onDismiss = { sortMenu = false },
-                                                placement = PiMenuPlacement.Below,
-                                                items = WorkspaceSort.entries.map { mode ->
-                                                    PiMenuItem(mode.label) {
-                                                        sortIndex = mode.ordinal
-                                                        sortMenu = false
-                                                    }
-                                                } + PiMenuItem(if (showIgnored) tr("收起 .git / node_modules", "Hide .git / node_modules") else tr("显示 .git / node_modules", "Show .git / node_modules")) {
-                                                    showIgnored = !showIgnored
-                                                    sortMenu = false
-                                                },
-                                            )
-                                        }
-                                        Box(
-                                            Modifier
-                                                .size(40.dp)
-                                                .clip(RoundedCornerShape(WsShape.medium))
-                                                .clickable {
-                                                    filterOpen = !filterOpen
-                                                    if (!filterOpen) filterText = ""
-                                                },
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Icon(
-                                                Icons.Filled.Search,
-                                                contentDescription = tr("筛选文件名", "Filter files"),
-                                                modifier = Modifier.size(20.dp),
-                                                tint = if (filterOpen || filterText.isNotEmpty()) {
-                                                    PiTheme.palette.accent
-                                                } else {
-                                                    PiTheme.palette.muted
-                                                },
-                                            )
-                                        }
-                                        WsChip(
-                                            text = tr("新建", "New"),
-                                            glyphIcon = Icons.Filled.Add,
-                                            solid = true,
-                                            onClick = { newSheet = true },
-                                        )
-                                    }
-                                }
+                    item(key = "files-bar") {
+                        WorkspaceInlineSearchSortBar(
+                            fileCount = if (listingError != null) null else sortedEntries.size,
+                            sortMode = sortMode,
+                            sortMenuExpanded = sortMenu,
+                            onSortMenuToggle = { sortMenu = it },
+                            onSelectSort = { sortIndex = it.ordinal },
+                            showIgnored = showIgnored,
+                            onToggleIgnored = { showIgnored = !showIgnored },
+                            hideDotFiles = hideDotFiles,
+                            onToggleDotFiles = { hideDotFiles = !hideDotFiles },
+                            filterOpen = filterOpen,
+                            filterActive = filterText.isNotEmpty(),
+                            onToggleFilter = {
+                                filterOpen = !filterOpen
+                                if (!filterOpen) filterText = ""
                             },
                         )
                     }
@@ -1016,7 +1004,7 @@ fun ProjectScreen(
                                 detail = error.detail,
                                 actions = {
                                     WsErrAction(tr("重试", "Retry")) { refreshTick++ }
-                                    WsErrAction(tr("回到项目根目录", "Back to Project Root")) { crumbs = homeCrumbs }
+                                    WsErrAction(tr("回到项目根目录", "Back to Project Root")) { goHome() }
                                 },
                             )
                         }
@@ -1137,15 +1125,17 @@ fun ProjectScreen(
                                     workspaceDisplayPath(workspace, entryFile)
                                 }
                                 // 这一行的**工作区相对**路径，与「本次会话」徽标比对用。
-                                val entryRelative = remember(entryFile.absolutePath, workspace.absolutePath) {
-                                    val root = workspace.canonicalFile
-                                    val canonical = runCatching { entryFile.canonicalFile }.getOrNull()
-                                    when {
-                                        canonical == null -> null
-                                        canonical.path == root.path -> null
-                                        canonical.path.startsWith(root.path + File.separator) ->
-                                            canonical.path.removePrefix(root.path + File.separator)
-                                        else -> null
+                                val entryRelative = remember(isRecursiveActive, entry.path, entry.name, currentCanonicalDirPath, workspaceCanonicalPath) {
+                                    if (isRecursiveActive) {
+                                        entry.path
+                                    } else {
+                                        val candidate = if (currentCanonicalDirPath == "/") {
+                                            "/${entry.name}"
+                                        } else {
+                                            "$currentCanonicalDirPath/${entry.name}"
+                                        }
+                                        val prefix = "$workspaceCanonicalPath/"
+                                        if (candidate.startsWith(prefix)) candidate.removePrefix(prefix) else null
                                     }
                                 }
                                 val matched = if (engineDown || entryRelative == null) {
@@ -1172,6 +1162,7 @@ fun ProjectScreen(
                                             if (entry.isDirectory) {
                                                 if (isRecursiveActive) {
                                                     val segs = entry.path.split('/').filter { it.isNotEmpty() }
+                                                    browsingHostFs = !workspaceInRootfs
                                                     crumbs = homeCrumbs + segs
                                                     filterText = ""
                                                     filterOpen = false
@@ -1219,12 +1210,14 @@ fun ProjectScreen(
                             ProjectConfigQuickCard(
                                 title = tr("扩展与资源", "Resources"),
                                 subtitle = trustMeta ?: tr(".pi 技能、扩展与信任", "Skills, extensions & trust"),
+                                icon = Icons.Filled.Extension,
                                 modifier = Modifier.weight(1f),
                                 onClick = { session.requestNav(NavRequest.SettingsFocus("hub:resources:project")) },
                             )
                             ProjectConfigQuickCard(
                                 title = tr("系统提示词", "System Prompt"),
                                 subtitle = tr("AGENTS.md / SYSTEM.md", "AGENTS.md / SYSTEM.md"),
+                                icon = Icons.Filled.Description,
                                 modifier = Modifier.weight(1f),
                                 onClick = { session.requestNav(NavRequest.SettingsFocus("hub:prompts")) },
                             )
@@ -1516,6 +1509,22 @@ fun ProjectScreen(
                 draft.value = if (draft.value.isBlank()) "$token " else draft.value.trimEnd() + " $token "
                 session.requestNav(NavRequest.Chat)
             },
+        )
+    }
+
+    if (locationSheet) {
+        val activeEntry = workspaceEntries.firstOrNull { it.name == state.workspace.name }
+        WorkspaceLocationSheet(
+            currentPath = currentLogicalPath,
+            projectGuestPath = activeEntry?.guestPath ?: state.workspace.guestPath,
+            browsingHostFs = browsingHostFs,
+            crumbs = crumbs,
+            onClose = { locationSheet = false },
+            onCopyPath = { copied -> say(tr("已复制路径 · $copied", "Copied path · $copied")) },
+            onJumpProject = { goHome() },
+            onJumpContainer = { target -> jumpToContainer(target) },
+            onJumpPhoneStorage = { target -> jumpToPhoneStorage(target) },
+            onJumpCrumbDepth = { depth -> crumbs = crumbs.take(depth) },
         )
     }
 

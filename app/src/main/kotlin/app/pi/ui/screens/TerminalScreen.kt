@@ -3,7 +3,9 @@ package app.pi.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,7 +27,6 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -59,7 +60,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.i18n.tr
+import app.pi.ui.components.PiDialog
+import app.pi.ui.components.PiDialogAction
+import app.pi.ui.components.PiDialogActions
+import app.pi.ui.components.PiDialogBody
+import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.components.PiMenu
+import app.pi.ui.components.PiType
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
 import app.pi.ui.terminal.PiTerminalManager
@@ -133,6 +140,15 @@ private fun TerminalTabHeader(
     val fontSizeSp = PiTerminalManager.fontSizeSp
     val keepScreenOn = PiTerminalManager.keepScreenOn
     var menuOpen by remember { mutableStateOf(false) }
+    var closingTab by remember { mutableStateOf<PiTerminalManager.Tab?>(null) }
+    val tabListState = rememberLazyListState()
+
+    LaunchedEffect(activeId, tabs.size) {
+        val idx = tabs.indexOfFirst { it.id == activeId }
+        if (idx >= 0) {
+            tabListState.animateScrollToItem(idx)
+        }
+    }
 
     val hairline = palette.border
     Row(
@@ -140,7 +156,7 @@ private fun TerminalTabHeader(
             .fillMaxWidth()
             .background(palette.chromeBg)
             .statusBarsPadding()
-            .height(48.dp)
+            .height(56.dp)
             .drawBehind {
                 drawLine(
                     color = hairline,
@@ -161,37 +177,49 @@ private fun TerminalTabHeader(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = null,
                 tint = palette.foreground.copy(alpha = 0.88f),
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(22.dp),
             )
         }
 
-        // 多标签条
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            if (tabs.isEmpty()) {
+        // 多标签条（自动滚到当前活动标签）
+        if (tabs.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
                 Text(
                     text = tr("终端", "Terminal"),
-                    color = palette.foreground.copy(alpha = 0.85f),
-                    fontFamily = PiMonoFamily,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(horizontal = 6.dp),
+                    style = PiType.topBarTitle,
+                    color = palette.foreground.copy(alpha = 0.9f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-            } else {
-                tabs.forEach { tab ->
+            }
+        } else {
+            LazyRow(
+                state = tabListState,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(tabs, key = { it.id }) { tab ->
                     val selected = tab.id == activeId
                     TerminalTabPill(
                         tab = tab,
                         selected = selected,
                         palette = palette,
                         onSelect = { PiTerminalManager.selectTab(tab.id) },
-                        onClose = { PiTerminalManager.closeTab(tab.id) },
+                        onClose = {
+                            if (tab.running) {
+                                closingTab = tab
+                            } else {
+                                PiTerminalManager.closeTab(tab.id)
+                            }
+                        },
                     )
                 }
             }
@@ -219,7 +247,7 @@ private fun TerminalTabHeader(
                 imageVector = if (imeVisible) Icons.Filled.KeyboardHide else Icons.Filled.Keyboard,
                 contentDescription = null,
                 tint = if (imeVisible) palette.accent else palette.foreground.copy(alpha = 0.88f),
-                modifier = Modifier.size(19.dp),
+                modifier = Modifier.size(21.dp),
             )
         }
 
@@ -232,7 +260,7 @@ private fun TerminalTabHeader(
                 imageVector = Icons.Filled.Add,
                 contentDescription = null,
                 tint = palette.foreground.copy(alpha = 0.88f),
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(22.dp),
             )
         }
 
@@ -246,7 +274,7 @@ private fun TerminalTabHeader(
                     imageVector = Icons.Filled.MoreVert,
                     contentDescription = null,
                     tint = palette.foreground.copy(alpha = 0.88f),
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(22.dp),
                 )
             }
             if (menuOpen) {
@@ -330,6 +358,38 @@ private fun TerminalTabHeader(
             }
         }
     }
+
+    closingTab?.let { target ->
+        PiDialog(onDismissRequest = { closingTab = null }) {
+            PiDialogTitle(
+                title = tr("关闭运行中的终端？", "Close Running Terminal?"),
+                glyph = "!",
+                glyphTone = PiTheme.palette.warning,
+            )
+            PiDialogBody(
+                tr(
+                    "「${target.title}」中的 Shell 进程仍在运行，关闭标签将结束该进程。",
+                    "The shell process in "${target.title}" is still running. Closing this tab will terminate it.",
+                ),
+            )
+            PiDialogActions {
+                PiDialogAction(
+                    label = tr("取消", "Cancel"),
+                    primary = false,
+                    onClick = { closingTab = null },
+                )
+                PiDialogAction(
+                    label = tr("关闭终端", "Close Tab"),
+                    primary = true,
+                    tone = PiTheme.palette.error,
+                    onClick = {
+                        closingTab = null
+                        PiTerminalManager.closeTab(target.id)
+                    },
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -405,8 +465,8 @@ private fun HeaderIconButton(
 ) {
     Box(
         modifier = Modifier
-            .size(40.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .size(44.dp)
+            .clip(CircleShape)
             .clickable(role = Role.Button, onClick = onClick)
             .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,

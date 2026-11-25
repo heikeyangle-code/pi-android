@@ -1,9 +1,12 @@
 package app.pi.ui.terminal
 
+import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +17,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,6 +37,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.ui.theme.PiMonoFamily
 import com.termux.terminal.KeyHandler
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * 终端修饰键状态：单击进入一次生效（Armed），双击锁定（Locked，连续输入 Ctrl+... 无需反复点按），再点取消。
@@ -174,6 +186,12 @@ fun TerminalKeyBar(
     }
 }
 
+private val REPEATABLE_ARROW_IDS = setOf("up", "down", "left", "right")
+private const val STICKY_DOUBLE_TAP_WINDOW_MS = 320L
+private const val LONG_PRESS_THRESHOLD_MS = 400L
+private const val ARROW_REPEAT_INITIAL_MS = 320L
+private const val ARROW_REPEAT_INTERVAL_MS = 55L
+
 @Composable
 private fun ExtraKeyCap(
     key: TerminalBarKey,
@@ -185,52 +203,99 @@ private fun ExtraKeyCap(
     onLongPress: (() -> Unit)?,
 ) {
     val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val currentOnTap by rememberUpdatedState(onTap)
+    val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
+    val currentOnLongPress by rememberUpdatedState(onLongPress)
+    val currentModState by rememberUpdatedState(modifierState)
+    var pressed by remember { mutableStateOf(false) }
+    var lastStickyTapMs by remember(key.id) { mutableLongStateOf(0L) }
+    val isArrow = key.id in REPEATABLE_ARROW_IDS
+
     val shape = RoundedCornerShape(7.dp)
-    val bg = when (modifierState) {
-        ModifierState.Locked -> palette.chipLocked
-        ModifierState.Armed -> palette.chipArmed
-        ModifierState.Off -> palette.chip
+    val bg = when {
+        pressed && !modifierState.isActive -> palette.accent.copy(alpha = 0.16f)
+        modifierState == ModifierState.Locked -> palette.chipLocked
+        modifierState == ModifierState.Armed -> palette.chipArmed
+        else -> palette.chip
     }
-    val borderColor = when (modifierState) {
-        ModifierState.Locked -> palette.accent.copy(alpha = 0.85f)
-        ModifierState.Armed -> palette.accent.copy(alpha = 0.55f)
-        ModifierState.Off -> palette.border
+    val borderColor = when {
+        pressed -> palette.accent.copy(alpha = 0.65f)
+        modifierState == ModifierState.Locked -> palette.accent.copy(alpha = 0.85f)
+        modifierState == ModifierState.Armed -> palette.accent.copy(alpha = 0.55f)
+        else -> palette.border
     }
     val textColor = when {
-        modifierState.isActive -> palette.accent
+        modifierState.isActive || pressed -> palette.accent
         key.id == "ctrl_c" -> ColorFromArgb(palette.ansi16[1])
         else -> palette.foreground.copy(alpha = 0.92f)
     }
 
     Box(
         modifier = modifier
-            .height(34.dp)
+            .height(36.dp)
             .clip(shape)
             .background(bg, shape)
             .border(
-                width = if (modifierState.isActive) 1.dp else 0.5.dp,
+                width = if (modifierState.isActive || pressed) 1.dp else 0.5.dp,
                 color = borderColor,
                 shape = shape,
             )
-            .pointerInput(key, onTap, onDoubleTap, onLongPress) {
-                detectTapGestures(
-                    onTap = {
+            .pointerInput(key.id, isArrow) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    pressed = true
+                    var secondaryFired = false
+
+                    val holdJob = when {
+                        isArrow -> scope.launch {
+                            delay(ARROW_REPEAT_INITIAL_MS)
+                            secondaryFired = true
+                            while (true) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                currentOnTap()
+                                delay(ARROW_REPEAT_INTERVAL_MS)
+                            }
+                        }
+                        currentOnLongPress != null -> scope.launch {
+                            delay(LONG_PRESS_THRESHOLD_MS)
+                            secondaryFired = true
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            currentOnLongPress?.invoke()
+                        }
+                        else -> null
+                    }
+
+                    // For repeatable arrows, fire the first step immediately on down for snappy cursor control.
+                    if (isArrow) {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onTap()
-                    },
-                    onDoubleTap = onDoubleTap?.let { handler ->
-                        {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            handler()
+                        currentOnTap()
+                    }
+
+                    val up = waitForUpOrCancellation()
+                    holdJob?.cancel()
+                    pressed = false
+
+                    if (up != null && !secondaryFired && !isArrow) {
+                        val doubleTapHandler = currentOnDoubleTap
+                        if (doubleTapHandler != null) {
+                            // Zero-lag sticky modifier: first tap arms immediately; second tap within 320ms locks.
+                            val now = SystemClock.uptimeMillis()
+                            if (currentModState == ModifierState.Armed && now - lastStickyTapMs <= STICKY_DOUBLE_TAP_WINDOW_MS) {
+                                lastStickyTapMs = 0L
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                doubleTapHandler()
+                            } else {
+                                lastStickyTapMs = now
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                currentOnTap()
+                            }
+                        } else {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            currentOnTap()
                         }
-                    },
-                    onLongPress = onLongPress?.let { handler ->
-                        {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            handler()
-                        }
-                    },
-                )
+                    }
+                }
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -238,10 +303,10 @@ private fun ExtraKeyCap(
         if (hint != null) {
             Text(
                 text = hint,
-                color = palette.foreground.copy(alpha = 0.38f),
+                color = palette.foreground.copy(alpha = 0.42f),
                 fontFamily = PiMonoFamily,
-                fontSize = 8.sp,
-                lineHeight = 8.sp,
+                fontSize = 9.sp,
+                lineHeight = 9.sp,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(top = 2.dp, end = 3.dp),
@@ -252,7 +317,9 @@ private fun ExtraKeyCap(
             color = textColor,
             fontFamily = PiMonoFamily,
             fontWeight = if (modifierState.isActive) FontWeight.Bold else FontWeight.Medium,
-            fontSize = if (key.label.length >= 4) 10.sp else 12.sp,
+            fontSize = 12.sp,
+            letterSpacing = if (key.label.length >= 4) (-0.5).sp else 0.sp,
+            softWrap = false,
             maxLines = 1,
         )
     }

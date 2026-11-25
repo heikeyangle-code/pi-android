@@ -129,8 +129,10 @@ fun TerminalPane(
             private var scaleAccumulator = 1.0f
 
             override fun onScale(scale: Float): Float {
-                if (scale < 0.9f || scale > 1.1f) {
-                    val isUp = scale > 1.0f
+                if (!scale.isFinite() || scale <= 0f) return scaleAccumulator
+                scaleAccumulator = (scaleAccumulator * scale).coerceIn(0.5f, 2.0f)
+                if (scaleAccumulator < 0.88f || scaleAccumulator > 1.12f) {
+                    val isUp = scaleAccumulator > 1.0f
                     val next = (PiTerminalManager.fontSizeSp + if (isUp) 1f else -1f)
                         .coerceIn(TerminalPreferences.MIN_FONT_SP, TerminalPreferences.MAX_FONT_SP)
                     if (next != PiTerminalManager.fontSizeSp) {
@@ -139,7 +141,6 @@ fun TerminalPane(
                     scaleAccumulator = 1.0f
                     return 1.0f
                 }
-                scaleAccumulator = scale
                 return scaleAccumulator
             }
 
@@ -300,8 +301,7 @@ fun TerminalPane(
                     )
                     Text(
                         text = tr("正在启动终端…", "Starting terminal…"),
-                        color = palette.foreground.copy(alpha = 0.7f),
-                        fontFamily = PiMonoFamily,
+                        color = palette.foreground.copy(alpha = 0.75f),
                         fontSize = 13.sp,
                     )
                 }
@@ -334,8 +334,8 @@ fun TerminalPane(
                     Text(
                         text = msg,
                         color = palette.foreground,
-                        fontFamily = PiMonoFamily,
-                        fontSize = 11.sp,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
                     )
                 }
             }
@@ -420,8 +420,7 @@ private fun ExitedBanner(
     ) {
         Text(
             text = label,
-            color = palette.foreground.copy(alpha = 0.72f),
-            fontFamily = PiMonoFamily,
+            color = palette.foreground.copy(alpha = 0.78f),
             fontSize = 12.sp,
             modifier = Modifier.weight(1f),
         )

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -27,12 +28,13 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.font.FontWeight
@@ -804,11 +807,11 @@ internal fun WorkspaceFilterField(
 private const val RECENT_ROW_MS = 10 * 60 * 1000L
 
 /**
- * 路径条：工作区药丸 + 工作区内的子路径，横向可滚，进到深处时自动滚到当前层。
- * 工作区之外（根目录下别处）则是药丸 + 「根 / a / b」整条路径，点药丸回工作区。
+ * Interactive project switcher mounted directly inside `PiTopBar(titleContent = ...)`.
+ * Replaces the old 160dp WorkspaceHeroCard so files take center stage immediately.
  */
 @Composable
-internal fun WorkspaceHeroCard(
+internal fun ProjectTopBarSwitcher(
     workspaceName: String,
     relativePath: String,
     isExternal: Boolean,
@@ -817,108 +820,195 @@ internal fun WorkspaceHeroCard(
     changedCount: Int,
     runningCount: Int,
     onSwitchProject: () -> Unit,
-    onNewProject: () -> Unit,
-    onOpenTrust: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
-    val cardShape = RoundedCornerShape(14.dp)
+    val trustDotColor = when {
+        trustLabel == null -> null
+        trustTrusted == true -> palette.success
+        trustTrusted == false -> palette.error
+        else -> palette.warning
+    }
+    val scopePrefix = if (isExternal) tr("设备", "Device") else tr("沙盒", "Sandbox")
+    val metaLine = buildString {
+        append(scopePrefix)
+        append(" · ")
+        append(relativePath)
+        if (runningCount > 0) {
+            append(tr(" · ${runningCount} 运行中", " · $runningCount running"))
+        } else if (changedCount > 0) {
+            append(tr(" · ${changedCount} 改动", " · $changedCount changed"))
+        }
+    }
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 6.dp)
-            .clip(cardShape)
-            .background(palette.cardBg)
-            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), cardShape)
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onSwitchProject)
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(1.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(palette.accent.copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.FolderOpen,
-                    contentDescription = null,
-                    tint = palette.accent,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        text = workspaceName,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                        color = palette.text,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    WsBadge(
-                        text = if (isExternal) tr("设备存储", "Device") else tr("应用沙盒", "Sandbox"),
-                        tone = StateTone.Muted,
-                        dot = false,
-                    )
-                }
-                Text(
-                    text = relativePath,
-                    style = PiTheme.text.monoSmall,
-                    color = palette.dim,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (trustLabel != null) {
-                val trustTone = when (trustTrusted) {
-                    true -> StateTone.Success
-                    false -> StateTone.Error
-                    null -> StateTone.Warning
-                }
-                Box(modifier = Modifier.clickable(onClick = onOpenTrust)) {
-                    WsBadge(text = trustLabel, tone = trustTone)
-                }
-            }
-        }
-        if (changedCount > 0 || runningCount > 0) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (runningCount > 0) {
-                    WsBadge(text = tr("$runningCount 条命令运行中", if (runningCount == 1) "1 command running" else "$runningCount commands running"), tone = StateTone.Warning)
-                }
-                if (changedCount > 0) {
-                    WsBadge(text = tr("本次改动 $changedCount 项", if (changedCount == 1) "1 change" else "$changedCount changes"), tone = StateTone.Accent)
-                }
-            }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            HeroActionPill(
-                icon = Icons.Filled.SwapHoriz,
-                label = tr("切换项目", "Switch Project"),
-                primary = true,
-                modifier = Modifier.weight(1f),
-                onClick = onSwitchProject,
+            Text(
+                text = workspaceName,
+                style = PiType.topBarTitle,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
             )
-            HeroActionPill(
-                icon = Icons.Filled.Add,
-                label = tr("新建项目", "New Project"),
-                primary = false,
-                modifier = Modifier.weight(1f),
-                onClick = onNewProject,
+            if (trustDotColor != null) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(trustDotColor),
+                )
+            }
+            if (runningCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(palette.warning),
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = tr("切换项目", "Switch Project"),
+                modifier = Modifier.size(18.dp),
+                tint = palette.muted,
+            )
+        }
+        Text(
+            text = metaLine,
+            style = PiTheme.text.monoSmall,
+            color = palette.muted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * Sleek single-row inline Files section header with count, dot-file visibility toggle,
+ * sort dropdown, and search toggle.
+ */
+@Composable
+internal fun WorkspaceInlineSearchSortBar(
+    fileCount: Int?,
+    sortMode: WorkspaceSort,
+    sortMenuExpanded: Boolean,
+    onSortMenuToggle: (Boolean) -> Unit,
+    onSelectSort: (WorkspaceSort) -> Unit,
+    showIgnored: Boolean,
+    onToggleIgnored: () -> Unit,
+    hideDotFiles: Boolean,
+    onToggleDotFiles: () -> Unit,
+    filterOpen: Boolean,
+    filterActive: Boolean,
+    onToggleFilter: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = PiSettingsMetrics.pageHorizontal + 2.dp,
+                end = PiSettingsMetrics.pageHorizontal - 4.dp,
+                top = 12.dp,
+                bottom = 6.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = tr("文件", "Files"),
+            style = PiType.sectionHeader,
+            color = palette.muted,
+            maxLines = 1,
+        )
+        if (fileCount != null) {
+            Text(
+                text = "$fileCount",
+                style = PiTheme.text.monoSmall,
+                color = palette.dim,
+                maxLines = 1,
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onToggleDotFiles),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (hideDotFiles) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                contentDescription = if (hideDotFiles) {
+                    tr("显示隐藏文件", "Show hidden files")
+                } else {
+                    tr("隐藏点文件", "Hide dotfiles")
+                },
+                modifier = Modifier.size(18.dp),
+                tint = if (hideDotFiles) palette.accent else palette.muted,
+            )
+        }
+        Box {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onSortMenuToggle(true) }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = sortMode.label,
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
+                    maxLines = 1,
+                )
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = tr("排序方式", "Sort order"),
+                    modifier = Modifier.size(14.dp),
+                    tint = palette.muted,
+                )
+            }
+            if (sortMenuExpanded) PiMenu(
+                expanded = true,
+                onDismiss = { onSortMenuToggle(false) },
+                placement = PiMenuPlacement.Below,
+                items = WorkspaceSort.entries.map { mode ->
+                    PiMenuItem(mode.label) {
+                        onSelectSort(mode)
+                        onSortMenuToggle(false)
+                    }
+                } + PiMenuItem(
+                    if (showIgnored) tr("收起 .git / node_modules", "Hide .git / node_modules")
+                    else tr("显示 .git / node_modules", "Show .git / node_modules"),
+                ) {
+                    onToggleIgnored()
+                    onSortMenuToggle(false)
+                },
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onToggleFilter),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Search,
+                contentDescription = tr("筛选文件名", "Filter files"),
+                modifier = Modifier.size(19.dp),
+                tint = if (filterOpen || filterActive) palette.accent else palette.muted,
             )
         }
     }
@@ -928,78 +1018,64 @@ internal fun WorkspaceHeroCard(
 internal fun ProjectConfigQuickCard(
     title: String,
     subtitle: String,
+    icon: ImageVector,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val palette = PiTheme.palette
     val shape = RoundedCornerShape(12.dp)
-    Column(
-        modifier = modifier
-            .clip(shape)
-            .background(palette.cardBg)
-            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), shape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 11.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Text(
-            text = title,
-            style = PiType.rowTitle.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
-            color = palette.text,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = subtitle,
-            style = PiTheme.text.meta,
-            color = palette.muted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
-private fun HeroActionPill(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    primary: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val palette = PiTheme.palette
-    val shape = RoundedCornerShape(9.dp)
     Row(
         modifier = modifier
-            .height(36.dp)
             .clip(shape)
-            .background(if (primary) palette.accent.copy(alpha = 0.14f) else palette.pageBg.copy(alpha = 0.45f))
-            .border(
-                width = if (primary) 1.dp else PiSpacing.hairlineThin,
-                color = if (primary) palette.accent.copy(alpha = 0.42f) else palette.borderMuted.copy(alpha = 0.65f),
-                shape = shape,
-            )
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), shape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 11.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = if (primary) palette.accent else palette.text.copy(alpha = 0.88f),
-            modifier = Modifier.size(15.dp),
-        )
-        Text(
-            text = label,
-            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-            color = if (primary) palette.accent else palette.text.copy(alpha = 0.88f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(palette.accent.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = palette.accent,
+            )
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = title,
+                style = PiType.rowTitle.copy(fontSize = 14.sp),
+                color = palette.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = subtitle,
+                style = PiTheme.text.meta,
+                color = palette.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
+/**
+ * Sticky full-width Studio path bar pinned directly beneath `PiTopBar` (outside `LazyColumn`).
+ * Features always-working Up button (except at `/`), Location Jump pill (`~ ▾` / `/ ▾` / `SD ▾`),
+ * Home shortcut when outside the active project, horizontally scrollable breadcrumbs,
+ * and right-pinned `设为 CWD` pill for any writable directory.
+ */
 @Composable
 internal fun WorkspacePathBar(
     workspaceName: String,
@@ -1007,7 +1083,10 @@ internal fun WorkspacePathBar(
     homeSize: Int,
     crumbs: List<String>,
     rootLabel: String,
+    locationLabel: String,
     canSetAsProject: Boolean,
+    onUp: () -> Unit,
+    onOpenLocations: () -> Unit,
     onHome: () -> Unit,
     onGo: (Int) -> Unit,
     onSetAsProject: () -> Unit,
@@ -1015,56 +1094,76 @@ internal fun WorkspacePathBar(
     val palette = PiTheme.palette
     val scroll = rememberScrollState()
     val atRoot = inside && crumbs.size == homeSize
-    val canStepUp = (inside && crumbs.size > homeSize) || (!inside && crumbs.isNotEmpty())
-    val barShape = RoundedCornerShape(10.dp)
+    val canStepUp = crumbs.isNotEmpty()
+    val hairlineColor = palette.borderMuted.copy(alpha = 0.55f)
 
-    LaunchedEffect(crumbs) {
-        delay(60)
+    LaunchedEffect(crumbs, locationLabel) {
+        delay(50)
         scroll.animateScrollTo(scroll.maxValue)
     }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .drawBehind {
+                val strokePx = PiSpacing.hairlineThin.toPx()
+                drawLine(
+                    color = hairlineColor,
+                    start = Offset(0f, size.height - strokePx / 2f),
+                    end = Offset(size.width, size.height - strokePx / 2f),
+                    strokeWidth = strokePx,
+                )
+            }
             .padding(
                 start = PiSettingsMetrics.pageHorizontal,
                 end = PiSettingsMetrics.pageHorizontal,
-                top = 4.dp,
-                bottom = 4.dp,
-            )
-            .clip(barShape)
-            .background(palette.cardBg)
-            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.50f), barShape)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+                top = 6.dp,
+                bottom = 8.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // 子目录或外部路径内提供一键返回上一级（不把沙盒底层 /workspace/pi/workspaces 暴露成杂乱下拉菜单；
-        // 高级用户仍可通过右上角 ⋮ →「浏览容器根目录 (/)」访问完整 rootfs）。
         if (canStepUp) {
             PathBarIconButton(
                 icon = Icons.Filled.ArrowUpward,
                 description = tr("返回上一级目录", "Up one folder"),
                 accent = true,
-                onClick = { onGo(crumbs.size - 1) },
+                onClick = onUp,
             )
-        } else {
-            Box(
-                modifier = Modifier.size(28.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.FolderOpen,
-                    contentDescription = null,
-                    modifier = Modifier.size(15.dp),
-                    tint = palette.accent.copy(alpha = 0.85f),
-                )
-            }
+        }
+
+        // Always-visible Location Jump pill (`~ ▾` / `/ ▾` / `SD ▾`)
+        val locShape = RoundedCornerShape(8.dp)
+        Row(
+            modifier = Modifier
+                .height(30.dp)
+                .clip(locShape)
+                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.65f), locShape)
+                .clickable(onClick = onOpenLocations)
+                .padding(start = 8.dp, end = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = locationLabel,
+                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = palette.text,
+                maxLines = 1,
+            )
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = tr("快速跳转位置", "Jump to location"),
+                modifier = Modifier.size(14.dp),
+                tint = palette.muted,
+            )
         }
 
         if (!atRoot) {
             PathBarIconButton(
                 icon = Icons.Filled.Home,
-                description = tr("回到项目根目录", "Back to project root"),
+                description = tr("回到当前项目", "Back to project root"),
                 accent = false,
                 onClick = onHome,
             )
@@ -1079,9 +1178,9 @@ internal fun WorkspacePathBar(
             val sep: @Composable () -> Unit = {
                 Text(
                     "›",
-                    modifier = Modifier.padding(horizontal = 5.dp),
+                    modifier = Modifier.padding(horizontal = 4.dp),
                     style = PiTheme.text.monoSmall,
-                    color = palette.muted.copy(alpha = 0.7f),
+                    color = palette.muted.copy(alpha = 0.65f),
                     maxLines = 1,
                 )
             }
@@ -1114,10 +1213,10 @@ internal fun WorkspacePathBar(
                 }
             }
         }
-        // 浏览到任意其他目录时，一键将其设为当前 Pi 项目（cwd）
+
         if (canSetAsProject) {
             WsChip(
-                text = tr("设为项目", "Use as CWD"),
+                text = tr("设为 CWD", "Use as CWD"),
                 solid = true,
                 onClick = onSetAsProject,
             )
@@ -1127,21 +1226,24 @@ internal fun WorkspacePathBar(
 
 @Composable
 private fun PathBarIconButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     description: String,
     accent: Boolean,
     onClick: () -> Unit,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(7.dp)
+    val shape = RoundedCornerShape(8.dp)
     Box(
         Modifier
             .size(30.dp)
             .clip(shape)
-            .background(if (accent) palette.accent.copy(alpha = 0.12f) else palette.pageBg.copy(alpha = 0.55f))
+            .background(
+                if (accent) palette.accent.copy(alpha = 0.12f)
+                else MaterialTheme.colorScheme.surfaceContainerLow,
+            )
             .border(
                 PiSpacing.hairlineThin,
-                if (accent) palette.accent.copy(alpha = 0.32f) else palette.borderMuted.copy(alpha = 0.55f),
+                if (accent) palette.accent.copy(alpha = 0.32f) else palette.borderMuted.copy(alpha = 0.60f),
                 shape,
             )
             .clickable(onClick = onClick),
@@ -1152,6 +1254,11 @@ private fun PathBarIconButton(
             contentDescription = description,
             modifier = Modifier.size(16.dp),
             tint = if (accent) palette.accent else palette.muted,
+        )
+    }
+}
+
+te.accent else palette.muted,
         )
     }
 }

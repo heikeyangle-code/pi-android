@@ -2,7 +2,6 @@ package app.pi.ui.terminal
 
 import android.content.Context
 import app.pi.runtime.PiPaths
-import app.pi.runtime.PtyLauncher
 import app.pi.settings.PiSettingsFileStore
 import app.pi.ui.settings.PiSettingsStore
 import java.io.File
@@ -15,9 +14,8 @@ internal fun terminalSettingsStore(context: Context): PiSettingsStore {
         filesDir = app.filesDir,
         nativeLibDir = File(app.applicationInfo.nativeLibraryDir),
     )
-    return PiSettingsFileStore.forWorkspace(
-        agentDir = paths.agentDir,
-        workspace = PtyLauncher.workspaceHost(app),
+    return PiSettingsFileStore.shared(
+        globalFile = File(paths.agentDir, "settings.json"),
     )
 }
 

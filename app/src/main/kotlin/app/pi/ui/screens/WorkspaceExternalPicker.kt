@@ -260,19 +260,28 @@ private fun WorkspaceExternalBrowser(
 
     val volumeRoot = volumes.firstOrNull { here == it || here.startsWith(it.trimEnd('/') + "/") }
     // Quick shortcuts for common storage roots so users don't have to hunt through 30 Android folders.
-    val quickPlaces = remember(volumes) {
-        buildList {
-            volumes.forEachIndexed { idx, root ->
-                add((if (idx == 0) tr("内部存储", "Internal") else root.substringAfterLast('/')) to root)
-            }
-            val primary = volumes.firstOrNull()
-            if (primary != null) {
-                listOf("Download" to tr("下载", "Download"), "Documents" to tr("文档", "Documents")).forEach { (dir, label) ->
-                    val f = File(primary, dir)
-                    if (f.isDirectory) add(label to f.absolutePath)
-                }
-            }
+    val quickPlaces by androidx.compose.runtime.produceState(
+        initialValue = volumes.mapIndexed { idx, root ->
+            (if (idx == 0) tr("内部存储", "Internal") else root.substringAfterLast('/')) to root
+        },
+        key1 = volumes,
+    ) {
+        val base = volumes.mapIndexed { idx, root ->
+            (if (idx == 0) tr("内部存储", "Internal") else root.substringAfterLast('/')) to root
         }
+        val primary = volumes.firstOrNull()
+        val extras = if (primary != null) {
+            withContext(Dispatchers.IO) {
+                listOf("Download" to tr("下载", "Download"), "Documents" to tr("文档", "Documents"))
+                    .mapNotNull { (dir, label) ->
+                        val f = File(primary, dir)
+                        if (runCatching { f.isDirectory }.getOrDefault(false)) label to f.absolutePath else null
+                    }
+            }
+        } else {
+            emptyList()
+        }
+        value = base + extras
     }
 
     WsSheet(
@@ -369,16 +378,14 @@ private fun WorkspaceExternalBrowser(
             WsNotice(text = createError.orEmpty(), tone = StateTone.Warning, glyph = "!")
         }
 
-        if (refusal != null) {
+        if (loading && levelHere == null) {
+            WsNotice(text = tr("正在读这个目录…", "Reading directory…"), tone = StateTone.Muted, glyph = "·")
+        } else if (refusal != null) {
             WsNotice(
                 text = refusal,
                 tone = if (levelHere == null) StateTone.Muted else StateTone.Warning,
                 glyph = if (levelHere == null) "·" else "!",
             )
-        }
-
-        if (loading && levelHere == null) {
-            WsNotice(text = tr("正在读这个目录…", "Reading directory…"), tone = StateTone.Muted, glyph = "·")
         }
 
         val children = levelHere?.children
@@ -589,7 +596,7 @@ private fun readLevel(dir: File): ExternalLevel {
     )
 }
 
-private fun storageAccessGranted(context: Context): Boolean =
+internal fun storageAccessGranted(context: Context): Boolean =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         runCatching { Environment.isExternalStorageManager() }.getOrDefault(false)
     } else {
