@@ -564,9 +564,9 @@ fun PiSwitchRow(
  *    while the engine keeps running: the terminal key bar and the shortcuts are
  *    applied by this app the moment they are written, and pi re-reads a theme
  *    selection when its own UI asks for it.
- *  - [RestartEngine] — the value is read **only when `pi --mode rpc` starts**:
- *    pi's process configuration (`--offline`, `PI_CACHE_RETENTION`, the four
- *    `--no-*` suppressions) and the resources its loader caches at startup.
+ *  - [RestartEngine] — the value is read **only when the SDK Host engine starts**:
+ *    process configuration (`PI_OFFLINE`, `PI_CACHE_RETENTION`, the four
+ *    resource-discovery suppressions) and resources cached at boot.
  *    Nothing short of a new process applies it, so the badge must not say
  *    "重载" — a word that promises the change is one tap away.
  *  - [NewSession] — the value is read when a session's resource loader is rebuilt
@@ -589,8 +589,8 @@ fun PiSwitchRow(
  *  - [Immediate] — nothing to wait for.
  *
  * pi itself has only two of these timings in its TUI (a settings write is either
- * live or needs `/reload`); the split exists because the app must not promise
- * pi's `/reload` over RPC, where it does not exist.
+ * live or needs `/reload`); the finer split reflects what needs an engine restart
+ * vs. a new session vs. immediate reload on mobile.
  *
  * **The badge composable that used to render this enum is gone** (B7, the
  * 死代码 收尾项): `PiEffectiveBadge` had zero call sites — `PiSettingsRegistry`

@@ -536,7 +536,7 @@ async function main() {
     if (fd.added.length || fd.removed.length) {
       level = "ACTION";
       details.push(`CLI flags 变化: +[${fd.added.join(", ")}] -[${fd.removed.join(", ")}]`);
-      files.push("protocol/src/main/kotlin/app/pi/protocol/PiPreSpawnConfig.kt", "app/src/main/kotlin/app/pi/host/OpenArgsFactory.kt");
+      files.push("protocol/src/main/kotlin/app/pi/protocol/PiLaunchOptions.kt", "app/src/main/kotlin/app/pi/host/OpenArgsFactory.kt");
     } else if (!argsEq) {
       details.push(`CLI flags 集合未变（${nFlags.length} 个），cli/args.js 仅文案/环境变量帮助变化`);
     } else {
@@ -771,7 +771,7 @@ async function main() {
     "```bash",
     `# 1. 修改 tools/fetch-runtime.mjs 的 PI_VERSION = "${vNew}" 并补充审计记录`,
     "node tools/fetch-runtime.mjs --refresh-engine-lock",
-    "# 2. 按上方清单适配 sdk-host / pi-extensions / rpc / app 及许可证资产",
+    "# 2. 按上方清单适配 sdk-host / pi-extensions / protocol / app 及许可证资产",
     "# 3. 更新本地契约包并跑全量验证",
     `mkdir -p build/pi-contract && (cd build/pi-contract && npm install --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@${vNew})`,
     "node tools/sdk-host/contract.mjs",

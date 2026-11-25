@@ -385,45 +385,6 @@ sealed interface PiEvent {
     }
 
     /**
-     * A blocking dialog from an extension (`ctx.ui.select/confirm/input/editor`)
-     * or a fire-and-forget notification.
-     *
-     * Field names are pi's own (`rpc-types.ts` `RpcExtensionUIRequest`), including
-     * the ones only some methods carry: `prefill` on `editor`, `notifyType` on
-     * `notify`, `statusKey`/`statusText` on `setStatus`, and
-     * `widgetKey`/`widgetLines`/`widgetPlacement` on `setWidget`. Modelling them
-     * as one wide type keeps the parser total (a request never fails to parse
-     * because a field it did not expect was missing).
-     *
-     * Blocking methods (`select`/`confirm`/`input`/`editor`) must be answered
-     * via `ui.respond` (`PiEngineSession.respondUi`); note [timeoutMs] — pi
-     * resolves on its own when it elapses, so the UI has to count down.
-     */
-    data class ExtensionUiRequest(
-        val uiId: String,
-        val method: String,
-        val title: String?,
-        val message: String?,
-        val options: List<String>,
-        val placeholder: String?,
-        /** `editor`'s initial text; `set_editor_text`'s payload. */
-        val text: String?,
-        /** `notify`'s severity: `info` / `warning` / `error`. */
-        val notifyType: String?,
-        /** `setStatus` key, and its text (null clears the row). */
-        val statusKey: String?,
-        val statusText: String?,
-        /** `setWidget` key, its lines, and `aboveEditor` / `belowEditor`. */
-        val widgetKey: String?,
-        val widgetLines: List<String>,
-        val widgetPlacement: String?,
-        val timeoutMs: Long?,
-        val raw: JsonObject,
-    ) : PiEvent {
-        override val type = "extension_ui_request"
-    }
-
-    /**
      * An extension threw. Carries enough to say *which* one: without
      * [extensionPath] a failure is unattributable, and [event] names the pi hook
      * it blew up in. Both are pi's own field names (`docs/rpc.md` §extension_error;
@@ -620,26 +581,6 @@ object PiEvents {
         )
 
         "summarization_retry_finished" -> PiEvent.SummarizationRetryFinished
-
-        "extension_ui_request" -> PiEvent.ExtensionUiRequest(
-            uiId = o.str("id").orEmpty(),
-            method = o.str("method").orEmpty(),
-            title = o.str("title"),
-            message = o.str("message"),
-            options = o.strList("options"),
-            placeholder = o.str("placeholder"),
-            // `editor` sends its initial content as `prefill`; `set_editor_text`
-            // sends `text`.
-            text = o.str("prefill") ?: o.str("text") ?: o.str("value"),
-            notifyType = o.str("notifyType"),
-            statusKey = o.str("statusKey"),
-            statusText = o.str("statusText"),
-            widgetKey = o.str("widgetKey"),
-            widgetLines = o.strList("widgetLines"),
-            widgetPlacement = o.str("widgetPlacement"),
-            timeoutMs = o.long("timeout") ?: o.long("timeoutMs"),
-            raw = o,
-        )
 
         "extension_error" -> PiEvent.ExtensionError(
             message = o.str("message") ?: o.str("error"),

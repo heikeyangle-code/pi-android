@@ -33,7 +33,7 @@ node tools/pi-upgrade-audit.mjs --report build/pi-upgrade-report.md
 | 2. SDK Host 契约 | 运行 `tools/sdk-host/contract.mjs <newPi>`，核对所有公开导出 + 15 条内部 `dist/` 路径 + `pi-ai/dist/models.js` | `app/src/main/assets/guest/sdk-host/*`, `tools/sdk-host/contract.mjs` |
 | 3. 设置 Schema | `settings-manager.{d.ts,js}` 增删改键对比 `PiSettingsRegistry.kt` | `PiSettingsRegistry.kt`, `PiSessionViewModel.kt`, `commands/settings.mjs` |
 | 4. 主题令牌与配色 | `dark.json` / `light.json` 逐键逐值 diff + `theme.js` 变更 | `PiPalette.kt`, `PiThemeFiles.kt`, `colors.xml`, `ui/theme.mjs` |
-| 5. 内建命令与 CLI Flags | `BUILTIN_SLASH_COMMANDS` + `cli/args.js` `--flag` 集合 diff | `PiSlashCommands.kt`, `commands/catalog.mjs`, `PiPreSpawnConfig.kt`, `OpenArgsFactory.kt` |
+| 5. 内建命令与 CLI Flags | `BUILTIN_SLASH_COMMANDS` + `cli/args.js` `--flag` 集合 diff | `PiSlashCommands.kt`, `commands/catalog.mjs`, `PiLaunchOptions.kt`, `OpenArgsFactory.kt` |
 | 6. 工具、渲染器、图片预算、信任 | `core/tools/*`, `renderers/*`, `image-resize-core.js`, `project-trust.js` | `ReadBlock.kt` 等 8 张工具卡、`ToolOutputParse.kt`, `AttachmentBudget.kt`, `ChatAttachments.kt`, `controller.mjs` |
 | 7. Runtime / Session / 事件面 | `AgentSessionRuntime`/`AgentSession`/`SessionManager`/`rpc-types` `.d.ts` 与实现 diff | `controller.mjs`, `commands/session.mjs`, `protocol/.../Events.kt`, `protocol/.../Transcript.kt` |
 | 8. 官方模型目录与 Provider | `pi-ai/dist/providers/data` `schemaVersion`、provider 增删、`env-api-keys.js` | `commands/model.mjs`, `ui/models/*` |

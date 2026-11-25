@@ -1,12 +1,12 @@
 package app.pi.protocol
 
 /**
- * pi's **pre-spawn** configuration: the process knobs that are decided when
- * `pi --mode rpc` starts and that the RPC command surface cannot change.
+ * SDK Host process & `session.open` launch options: the process-level knobs
+ * decided when the SDK Host boots or opens a session (`OpenArgsFactory`).
  *
- * `docs/rpc.md` §"Starting RPC Mode" documents the CLI flags and pi's
- * `docs/environment-variables.md` §"Pi Process Configuration" documents the
- * variables. These switches are here — rather than in the command builders — for
+ * Environment variables follow pi's `docs/environment-variables.md` §"Pi Process
+ * Configuration"; resource suppression switches map directly to SDK Host
+ * `session.open` arguments. These switches are here — rather than in the command builders — for
  * the reason `docs/gap-disposition.md` records against `PiEngineHost`: the map
  * of pi's process configuration was hard-wired, so a client could not ask for
  * any of them.

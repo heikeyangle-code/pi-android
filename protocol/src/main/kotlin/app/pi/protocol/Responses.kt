@@ -44,10 +44,8 @@ import kotlinx.serialization.json.JsonPrimitive
  *     dropped, because dropping it would lose the message around it.
  *  4. **A missing or non-object `data` makes the reader return `null`** (or an
  *     empty collection). Callers that need a value — the `:app` façade —
- *     translate that into an explicit error, which is what keeps "pi sent a
- *     legitimate `data: null`" (documented for `cycle_model` and
- *     `cycle_thinking_level`) distinguishable from "pi sent something we could
- *     not read"; see [dataIsNull].
+ *     translate that into an explicit error, while optional results (`cycle_model`,
+ *     `cycle_thinking_level`) treat `null` / absent payloads explicitly.
  *  5. **The readers never throw.** Every cast is a safe cast, so a shape change
  *     degrades the UI instead of crashing it.
  *
@@ -332,21 +330,6 @@ object PiResponses {
 
     // ------------------------------------------------------------------ helpers
 
-    /**
-     * True when pi sent no `data` at all, or an explicit `data: null`.
-     *
-     * `rpc-mode.ts`'s `success()` omits `data` only when the argument was
-     * `undefined`; an explicit `null` is serialised (`success(id, "cycle_model",
-     * null)`), which is the documented "only one model available" case. Both
-     * spellings mean "no payload", and both must be distinguished from a payload
-     * a reader failed to understand.
-     */
-    fun dataIsNull(response: PiEvent.Response): Boolean =
-        dataIsNull(response.data)
-
-    fun dataIsNull(element: JsonElement?): Boolean =
-        element == null || element is JsonNull
-
     // ------------------------------------------------------------------ readers
 
     fun slashCommands(response: PiEvent.Response): List<SlashCommand> =
@@ -395,7 +378,7 @@ object PiResponses {
             sessionId = obj.str("sessionId"),
             sessionName = obj.str("sessionName"),
             autoCompactionEnabled = obj.bool("autoCompactionEnabled") ?: false,
-            messageCount = obj.int("messageCount") ?: 0,
+            messageCount = obj.int("messageCount") ?: obj.obj("messageCounts")?.int("total") ?: 0,
             pendingMessageCount = obj.int("pendingMessageCount") ?: 0,
         )
     }
@@ -613,13 +596,6 @@ object PiResponses {
     fun messages(element: JsonElement?): List<PiMessage> =
         dataArray(element, "messages").mapNotNull { (it as? JsonObject)?.let(::parsePiMessage) }
 
-    /** `export_html` → `{ path: string }`. */
-    fun exportPath(response: PiEvent.Response): String? =
-        exportPath(response.data)
-
-    fun exportPath(element: JsonElement?): String? =
-        dataObject(element)?.str("path")
-
     /** `export_html` → typed wrapper. */
     fun exportResult(response: PiEvent.Response): ExportResult? =
         exportResult(response.data)
@@ -628,13 +604,6 @@ object PiResponses {
         val obj = dataObject(element) ?: return null
         return ExportResult(path = obj.str("path"))
     }
-
-    /** `new_session` / `switch_session` / `clone` → `{ cancelled: boolean }`. */
-    fun cancelled(response: PiEvent.Response): Boolean =
-        cancelled(response.data)
-
-    fun cancelled(element: JsonElement?): Boolean =
-        dataObject(element)?.bool("cancelled") ?: false
 
     /**
      * `get_entries` → the raw entry objects.

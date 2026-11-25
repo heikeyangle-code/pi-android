@@ -34,13 +34,8 @@ class HostEngineApi(private val commands: HostCommands) {
     // ---- 读 ----
 
     /** 现在的会话状态。其实是一次对账（`session.snapshot`），UI 平时应直接吃 `stateStore`。 */
-    suspend fun getState(): PiResponses.SessionState {
-        val snap = guarded("session.snapshot") { commands.snapshot() }
-        // 宿主快照用 messageCounts.total，读取器读 messageCount。
-        val total = (snap["messageCounts"] as? JsonObject)?.get("total")
-        val shaped = JsonObject(snap + ("messageCount" to (total ?: JsonPrimitive(0))))
-        return required("session.snapshot", PiResponses.sessionState(shaped))
-    }
+    suspend fun getState(): PiResponses.SessionState =
+        required("session.snapshot", PiResponses.sessionState(guarded("session.snapshot") { commands.snapshot() }))
 
     suspend fun getMessages(): List<PiMessage> = PiResponses.messages(read("session.messages"))
 

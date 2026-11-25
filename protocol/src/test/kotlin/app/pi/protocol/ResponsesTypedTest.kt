@@ -658,10 +658,4 @@ class ResponsesTypedTest {
         assertEquals(emptyList<PiResponses.SlashCommand>(), PiResponses.slashCommands(responseWithoutData("get_commands")))
     }
 
-    @Test
-    fun `dataIsNull separates an explicit null payload from an absent one`() {
-        assertTrue(PiResponses.dataIsNull(responseWithoutData("cycle_model")))
-        assertTrue(PiResponses.dataIsNull(responseWithNullData("cycle_model")))
-        assertFalse(PiResponses.dataIsNull(response("cycle_model", """{"isScoped":false}""")))
-    }
 }

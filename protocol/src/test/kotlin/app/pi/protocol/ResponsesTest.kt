@@ -139,8 +139,20 @@ class ResponsesTest {
     @Test
     fun `small payload readers match pi's field names`() {
         assertEquals("hello", PiResponses.lastAssistantText(response("get_last_assistant_text", """{"text":"hello"}""")))
-        assertEquals("/out/x.html", PiResponses.exportPath(response("export_html", """{"path":"/out/x.html"}""")))
-        assertTrue(PiResponses.cancelled(response("switch_session", """{"cancelled":true}""")))
+        assertEquals("/out/x.html", PiResponses.exportResult(response("export_html", """{"path":"/out/x.html"}"""))?.path)
+        assertEquals(true, PiResponses.cancelledResult(response("switch_session", """{"cancelled":true}"""))?.cancelled)
+    }
+
+    @Test
+    fun `sessionState reads SDK Host nested messageCounts total natively`() {
+        val state = PiResponses.sessionState(
+            response(
+                "session.snapshot",
+                """{"sessionId":"s1","thinkingLevel":"medium","isStreaming":false,"messageCounts":{"total":17,"user":8}}""",
+            ),
+        )!!
+        assertEquals("s1", state.sessionId)
+        assertEquals(17, state.messageCount)
     }
 
     @Test

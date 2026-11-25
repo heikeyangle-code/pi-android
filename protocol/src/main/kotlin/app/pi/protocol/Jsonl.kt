@@ -1,17 +1,17 @@
 package app.pi.protocol
 
 /**
- * Frame codec for pi's `--mode rpc` transport.
+ * Frame codec for SDK Host stdio frames and JSONL session files.
  *
- * pi speaks strict LF-delimited JSONL. Two properties drive this implementation,
- * and getting either wrong corrupts frames in ways that only show up with
- * unusual model output:
+ * Both the SDK Host wire protocol and pi's session logs use strict LF-delimited
+ * JSONL. Two properties drive this implementation, and getting either wrong
+ * corrupts frames in ways that only show up with unusual model output:
  *
  *  1. **Split on `'\n'` only.** `U+2028` (LINE SEPARATOR) and `U+2029`
  *     (PARAGRAPH SEPARATOR) are legal *unescaped* inside JSON strings, and
  *     models do emit them. `BufferedReader.readLine`, `String.lines()` and
  *     `lineSequence()` all treat them as line breaks, so none of them may be
- *     used here. pi's own `src/modes/rpc/jsonl.ts` documents the same trap.
+ *     used here.
  *
  *  2. **Strip a single trailing `'\r'`.** Some transports (and pipes on
  *     Windows) produce CRLF; the record itself is the LF-delimited span.

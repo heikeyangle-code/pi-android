@@ -1337,10 +1337,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * `--no-prompt-templates` / `--no-themes`, `:169`, `:188`, `:190`, `:192`;
      * `PI_CACHE_RETENTION=long`, `packages/ai/src/api/anthropic-messages.ts:64`). So
      * the *keys* are ours and the *values* are pi's, handed over in [PiLaunchOptions]
-     * because that is the only moment pi reads them. The authoritative table —
-     * including which CLI knobs pi already covers with a settings key, and which are
-     * meaningless on a phone — is `protocol/.../PiPreSpawnConfig.kt`
-     *.
+     * because that is the only moment pi reads them (forwarded to SDK Host
+     * `session.open` via `OpenArgsFactory`).
      *
      * **The two prompt rows are not here.** They were `--system-prompt` /
      * `--append-system-prompt` once; pi reads the same two values from
@@ -1763,6 +1761,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         renderInvalidateJob?.cancel()
         renderInvalidateJob = viewModelScope.launch {
             engine.hostEvents.collect { ev ->
+                onExtensionHostEvent(ev)
                 if (ev.name == "ui.cancel") {
                     // 宿主收回一个挂起对话框（超时 / AbortSignal / 会话替换）：立刻移出队列，避免死弹窗滞留屏幕。
                     val cancelId = ((ev.data as? JsonObject)?.get("id") as? JsonPrimitive)?.takeIf { it.isString }?.content
@@ -1853,6 +1852,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     refreshCommands()
                     seedAutoRetryFromSettings()
                 }
+            }
+        }
+        hostRequestJob?.cancel()
+        hostRequestJob = viewModelScope.launch {
+            engine.hostRequests.collect { req ->
+                onExtensionHostRequest(req)
             }
         }
         // 事件可能在界面订阅之前就发过了：引擎就绪后延迟问一次信任状态，避免与 replayHistory 争抢单线程 Node。
@@ -2413,8 +2418,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
 
-            is PiEvent.ExtensionUiRequest -> onExtensionUi(event)
-
             // `set_thinking_level` clamps silently (`agent-session.ts`
             // `setThinkingLevel`), so this event — not the requested value — is
             // the truth. pi advertises the twin `thinking_level_changed` on the
@@ -2796,7 +2799,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *   expects — which is why the symptom looked random.
      *
      *   For a brand-new session the engine is the only authority: `get_entries` answers an
-     *   empty page for it (`replayHistoryOverRpc`, whose KDoc says so). So this flag skips
+     *   empty page for it (`replayHistoryFromHost`, whose KDoc says so). So this flag skips
      *   the file question entirely rather than trying to answer it.
      */
     internal suspend fun replayHistory(engine: PiEngineSession, brandNew: Boolean = false) {
@@ -2850,7 +2853,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 return
             }
         }
-        replayHistoryOverRpc(engine)
+        replayHistoryFromHost(engine)
     }
 
     /**
@@ -2901,7 +2904,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * Kept in one place so the two callers cannot drift, and so the reason it is now
      * the *second* choice is written down next to it.
      */
-    internal suspend fun replayHistoryOverRpc(engine: PiEngineSession) {
+    internal suspend fun replayHistoryFromHost(engine: PiEngineSession) {
         val page = try {
             // 原始条目而不是类型化的 `SessionEntry`：`seedHistory` 折的是 pi 那一层 JSON。
             engine.api.getEntriesRaw()
@@ -3669,6 +3672,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private var renderInvalidateJob: Job? = null
+    private var hostRequestJob: Job? = null
     private val _renderRev = MutableStateFlow(0)
 
     /** 宿主说「渲染结果变了」时加一；聊天页据此换一个 [ToolRenderer] 实例，卡片的 produceState 就重取。 */
@@ -4037,7 +4041,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         call(tr("读取会话条目", "Load session entries"), NoEngine.Quiet) {
             val file = resolveSessionFile()
             if (file == null) {
-                refreshEntriesOverRpc()
+                refreshEntriesFromHost()
                 return@call
             }
             val parsed = withContext(Dispatchers.IO) {
@@ -4048,7 +4052,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 if (complete) out else null
             }
             if (parsed == null) {
-                refreshEntriesOverRpc()
+                refreshEntriesFromHost()
                 return@call
             }
             _state.update { s -> s.copy(entries = parsed) }
@@ -4056,7 +4060,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** `get_entries` for the entry log — see [refreshEntries] for when this is used. */
-    private fun refreshEntriesOverRpc() {
+    private fun refreshEntriesFromHost() {
         call(tr("读取会话条目", "Load session entries"), NoEngine.Quiet) { api ->
             val entries = api.getEntries().entries
             _state.update { s -> s.copy(entries = entries) }

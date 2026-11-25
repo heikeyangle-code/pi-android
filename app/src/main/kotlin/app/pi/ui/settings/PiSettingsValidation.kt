@@ -22,9 +22,9 @@ import kotlinx.serialization.json.JsonPrimitive
  * `Settings` 的 getter 对坏值有两种相反的处置，这不是一枚布尔能表达的事：
  *
  *  - **`Rejected`** —— pi **抛异常**。这不是"值不好看"，是把配置文件弄坏：`httpIdleTimeoutMs`
- *    为 `null` 时 `pi --mode rpc` **启动**就抛（`main.ts:850-851` → `settings-manager.ts:936`
- *    → `:186-196` `parseTimeoutSetting`），`compaction.reserveTokens` 为 `null` 时每个回合的
- *    压缩判定都抛（`settings-manager.ts:854-880` → `core/agent-session.ts:540`）。
+ *    为 `null` 时 SDK `SettingsManager` 加载设置就抛（`core/settings-manager.js`
+ *    `parseTimeoutSetting`），`compaction.reserveTokens` 为 `null` 时每个回合的
+ *    压缩判定都抛（`core/settings-manager.js` → `core/agent-session.js`）。
  *    编辑器必须**拒绝保存**这种值。
  *  - **`Suspicious`** —— pi 不抛，但这个值会被当成数字/枚举/对象用，行为会坏或者厂商会报错
  *    （例如 `thinkingBudgets` 里的字符串、`modelThinkingLevels` 里拼错的等级）。

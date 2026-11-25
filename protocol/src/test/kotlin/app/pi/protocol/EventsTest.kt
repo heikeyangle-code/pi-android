@@ -82,27 +82,6 @@ class EventsTest {
     }
 
     @Test
-    fun `exposes an extension dialog with everything the UI needs to draw it`() {
-        val e = PiEvents.parse(
-            """{"type":"extension_ui_request","id":"u1","method":"select","title":"Dangerous command",
-                "options":["Yes","No"],"timeout":30000}""".trimIndent().replace("\n", ""),
-        )
-        e as PiEvent.ExtensionUiRequest
-        assertEquals("u1", e.uiId)
-        assertEquals("select", e.method)
-        assertEquals(listOf("Yes", "No"), e.options)
-        assertEquals(30000L, e.timeoutMs)
-    }
-
-    @Test
-    fun `empty options list is safe for non-list dialogs`() {
-        val e = PiEvents.parse("""{"type":"extension_ui_request","id":"u2","method":"confirm","message":"ok?"}""")
-        e as PiEvent.ExtensionUiRequest
-        assertEquals(emptyList<String>(), e.options)
-        assertEquals("ok?", e.message)
-    }
-
-    @Test
     fun `unknown event types are preserved, not dropped`() {
         val e = PiEvents.parse("""{"type":"brand_new_thing","payload":{"n":1}}""")
         assertTrue(e is PiEvent.Unknown)

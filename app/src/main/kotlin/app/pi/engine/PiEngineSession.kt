@@ -34,10 +34,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import java.io.BufferedWriter
 import java.io.File
@@ -188,7 +188,7 @@ class PiEngineSession(
     private val _hostEvents = MutableSharedFlow<HostSignal.Event>(extraBufferCapacity = EVENT_BUFFER)
     val hostEvents: SharedFlow<HostSignal.Event> = _hostEvents.asSharedFlow()
 
-    /** 宿主的提问（含 `auth.prompt` 等旧对话框不认识的）。旧对话框走 [events] 里的 `ExtensionUiRequest`。 */
+    /** 宿主的提问（`ui.select` / `ui.confirm` / `ui.input` / `ui.editor` / `auth.prompt` 等）。 */
     private val _hostRequests = MutableSharedFlow<HostRequest>(extraBufferCapacity = 64)
     val hostRequests: SharedFlow<HostRequest> = _hostRequests.asSharedFlow()
     private val writer: BufferedWriter =
@@ -265,6 +265,16 @@ class PiEngineSession(
 
     /** The one coroutine that drains [rescue]; cancelled by [close]. */
     private var rescueJob: Job? = null
+
+    /**
+     * Overflow / unsubscribed rescue channel for blocking host dialog requests
+     * (`ui.select` / `ui.confirm` / `ui.input` / `ui.editor`), so a dialog arriving
+     * before a ViewModel collector attaches — or while the buffer is momentarily full —
+     * either delivers once a collector appears or auto-answers on timeout instead of
+     * leaving the extension suspended forever.
+     */
+    private val rescueRequests = Channel<HostRequest>(Channel.UNLIMITED)
+    private var rescueRequestJob: Job? = null
 
     /**
      * True once [close] has begun.
@@ -479,6 +489,16 @@ class PiEngineSession(
                     true
                 } ?: false
                 if (!delivered) undeliverable(event)
+            }
+        }
+        rescueRequestJob = scope.launch {
+            for (request in rescueRequests) {
+                val delivered = withTimeoutOrNull(RESCUE_DELIVERY_TIMEOUT_MS) {
+                    _hostRequests.subscriptionCount.first { it > 0 }
+                    _hostRequests.emit(request)
+                    true
+                } ?: false
+                if (!delivered) undeliverableRequest(request)
             }
         }
         // stderr MUST be drained. pi and Node write warnings there; if nobody
@@ -723,8 +743,16 @@ class PiEngineSession(
                     else -> {
                         _hostEvents.tryEmit(signal)
                         extUiReducer.apply(signal.name, signal.data)?.let { _extUi.value = it }
-                        eventToLegacy(signal.name, signal.data)?.let { ev ->
-                            if (ev is PiEvent.ExtensionError) handleAgent(ev) else emitEvent(ev)
+                        if (signal.name == "ext.error") {
+                            (signal.data as? JsonObject)?.let { d ->
+                                handleAgent(
+                                    PiEvent.ExtensionError(
+                                        message = d.strOrNull("message") ?: d.strOrNull("error"),
+                                        extensionPath = d.strOrNull("extensionPath"),
+                                        event = d.strOrNull("event"),
+                                    ),
+                                )
+                            }
                         }
                     }
                 }
@@ -750,31 +778,32 @@ class PiEngineSession(
         emitEvent(event)
     }
 
-    /** 宿主的提问：旧对话框认识的走旧事件，其余只在 [hostRequests] 上。 */
+    /** 宿主的提问直接走 [hostRequests]；阻塞型对话框在无订阅或缓冲满时进入 [rescueRequests] 兜底。 */
     private fun onHostRequest(request: HostRequest) {
-        _hostRequests.tryEmit(request)
-        requestToLegacy(request)?.let { emitEvent(it) }
+        if (request.method in BLOCKING_DIALOG_METHODS) {
+            if (_hostRequests.subscriptionCount.value > 0 && _hostRequests.tryEmit(request)) return
+            val queued = rescueRequests.trySend(request).isSuccess
+            if (!queued) undeliverableRequest(request)
+        } else {
+            _hostRequests.tryEmit(request)
+        }
     }
 
     private fun undeliverable(event: PiEvent) {
-        val dialogue = event as? PiEvent.ExtensionUiRequest
-            ?: return reportProblem(
-                "事件流持续不可用（${RESCUE_DELIVERY_TIMEOUT_MS / 1000} 秒），已放弃投递 ${event.type}",
-                rateLimited = false,
-            )
-        if (dialogue.method !in BLOCKING_DIALOG_METHODS) {
-            return reportProblem(
-                "事件流持续不可用（${RESCUE_DELIVERY_TIMEOUT_MS / 1000} 秒），已放弃投递 ${event.type}",
-                rateLimited = false,
-            )
-        }
-        val answered = if (dialogue.method == "confirm") {
-            respondUi(dialogue.uiId, confirmed = false)
+        reportProblem(
+            "事件流持续不可用（${RESCUE_DELIVERY_TIMEOUT_MS / 1000} 秒），已放弃投递 ${event.type}",
+            rateLimited = false,
+        )
+    }
+
+    private fun undeliverableRequest(request: HostRequest) {
+        val answered = if (request.method == "ui.confirm") {
+            respondUi(request.id, confirmed = false)
         } else {
-            respondUi(dialogue.uiId, cancelled = true)
+            respondUi(request.id, cancelled = true)
         }
         reportProblem(
-            "扩展对话框「${dialogue.method}」${RESCUE_DELIVERY_TIMEOUT_MS / 1000} 秒内没能送到界面，" +
+            "扩展对话框「${request.method}」${RESCUE_DELIVERY_TIMEOUT_MS / 1000} 秒内没能送到界面，" +
                 if (answered) {
                     "已按 pi 的超时语义代为回复，避免扩展被永久堵住"
                 } else {
@@ -1402,6 +1431,8 @@ class PiEngineSession(
         // `emit` because a collector is behind.
         runCatching { rescue.close() }
         rescueJob?.cancel()
+        runCatching { rescueRequests.close() }
+        rescueRequestJob?.cancel()
         _state.value = EngineState.Stopped
     }
 
@@ -1441,7 +1472,6 @@ class PiEngineSession(
          * by the time this runs.
          */
         private val CRITICAL_EVENT_TYPES = setOf(
-            "extension_ui_request",
             "agent_settled",
             "agent_end",
             "compaction_start",
@@ -1469,7 +1499,7 @@ class PiEngineSession(
          * dialog). The remaining methods (`notify`, `setStatus`, `setWidget`,
          * `set_editor_text`) are one-way and must not be answered here.
          */
-        private val BLOCKING_DIALOG_METHODS = setOf("select", "confirm", "input", "editor")
+        private val BLOCKING_DIALOG_METHODS = setOf("ui.select", "ui.confirm", "ui.input", "ui.editor")
 
         /**
          * How much of the captured stderr travels in the failure sentence a waiting
@@ -1531,72 +1561,8 @@ class PiEngineSession(
          */
         private const val WRITER_DRAIN_TIMEOUT_MS = 1_000L
 
-        internal fun requestToLegacy(request: HostRequest): PiEvent.ExtensionUiRequest? {
-            val method = when (request.method) {
-                "ui.select" -> "select"
-                "ui.confirm" -> "confirm"
-                "ui.input" -> "input"
-                "ui.editor" -> "editor"
-                else -> return null
-            }
-            val p = request.params
-            return legacyParse(
-                legacyObj {
-                    put("type", JsonPrimitive("extension_ui_request"))
-                    put("id", JsonPrimitive(request.id))
-                    put("method", JsonPrimitive(method))
-                    p["title"]?.let { put("title", it) }
-                    p["message"]?.let { put("message", it) }
-                    p["options"]?.let { put("options", it) }
-                    p["placeholder"]?.let { put("placeholder", it) }
-                    p["prefill"]?.let { put("prefill", it) }
-                    p["timeout"]?.takeIf { it !is JsonNull }?.let { put("timeout", it) }
-                },
-            )
-        }
-
-        internal fun eventToLegacy(name: String, data: JsonElement?): PiEvent? {
-            val d = data as? JsonObject ?: return null
-            if (name == "ext.error") {
-                return PiEvents.parse(
-                    legacyObj {
-                        put("type", JsonPrimitive("extension_error"))
-                        d["extensionPath"]?.let { put("extensionPath", it) }
-                        d["event"]?.let { put("event", it) }
-                        d["error"]?.let { put("error", it) }
-                    },
-                )
-            }
-            val body: JsonObject = when (name) {
-                "ui.notify" -> legacyObj {
-                    put("method", JsonPrimitive("notify"))
-                    d["message"]?.let { put("message", it) }
-                    d["tone"]?.let { put("notifyType", it) }
-                }
-                // 官方 resetExtensionUI 末尾的 updateTerminalTitle()：标题回到默认（空标题 = 回到屏幕自己的名字）。
-                "ui.reset" -> legacyObj { put("method", JsonPrimitive("setTitle")) }
-                "ui.title" -> legacyObj {
-                    put("method", JsonPrimitive("setTitle"))
-                    d["title"]?.let { put("title", it) }
-                }
-                "ui.paste" -> legacyObj {
-                    put("method", JsonPrimitive("paste_editor_text"))
-                    d["text"]?.let { put("text", it) }
-                }
-                "ui.editorText" -> legacyObj {
-                    put("method", JsonPrimitive("set_editor_text"))
-                    d["text"]?.let { put("text", it) }
-                }
-                else -> return null
-            }
-            return legacyParse(JsonObject(body + ("type" to JsonPrimitive("extension_ui_request"))))
-        }
-
-        private fun legacyParse(o: JsonObject): PiEvent.ExtensionUiRequest? =
-            PiEvents.parse(o) as? PiEvent.ExtensionUiRequest
-
-        private inline fun legacyObj(build: MutableMap<String, JsonElement>.() -> Unit): JsonObject =
-            JsonObject(LinkedHashMap<String, JsonElement>().apply(build))
+        private fun JsonObject.strOrNull(key: String): String? =
+            (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
         /**
          * Start an engine described by a command line that already includes

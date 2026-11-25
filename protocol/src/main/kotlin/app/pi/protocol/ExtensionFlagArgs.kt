@@ -1,7 +1,7 @@
 package app.pi.protocol
 
 /**
- * The **extension CLI flags** an app-level setting carries into pi's argv, parsed
+ * The **extension flags** an app-level setting carries into SDK Host `session.open`, parsed
  * with pi's own rules for an unrecognised `--flag`.
  *
  * ## Why this is a separate, pure object
@@ -28,8 +28,7 @@ package app.pi.protocol
  *
  * pi does not pass all of the above through silently. A single-dash option is an
  * error diagnostic that makes pi **print and `exit(1)`** (`main.ts:473-481`); an
- * `@file` argument is refused outright in RPC mode (`main.ts:506-509`,
- * "`@file` arguments are not supported in RPC mode", `exit(1)`); `--` switches pi
+ * `@file` arguments are prompt file inputs rather than extension flags; `--` switches pi
  * into positional parsing (`:23-31`), whose only effects are a startup message and
  * `@file` arguments — neither is an extension flag. The app refuses those three
  * (and a stray bare word, same reason as `--`) **before the engine starts**, so the
@@ -119,7 +118,7 @@ data class ExtensionFlagArgs(
                 when {
                     // `cli/args.ts:23-31`: everything after `--` is positional (messages
                     // or `@file`s). Neither is an extension flag, and `@file` is a hard
-                    // error in RPC mode (`main.ts:506-509`).
+                    // invalid as an extension flag (prompt file syntax).
                     token == "--" -> return refused(
                         Refusal.EndOfOptions,
                         ProtocolLocale.tr(
@@ -166,7 +165,7 @@ data class ExtensionFlagArgs(
                         ),
                     )
 
-                    // `cli/args.ts:215-216` pushes a file argument, and RPC mode refuses
+                    // `@file` is a prompt file argument, not an extension flag, so refuse
                     // file arguments (`main.ts:506-509`).
                     token.startsWith("@") -> return refused(
                         Refusal.AtFileArgument,
@@ -294,7 +293,7 @@ enum class Refusal {
     /** `cli/args.ts:234-235` + `main.ts:473-481` — an error diagnostic, `exit(1)`. */
     SingleDashOption,
 
-    /** `cli/args.ts:215-216` + `main.ts:506-509` — refused in RPC mode, `exit(1)`. */
+    /** `@file` prompt-file syntax — not valid as an extension flag. */
     AtFileArgument,
 
     /** `cli/args.ts:237-238` — a positional message, not a flag. */

@@ -3,9 +3,10 @@ package app.pi.ui
 import android.os.SystemClock
 import androidx.lifecycle.viewModelScope
 import app.pi.host.ExtUiState
+import app.pi.host.HostRequest
+import app.pi.host.HostSignal
 import app.pi.i18n.tr
 import app.pi.protocol.Notice
-import app.pi.protocol.PiEvent
 import app.pi.service.PiEngineLifecyclePolicy
 import app.pi.ui.PiSessionViewModel.UiState
 import app.pi.ui.extension.ComposerFill
@@ -15,32 +16,25 @@ import app.pi.ui.extension.ExtensionDialogMethod
 import app.pi.ui.extension.ExtensionDialogQueue
 import app.pi.ui.extension.chromeText
 import app.pi.ui.extension.noticeToneOf
+import app.pi.ui.extension.toExtensionDialog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.update
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Route one `extension_ui_request`.
+ * Route one blocking SDK Host dialog request (`ui.select` / `ui.confirm` / `ui.input` / `ui.editor`).
  *
- * Four methods block the extension until this app replies (`docs/rpc.md`
- * §"Extension UI Protocol"), so they are queued and answered by id; every
- * other method is fire-and-forget and updates chrome. An unknown method is
- * ignored on purpose: `docs/rpc.md` lists the RPC-mode no-ops (`custom`,
- * `setWorkingMessage`, `setFooter`, ...) which pi toggles directly, and a
- * method from a newer pi must degrade to "not displayed", never to an error.
+ * Non-dialog requests (such as `auth.prompt`, handled by `AuthPromptHost`) are ignored here.
  */
-internal fun PiSessionViewModel.onExtensionUi(request: PiEvent.ExtensionUiRequest) {
-    val method = ExtensionDialogMethod.fromWire(request.method)
-    if (method == null) {
-        onExtensionChrome(request)
-        return
-    }
+internal fun PiSessionViewModel.onExtensionHostRequest(request: HostRequest) {
+    val dialog = request.toExtensionDialog() ?: return
 
-    // Every response is addressed by the request's id, so a request without
-    // one can never be answered and showing a dialog for it would only hide
-    // pi's hang behind a button that cannot work. Say so instead.
-    if (request.uiId.isEmpty()) {
+    // Every reply is addressed by the request's id, so a request without one
+    // can never be answered and showing a dialog would only mask the hang.
+    if (dialog.id.isEmpty()) {
         pushNotice(
             message = tr("扩展发来一个没有编号的「${request.method}」对话框，无法回复；这个扩展的弹窗在当前引擎上无法使用。", "Extension sent a \"${request.method}\" dialog without a request ID and cannot be answered."),
             tone = Notice.Tone.Warning,
@@ -48,71 +42,43 @@ internal fun PiSessionViewModel.onExtensionUi(request: PiEvent.ExtensionUiReques
         return
     }
 
-    val dialog = ExtensionDialog(
-        id = request.uiId,
-        method = method,
-        // Labels keep their bytes: an extension colours them with
-        // `ctx.ui.theme.fg(...)`, whose SGR bytes are the only colour channel
-        // the wire has (`rpc-types.ts:246-281` carries one plain string each).
-        // The dialog host turns them back into colour with `chromeSpans` +
-        // `PiPalette.tokenColorFor`; stripping here would destroy the colour
-        // before anything could paint it.
-        title = request.title.orEmpty(),
-        message = request.message,
-        options = request.options,
-        placeholder = request.placeholder,
-        // `docs/rpc.md`: `editor` carries its initial content in `prefill`.
-        // A value, not a label: the app hands it back on confirm, and it is
-        // drawn in a `BasicTextField`, which takes one plain string. See
-        // `ExtField`'s KDoc — no stripping and no painting, both deliberate.
-        prefill = request.text,
-        timeoutMs = request.timeoutMs,
-        // Seed the countdown so the first frame shows the full duration
-        // before the timer's first tick lands.
-        remainingMs = request.timeoutMs,
-    )
     // A duplicate id is a protocol violation: answering it would resolve the
     // wrong request (see ExtensionDialogQueue).
     if (dialogs.enqueue(dialog)) publishDialogs()
 }
 
-/** The fire-and-forget methods, plus a no-op for everything else. */
-private fun PiSessionViewModel.onExtensionChrome(request: PiEvent.ExtensionUiRequest) {
-    when (request.method) {
-        "notify" -> pushNotice(
-            // Chrome, so the message keeps the extension's escapes for the
-            // snackbar to paint (`ExtensionUiHost`). `chromeText` would be the
-            // wrong call: it removes the colour rather than rendering it.
-            message = request.message.orEmpty(),
-            // rpc.md: notifyType is info | warning | error, default info.
-            tone = noticeToneOf(request.notifyType),
-        )
+/** Route fire-and-forget SDK Host UI events (`ui.notify`, `ui.reset`, `ui.title`, `ui.editorText`, `ui.paste`). */
+internal fun PiSessionViewModel.onExtensionHostEvent(event: HostSignal.Event) {
+    when (event.name) {
+        "ui.notify" -> {
+            val d = event.data as? JsonObject ?: return
+            pushNotice(
+                // Chrome keeps ANSI escapes for the snackbar to paint (`ExtensionUiHost`).
+                message = d.hostStr("message").orEmpty(),
+                tone = noticeToneOf(d.hostStr("tone")),
+            )
+        }
 
-        "setTitle" -> _state.update { s -> s.copy(
-            // The one chrome surface that *is* stripped, because it has no
-            // span host: `windowTitle` becomes the Chat AppBar's `Text`, which
-            // lives in `ChatScreen.kt` and takes one string. Stripped before
-            // the blank check, so a title that is nothing but escapes falls
-            // back to the screen's own name instead of occupying the bar
-            // invisibly.
-            windowTitle = request.title?.let { chromeText(it) }?.takeIf { it.isNotBlank() },
-        ) }
+        // 官方 resetExtensionUI 末尾恢复默认标题（空标题 = 回到屏幕自己的名字）。
+        "ui.reset" -> _state.update { s -> s.copy(windowTitle = null) }
 
-        "set_editor_text" -> request.text?.let { text ->
-            // Last write wins, mirrored into the composer on the next frame.
-            // `windowTitle`/`set_editor_text` with a missing field are ignored
-            // rather than treated as "clear": the parser cannot tell an absent
-            // `text` from an empty one, and guessing "clear" would silently
-            // wipe whatever the user had typed.
-            //
-            // Neither stripped nor painted, for the same reason as `editor`'s
-            // prefill: this text is a draft the user may send to the model.
+        "ui.title" -> {
+            val title = (event.data as? JsonObject)?.hostStr("title")
+            _state.update { s -> s.copy(
+                // `windowTitle` becomes the Chat AppBar's plain `Text`; strip ANSI escapes
+                // before the blank check so an escape-only title falls back cleanly.
+                windowTitle = title?.let { chromeText(it) }?.takeIf { it.isNotBlank() },
+            ) }
+        }
+
+        "ui.editorText" -> (event.data as? JsonObject)?.hostStr("text")?.let { text ->
+            // Last write wins, mirrored into the composer as a plain draft without stripping.
             composerFillSeq += 1
             _state.update { s -> s.copy(composerFill = ComposerFill(composerFillSeq, text)) }
         }
 
         // 宿主的 `pasteToEditor`：接在现有草稿后面。
-        "paste_editor_text" -> request.text?.let { text ->
+        "ui.paste" -> (event.data as? JsonObject)?.hostStr("text")?.let { text ->
             composerFillSeq += 1
             _state.update { s -> s.copy(composerFill = ComposerFill(composerFillSeq, text, append = true)) }
         }
@@ -120,6 +86,9 @@ private fun PiSessionViewModel.onExtensionChrome(request: PiEvent.ExtensionUiReq
         else -> Unit
     }
 }
+
+private fun JsonObject.hostStr(key: String): String? =
+    (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
 /**
  * Answer the dialog with [id] using exactly one wire response.
@@ -132,9 +101,9 @@ private fun PiSessionViewModel.onExtensionChrome(request: PiEvent.ExtensionUiReq
  * only for the request that is actually on screen.
  *
  * The answer type is checked against the method because the two are not
- * interchangeable on the wire (`docs/rpc.md` §"Extension UI Responses"): a
- * `value` for a confirm, or `confirmed` for an input, is a protocol error pi
- * cannot recover from, and the only safe handling is to refuse to send it.
+ * interchangeable on the wire (`docs/sdk-host/protocol.md`, `ui/context.mjs`): a
+ * `value` for `ui.confirm`, or `confirmed` for `ui.input`, is rejected before
+ * hitting the wire.
  */
 private sealed interface UiAnswer {
     data class Value(val value: String) : UiAnswer
@@ -179,8 +148,8 @@ private fun PiSessionViewModel.settleDialog(dialog: ExtensionDialog, answer: UiA
     // Remove the entry FIRST. The queue is the single source of truth for
     // "still answerable", so a second tap, a Compose frame already queued
     // behind this one, or the countdown firing in the same millisecond can no
-    // longer produce a second response for the same id. One response per id
-    // is the contract (`docs/rpc.md`: "The `id` must match the request").
+    // longer produce a second response for the same id. One reply per id
+    // is the SDK Host contract (`docs/sdk-host/protocol.md`).
     if (dialogs.remove(dialog.id) == null) return
     // Promoting the next request also re-arms the countdown for it.
     publishDialogs()
@@ -228,13 +197,11 @@ private fun PiSessionViewModel.publishDialogState() {
  * second — which is what this now costs, with the deadline still hit exactly
  * (the loop breaks on `remaining <= 0`, and the sleeps sum to the deadline).
  *
- * pi runs its own timer for the same deadline (`rpc-mode.ts:115-120`
- * `createDialogPromise` → `setTimeout` → resolve with the default), so this
- * countdown is presentation; the answer at zero is belt-and-braces, not the
- * mechanism pi relies on. That is also why a coarse tick is acceptable here: a
- * late answer is dropped by pi (the request is no longer pending), and only
- * `editor` has no agent-side timer at all (`rpc-mode.ts:254-271`) — but an
- * `editor` request carries no `timeout`, so it never reaches this loop.
+ * The SDK Host runs its own timer for the same deadline (`sdk-host/hub.mjs`
+ * `ask()` → `setTimeout` → resolve with default + emit `ui.cancel`), so this
+ * countdown is presentation; the answer at zero is belt-and-braces. A late
+ * reply is ignored by the host, and `ui.editor` carries no `timeout` so it
+ * never enters this loop.
  */
 private fun PiSessionViewModel.armDialogTimer(dialog: ExtensionDialog?) {
     dialogTimeoutJob?.cancel()
@@ -265,10 +232,9 @@ private fun PiSessionViewModel.armDialogTimer(dialog: ExtensionDialog?) {
  * (`docs/extensions.md` §"Timed Dialogs with Countdown"): `confirm()` returns
  * `false`, `select()`/`input()`/`editor()` return `undefined`.
  *
- * `undefined` has no JSON form — `cancelled: true` is how the protocol
- * carries it, and `rpc-mode.ts` parses a cancellation back into `undefined`
- * for exactly those three, so cancelling is not an approximation of the
- * default, it *is* the default's wire encoding.
+ * `undefined` has no JSON form — `cancelled: true` is how the SDK Host
+ * reply carries it (`sdk-host/hub.mjs` resolves cancelled asks with the method's
+ * default value: `false` for confirm, `undefined` for select/input/editor).
  */
 private fun PiSessionViewModel.onDialogTimedOut(id: String) {
     // Guard against a stale timer: the dialog may have been answered, or
@@ -291,11 +257,9 @@ private fun PiSessionViewModel.onDialogTimedOut(id: String) {
  *
  * **Load-bearing — do not remove as redundant.** A request can be queued
  * while no host is composed (app backgrounded, teardown mid-request).
- * `select`/`confirm`/`input` are also resolved by pi's own timer, but
- * `editor` has **no agent-side timer at all**
- * (`packages/coding-agent/src/modes/rpc/rpc-mode.ts:254-271`: an un-timed
- * promise with no timeout options in its signature), so an unanswered
- * `editor` hangs pi forever. Answering on teardown is the only thing between
+ * `ui.select`/`ui.confirm`/`ui.input` may carry a timeout, but `ui.editor`
+ * has **no host-side timer** (`sdk-host/ui/context.mjs`), so an unanswered
+ * `editor` keeps the extension suspended forever. Answering on teardown is the only thing between
  * "the UI went away" and "pi is wedged". The write may be undeliverable
  * (a dead pipe), which is fine — nobody is blocked then.
  */

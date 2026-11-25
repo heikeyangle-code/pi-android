@@ -889,7 +889,7 @@ internal fun PiSessionViewModel.navigateToImpl(
 /**
  * Rebuild the transcript from the **active branch** — pi's `getBranch(leafId)`.
  *
- * This is deliberately not [replayHistory] and not [replayHistoryOverRpc]. Both fold the
+ * This is deliberately not [replayHistory] and not [replayHistoryFromHost]. Both fold the
  * entries they are given in order, and neither walks `parentId`:
  * [SessionFileReader.readTail] returns the file's *physical* tail, and
  * `TranscriptReducer.seedFromHistory` folds whatever list it receives
@@ -907,7 +907,7 @@ internal fun PiSessionViewModel.navigateToImpl(
  */
 private suspend fun PiSessionViewModel.replayActiveBranch(engine: PiEngineSession) {
     val page = try {
-        // 同 [replayHistoryOverRpc]：分支过滤要吃 `id` / `parentId`，那是原始条目才有的字段。
+        // 同 [replayHistoryFromHost]：分支过滤要吃 `id` / `parentId`，那是原始条目才有的字段。
         engine.api.getEntriesRaw()
     } catch (e: HostCommandException) {
         fail(tr("跳转成功，但读回会话内容失败：${e.reason}。重新打开会话即可看到新的位置。", "Navigated, but failed to reload transcript: ${e.reason}. Reopen session to view."))

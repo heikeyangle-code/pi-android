@@ -153,8 +153,8 @@ class PiSettingsFileStore(
      * modified fields, so the key simply **disappears** from that scope's file and the other
      * scope shows through (`settings-manager.ts:632-661`). Writing `null` instead is not the
      * same thing: pi's `parseTimeoutSetting` treats `null` as "present and unparseable" and
-     * throws (`:186-196`), which is how the settings UI used to make `pi --mode rpc` fail to
-     * start. `SettingsDocument.removePath` prunes the
+     * throws (`core/settings-manager.js`), which makes SDK `SettingsManager` fail to
+     * load settings on startup. `SettingsDocument.removePath` prunes the
      * parents it empties, so `compaction.reserveTokens` does not leave `"compaction": {}`.
      */
     override fun remove(key: String) {

@@ -1,37 +1,35 @@
 package app.pi.ui.extension
 
+import app.pi.host.HostRequest
 import app.pi.i18n.tr
 import app.pi.protocol.Ansi
 import app.pi.protocol.Notice
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.longOrNull
 
 /**
- * The UI half of pi's extension UI sub-protocol (`docs/rpc.md` §"Extension UI
- * Protocol"), modelled for the app.
+ * The UI half of pi's extension UI sub-protocol over SDK Host
+ * (`docs/sdk-host/protocol.md`, `sdk-host/ui/context.mjs`), modelled for the app.
  *
- * pi splits its `ExtensionUIContext` methods in two:
+ * The SDK Host splits `ExtensionUIContext` methods into two channels:
  *
- *  - **Dialog methods** (`select`, `confirm`, `input`, `editor`) emit an
- *    `extension_ui_request` and *block the extension* until the client answers
- *    with `extension_ui_response` carrying the same `id`. These are the reason
- *    this package exists: without an answer, `ctx.ui.confirm()` never returns and
- *    the whole pi turn is wedged (an extension that awaits `ctx.ui.confirm()` as a
- *    permission gate, say, never gets past it).
- *  - **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`,
- *    `set_editor_text`) emit the same event but expect no reply; `docs/rpc.md`
- *    says the client "can display the information or ignore it".
- *
- * Every field name below is pi's own (`src/modes/rpc/rpc-types.ts`
- * `RpcExtensionUIRequest`), which is why this is a wide type rather than four
- * narrow ones: one request never fails to route because a field another method
- * owns is absent.
+ *  - **Blocking dialog requests** (`ui.select`, `ui.confirm`, `ui.input`,
+ *    `ui.editor`) arrive on `hostRequests` (`{"t":"req",...}`) and block the
+ *    extension until the app answers with `{"t":"reply","id":...}`. Without an
+ *    answer, `ctx.ui.confirm()` never returns and the active turn stays suspended.
+ *  - **Fire-and-forget chrome events** (`ui.notify`, `ui.title`, `ui.reset`,
+ *    `ui.editorText`, `ui.paste`, plus surface/status/widget frames handled by
+ *    `ExtUiReducer`) arrive on `hostEvents` and expect no reply.
  */
 
-/** A blocking dialog method. Anything else is fire-and-forget. */
-enum class ExtensionDialogMethod(val wire: String) {
-    Select("select"),
-    Confirm("confirm"),
-    Input("input"),
-    Editor("editor");
+/** A blocking dialog method on SDK Host `hostRequests`. */
+enum class ExtensionDialogMethod(val hostMethod: String) {
+    Select("ui.select"),
+    Confirm("ui.confirm"),
+    Input("ui.input"),
+    Editor("ui.editor");
 
     /**
      * pi's TUI always sends a title, but a hand-rolled or newer extension might
@@ -55,19 +53,53 @@ enum class ExtensionDialogMethod(val wire: String) {
         get() = if (this == Confirm) tr("自动拒绝", "auto-decline") else tr("自动取消", "auto-cancel")
 
     companion object {
-        fun fromWire(method: String): ExtensionDialogMethod? =
-            entries.firstOrNull { it.wire == method }
+        fun fromHostMethod(method: String): ExtensionDialogMethod? =
+            entries.firstOrNull { it.hostMethod == method }
     }
 }
+
+/**
+ * Map a blocking SDK Host UI request (`ui.select` / `ui.confirm` / `ui.input` / `ui.editor`)
+ * directly into an [ExtensionDialog]. Non-dialog host requests (such as `auth.prompt`)
+ * return `null`.
+ */
+fun HostRequest.toExtensionDialog(): ExtensionDialog? {
+    val dialogMethod = ExtensionDialogMethod.fromHostMethod(method) ?: return null
+    val p = params
+    val timeoutMs = p.longOrNull("timeout") ?: p.longOrNull("timeoutMs")
+    return ExtensionDialog(
+        id = id,
+        method = dialogMethod,
+        // Labels keep their ANSI SGR bytes: extensions colour them with `ctx.ui.theme.fg(...)`
+        // and the dialog host renders them with `chromeSpans` + `PiPalette.tokenColorFor`.
+        title = p.strOrNull("title").orEmpty(),
+        message = p.strOrNull("message"),
+        options = p.strList("options"),
+        placeholder = p.strOrNull("placeholder"),
+        // `ui.editor` carries its initial content in `prefill` (plain editable draft).
+        prefill = p.strOrNull("prefill") ?: p.strOrNull("text") ?: p.strOrNull("value"),
+        timeoutMs = timeoutMs,
+        // Seed the countdown so the first frame shows the full duration before the first tick.
+        remainingMs = timeoutMs,
+    )
+}
+
+private fun JsonObject.strOrNull(key: String): String? =
+    (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+private fun JsonObject.longOrNull(key: String): Long? =
+    (this[key] as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull
+
+private fun JsonObject.strList(key: String): List<String> =
+    (this[key] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty()
 
 /**
  * One outstanding blocking request.
  *
  * [remainingMs] is a live countdown, not the original timeout: the ViewModel
- * ticks it so the dialog can show "还有 N 秒". Null when pi sent no `timeout`
- * field, in which case pi will wait forever and the dialog must not disappear on
- * its own — `docs/rpc.md` only promises auto-resolution when `timeout` is present,
- * and `rpc-mode.ts`'s `editor()` implementation ignores timeout options entirely.
+ * ticks it so the dialog can show "还有 N 秒". Null when the host sent no
+ * `timeout` field, in which case `ui/context.mjs` waits until answered or
+ * aborted (`ui.cancel`) — `ui.editor` carries no timeout.
  */
 data class ExtensionDialog(
     val id: String,
@@ -76,7 +108,7 @@ data class ExtensionDialog(
     val message: String? = null,
     val options: List<String> = emptyList(),
     val placeholder: String? = null,
-    /** `editor`'s initial content (`docs/rpc.md` calls the field `prefill`). */
+    /** `ui.editor`'s initial content (`prefill`). */
     val prefill: String? = null,
     val timeoutMs: Long? = null,
     val remainingMs: Long? = null,
@@ -89,21 +121,21 @@ data class ExtensionDialog(
 }
 
 /**
- * The three wire shapes of `extension_ui_response` (`docs/rpc.md` §"Extension UI
- * Responses"), plus cancellation.
+ * The three reply shapes for SDK Host UI requests (`ui.select` / `ui.confirm` /
+ * `ui.input` / `ui.editor`), plus cancellation.
  *
  * Modelled as one sealed type so the dialog host has a single callback and the
  * ViewModel has one place to reject a mismatched pairing: sending `value` for a
- * `confirm` request would be a protocol error pi cannot recover from.
+ * `ui.confirm` request is rejected before hitting the wire.
  */
 sealed interface ExtensionAnswer {
-    /** `select` / `input` / `editor`. */
+    /** `ui.select` / `ui.input` / `ui.editor`. */
     data class Value(val value: String) : ExtensionAnswer
 
-    /** `confirm` — pi's yes/no. */
+    /** `ui.confirm` — yes/no. */
     data class Confirmed(val confirmed: Boolean) : ExtensionAnswer
 
-    /** Any dialog: "Dismiss any dialog method" (`docs/rpc.md`). */
+    /** Dismiss any blocking dialog (`cancelled: true`). */
     data object Cancelled : ExtensionAnswer
 }
 
