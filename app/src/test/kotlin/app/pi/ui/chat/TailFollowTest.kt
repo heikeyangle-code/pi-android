@@ -236,12 +236,13 @@ class TailFollowTest {
     }
 
     @Test
-    fun `expanding and collapsing cards without touch-scrolling keeps tail-follow armed`() {
+    fun `expanding and collapsing cards holds viewport steady with zero jitter while keeping tail-follow armed`() {
         val follow = TailFollow(initiallyFollowing = true)
-        // Settled at bottom with 10 items.
+        // Settled at bottom with 10 items at revision 42.
         val settled = follow.onSnapshot(
             TailSnapshot(
                 transcriptRows = 10,
+                contentRevision = 42L,
                 viewport = TailViewport(
                     totalItems = 10,
                     firstVisibleIndex = 6,
@@ -260,10 +261,35 @@ class TailFollowTest {
         assertNull(settled.pin)
 
         // User taps an earlier tool/thinking card (item 7) to expand it (+350px) without dragging.
-        // Tail item 9 shifts down by 350px, pushing it below contentEndPx (1580).
+        follow.holdOnLocalLayoutToggle()
+
+        // Even if a pre-measure snapshot arrives while still atBottom, hold must NOT drop prematurely.
+        val preMeasure = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 10,
+                contentRevision = 42L,
+                viewport = TailViewport(
+                    totalItems = 10,
+                    firstVisibleIndex = 6,
+                    firstVisibleOffsetPx = 120,
+                    lastVisibleIndex = 9,
+                    lastVisibleOffsetPx = 1180,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = true,
+                ),
+            ),
+        )
+        assertTrue(preMeasure.following)
+        assertNull(preMeasure.pin)
+
+        // Expanded card shifts tail item 9 below contentEndPx (1580) -> MUST NOT yank/jitter!
         val afterExpand = follow.onSnapshot(
             TailSnapshot(
                 transcriptRows = 10,
+                contentRevision = 42L,
                 viewport = TailViewport(
                     totalItems = 10,
                     firstVisibleIndex = 6,
@@ -279,33 +305,57 @@ class TailFollowTest {
             ),
         )
         assertTrue(afterExpand.following)
-        assertEquals(TailPin(index = 6, offsetPx = 470), afterExpand.pin)
+        assertNull(afterExpand.pin)
 
-        // User collapses that card again without dragging -> anchor shifts back up while still at bottom.
-        val afterCollapse = follow.onSnapshot(
+        // Async Markdown re-measure inside that expanded card grows another +200px -> STILL zero jitter!
+        val afterAsyncMarkdown = follow.onSnapshot(
             TailSnapshot(
                 transcriptRows = 10,
+                contentRevision = 42L,
                 viewport = TailViewport(
                     totalItems = 10,
                     firstVisibleIndex = 6,
                     firstVisibleOffsetPx = 120,
                     lastVisibleIndex = 9,
-                    lastVisibleOffsetPx = 1180,
+                    lastVisibleOffsetPx = 1730,
                     lastVisibleSizePx = 400,
                     viewportEndOffsetPx = 1980,
                     bottomContentPaddingPx = 400,
                     isScrollInProgress = false,
-                    atBottom = true,
+                    atBottom = false,
                 ),
             ),
         )
-        assertTrue(afterCollapse.following)
-        assertNull(afterCollapse.pin)
+        assertTrue(afterAsyncMarkdown.following)
+        assertNull(afterAsyncMarkdown.pin)
 
-        // Subsequent streaming output arrives -> MUST still follow automatically!
-        val nextStream = follow.onSnapshot(
+        // Subsequent streaming output arrives (revision advances or new row) -> MUST immediately follow!
+        val nextStreamToken = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 10,
+                contentRevision = 43L,
+                viewport = TailViewport(
+                    totalItems = 10,
+                    firstVisibleIndex = 6,
+                    firstVisibleOffsetPx = 120,
+                    lastVisibleIndex = 9,
+                    lastVisibleOffsetPx = 1730,
+                    lastVisibleSizePx = 460,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = false,
+                ),
+            ),
+        )
+        assertTrue(nextStreamToken.following)
+        assertEquals(TailPin(index = 6, offsetPx = 730), nextStreamToken.pin)
+
+        // And a brand new row also pins cleanly to the end.
+        val nextRow = follow.onSnapshot(
             TailSnapshot(
                 transcriptRows = 11,
+                contentRevision = 44L,
                 viewport = TailViewport(
                     totalItems = 11,
                     firstVisibleIndex = 6,
@@ -320,7 +370,73 @@ class TailFollowTest {
                 ),
             ),
         )
-        assertTrue(nextStream.following)
-        assertEquals(TailPin(index = 10, offsetPx = PIN_TO_END_PX), nextStream.pin)
+        assertTrue(nextRow.following)
+        assertEquals(TailPin(index = 10, offsetPx = PIN_TO_END_PX), nextRow.pin)
+    }
+
+    @Test
+    fun `user dragging up after local card toggle pauses tail-follow normally`() {
+        val follow = TailFollow(initiallyFollowing = true)
+        follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 10,
+                contentRevision = 10L,
+                viewport = TailViewport(
+                    totalItems = 10,
+                    firstVisibleIndex = 6,
+                    firstVisibleOffsetPx = 120,
+                    lastVisibleIndex = 9,
+                    lastVisibleOffsetPx = 1180,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = true,
+                ),
+            ),
+        )
+        follow.holdOnLocalLayoutToggle()
+        // User scrolls up to inspect earlier content.
+        val draggedUp = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 10,
+                contentRevision = 10L,
+                viewport = TailViewport(
+                    totalItems = 10,
+                    firstVisibleIndex = 5,
+                    firstVisibleOffsetPx = 200,
+                    lastVisibleIndex = 8,
+                    lastVisibleOffsetPx = 1100,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = true,
+                    atBottom = false,
+                ),
+            ),
+        )
+        assertFalse(draggedUp.following)
+        assertNull(draggedUp.pin)
+        // New output while paused must NOT yank user back to bottom.
+        val newOutputWhilePaused = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 11,
+                contentRevision = 11L,
+                viewport = TailViewport(
+                    totalItems = 11,
+                    firstVisibleIndex = 5,
+                    firstVisibleOffsetPx = 200,
+                    lastVisibleIndex = 8,
+                    lastVisibleOffsetPx = 1100,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = false,
+                ),
+            ),
+        )
+        assertFalse(newOutputWhilePaused.following)
+        assertNull(newOutputWhilePaused.pin)
     }
 }

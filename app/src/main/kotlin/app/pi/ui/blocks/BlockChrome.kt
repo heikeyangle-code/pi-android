@@ -514,23 +514,28 @@ internal class TranscriptRowAnchor(
     private val listState: LazyListState,
     private val index: Int,
     private val isFollowing: () -> Boolean,
+    private val onLocalLayoutToggle: () -> Unit = {},
     private val onEvictHeight: () -> Unit = {},
 ) {
     /**
      * Called by [toggleContent] right before a row expands or collapses.
      *
      * - Always evicts the cached row height so a recycled row never inherits a stale floor.
-     * - While tail-follow is active (`isFollowing()`), stands down completely: expanding or
-     *   collapsing a tool card / thinking block without dragging the list must never pause
-     *   follow or fight `TailFollow` with a competing scroll request, so subsequent output
-     *   continues to be followed seamlessly.
-     * - While tail-follow is paused (`!isFollowing()`), on **collapse** if the row's top was
-     *   scrolled above the viewport (`offset < 0`), anchors this row's top at `offset = 0` so
-     *   `LazyColumn` does not skip past the collapsed card.
+     * - While tail-follow is active (`isFollowing()`), notifies [onLocalLayoutToggle] so
+     *   `TailFollow` keeps `following == true` (subsequent output still auto-follows) while
+     *   suppressing layout-resize pinning — preventing the list from yanking or jittering when
+     *   the user expands/collapses a card in place.
+     * - On **collapse**, if the row's top was scrolled above the viewport (`offset < 0`), always
+     *   anchors this row's top at `offset = 0` in the same measure pass so `LazyColumn` never
+     *   skips past or flashes the collapsed card (safe even when `isFollowing()` because
+     *   [onLocalLayoutToggle] ensures `TailFollow` does not fight the anchor).
      */
     fun onBeforeToggle(expanding: Boolean) {
         onEvictHeight()
-        if (expanding || isFollowing()) return
+        if (isFollowing()) {
+            onLocalLayoutToggle()
+        }
+        if (expanding) return
         val row = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index } ?: return
         if (row.offset < 0) {
             listState.requestScrollToItem(index, 0)

@@ -19,7 +19,13 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         private set
 
     private var pausedByNavigation = false
+    private var holdPositionUntilGrowth = false
+    private var heldAtRows: Int = -1
+    private var heldAtRevision: Long = -1L
     private var previousRows: Int = -1
+    private var previousRevision: Long = -1L
+    private var previousViewportEndPx: Int = -1
+    private var previousAtBottom: Boolean = false
     private var previousAnchor: TailAnchor? = null
     private var previousScrolling: Boolean = false
 
@@ -35,6 +41,7 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         following = true
         unseenRows = 0
         pausedByNavigation = false
+        holdPositionUntilGrowth = false
         lastPinKey = null
     }
 
@@ -42,6 +49,21 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         following = false
         unseenRows = 0
         pausedByNavigation = true
+        holdPositionUntilGrowth = false
+        lastPinKey = null
+    }
+
+    /**
+     * Called right before a user expands or collapses a card (thinking/tool/diff) in place.
+     * Preserves `following = true` so tail-follow never breaks when new output arrives,
+     * while holding the viewport steady so local expand/collapse height changes (and async
+     * Markdown re-measures inside the newly expanded card) never yank or jitter the list.
+     */
+    fun holdOnLocalLayoutToggle() {
+        if (!following) return
+        holdPositionUntilGrowth = true
+        heldAtRows = previousRows
+        heldAtRevision = previousRevision
         lastPinKey = null
     }
 
@@ -59,6 +81,17 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         val gesture = viewport.isScrollInProgress && anchor != previous
         val releasedBackwards = previousScrolling && !viewport.isScrollInProgress && movedBackwards
 
+        if (holdPositionUntilGrowth) {
+            val rowsGrew = heldAtRows >= 0 && rows > heldAtRows
+            val revisionGrew = heldAtRevision >= 0L && snapshot.contentRevision > heldAtRevision
+            val imeShrankAtBottom = previousAtBottom &&
+                previousViewportEndPx > 0 &&
+                viewport.viewportEndOffsetPx < previousViewportEndPx
+            if (rowsGrew || revisionGrew || gesture || releasedBackwards || imeShrankAtBottom) {
+                holdPositionUntilGrowth = false
+            }
+        }
+
         if (viewport.atBottom) {
             if (!pausedByNavigation || gesture) {
                 following = true
@@ -67,9 +100,13 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         } else if (releasedBackwards) {
             following = false
             pausedByNavigation = false
+            holdPositionUntilGrowth = false
         } else if (gesture) {
             pausedByNavigation = false
-            if (movedBackwards) following = false
+            if (movedBackwards) {
+                following = false
+                holdPositionUntilGrowth = false
+            }
         }
 
         unseenRows = when {
@@ -80,6 +117,7 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
 
         val pin = when {
             !following -> null
+            holdPositionUntilGrowth -> null
             viewport.isScrollInProgress -> null
             viewport.totalItems <= 0 -> null
             viewport.atBottom -> null
@@ -102,6 +140,9 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         lastPinKey = pinKey
 
         previousRows = rows
+        previousRevision = snapshot.contentRevision
+        previousViewportEndPx = viewport.viewportEndOffsetPx
+        previousAtBottom = viewport.atBottom
         previousAnchor = anchor
         previousScrolling = viewport.isScrollInProgress
         return TailDecision(following = following, unseenRows = unseenRows, pin = issued)
@@ -173,6 +214,7 @@ internal data class TailSnapshot(
     val transcriptRows: Int,
     val viewport: TailViewport,
     val poke: Long = 0L,
+    val contentRevision: Long = 0L,
 )
 
 internal data class TailDecision(

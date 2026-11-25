@@ -1001,6 +1001,7 @@ internal fun ChatBody(
                 TailSnapshot(
                     transcriptRows = transcriptRows,
                     poke = obs.poke,
+                    contentRevision = obs.revision.toLong(),
                     viewport = TailViewport(
                         totalItems = info.totalItemsCount,
                         firstVisibleIndex = listState.firstVisibleItemIndex,
@@ -1893,6 +1894,7 @@ internal fun ChatBody(
                             listState = listState,
                             index = sliceIndex,
                             isFollowing = { following },
+                            onLocalLayoutToggle = { tail.holdOnLocalLayoutToggle() },
                             onEvictHeight = { RowHeightCache.shared.evict(item.key) },
                         )
                     }
