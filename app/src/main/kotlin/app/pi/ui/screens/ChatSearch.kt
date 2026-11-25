@@ -35,6 +35,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.runtime.remember
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
@@ -199,6 +201,8 @@ internal fun SearchBar(
     onClose: () -> Unit,
 ) {
     val palette = PiTheme.palette
+    val focusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+    app.pi.ui.components.PiAutoFocus(focusRequester)
     val promptNavMode = query.isBlank() && hasPrompts
     val countLabel = if (matchCount == 0) {
         if (query.isBlank()) "" else "0 / 0"
@@ -233,7 +237,9 @@ internal fun SearchBar(
             BasicTextField(
                 value = query,
                 onValueChange = onQueryChange,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester),
                 singleLine = true,
                 textStyle = PiTheme.text.prose.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(palette.accent),

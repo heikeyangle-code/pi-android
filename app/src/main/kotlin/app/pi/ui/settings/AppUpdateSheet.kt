@@ -217,7 +217,7 @@ internal fun AppUpdateSheet(
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
                             .clickable { runCheck(force = true) },
                         contentAlignment = Alignment.Center,
                     ) {

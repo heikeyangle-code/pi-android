@@ -880,7 +880,7 @@ private fun LoginProgress(
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = PiShapes.card,
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
                 border = BorderStroke(0.5.dp, palette.borderAccent.copy(alpha = 0.55f)),
             ) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -928,7 +928,7 @@ private fun LoginProgress(
                                 .fillMaxWidth()
                                 .clickable { onAnswer(pr, opt.id) },
                             shape = PiShapes.card,
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
                             border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.65f)),
                         ) {
                             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {

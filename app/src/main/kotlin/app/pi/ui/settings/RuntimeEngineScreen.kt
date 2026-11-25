@@ -83,6 +83,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import java.io.File
 import java.util.Locale
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 
 /**
  * 全新重构的「引擎与运行环境」专页：统一承载引擎实时状态、容器运行时切换（proot / proroot / tawcroot）、
@@ -301,7 +304,7 @@ fun RuntimeEngineScreen(
                 top = 8.dp,
                 bottom = contentPadding.calculateBottomPadding() + 24.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupGap),
+            verticalArrangement = Arrangement.spacedBy(PiSpacing.small),
         ) {
             // 顶部即时操作反馈条
             val notice = bannerText
@@ -490,7 +493,7 @@ fun RuntimeEngineScreen(
             // 2. 容器运行时选择（三张交互式单选卡）
             // ------------------------------------------------------------------
             item(key = "label:runtime") {
-                ModelsSectionLabel(tr("容器运行时", "Container Runtime"))
+                ModelsSectionLabel(tr("容器运行时", "Container Runtime"), Modifier.padding(top = 10.dp))
             }
 
             if (runtimeSwitch.inFlight) {
@@ -568,7 +571,7 @@ fun RuntimeEngineScreen(
             // 3. 进程与保活设置
             // ------------------------------------------------------------------
             item(key = "label:process") {
-                ModelsSectionLabel(tr("进程与设备环境", "Process & Environment"))
+                ModelsSectionLabel(tr("进程与设备环境", "Process & Environment"), Modifier.padding(top = 10.dp))
             }
             item(key = "process-card") {
                 ModelsCard {
@@ -636,7 +639,7 @@ fun RuntimeEngineScreen(
             // 4. 诊断与日志（引擎退出后依然完整可用）
             // ------------------------------------------------------------------
             item(key = "label:diag") {
-                ModelsSectionLabel(tr("诊断与排障", "Diagnostics & Troubleshooting"))
+                ModelsSectionLabel(tr("诊断与排障", "Diagnostics & Troubleshooting"), Modifier.padding(top = 10.dp))
             }
 
             if (lastExit != null || failures.isNotEmpty()) {
@@ -718,16 +721,23 @@ fun RuntimeEngineScreen(
                                 }
                                 if (showStderr) {
                                     Surface(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = 220.dp),
                                         shape = RoundedCornerShape(10.dp),
                                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                     ) {
-                                        Text(
-                                            stderrText.takeLast(3000),
-                                            modifier = Modifier.padding(10.dp),
-                                            style = PiTheme.text.monoSmall,
-                                            color = palette.text,
-                                        )
+                                        androidx.compose.foundation.text.selection.SelectionContainer {
+                                            Text(
+                                                stderrText.takeLast(3000),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .verticalScroll(rememberScrollState())
+                                                    .padding(10.dp),
+                                                style = PiTheme.text.monoSmall,
+                                                color = palette.text,
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -932,7 +942,7 @@ fun RuntimeEngineScreen(
             // 5. 安全维护与修复
             // ------------------------------------------------------------------
             item(key = "label:maintenance") {
-                ModelsSectionLabel(tr("维护与修复", "Maintenance & Repair"))
+                ModelsSectionLabel(tr("维护与修复", "Maintenance & Repair"), Modifier.padding(top = 10.dp))
             }
             item(key = "maintenance-card") {
                 ModelsCard {
@@ -995,6 +1005,7 @@ fun RuntimeEngineScreen(
                 "A turn is currently running. Restarting now will abort the active response and running tool commands. Saved sessions will not be lost.",
             ),
             confirmationLabel = tr("重启", "Restart"),
+            confirmationTone = palette.warning,
             onConfirm = {
                 confirmRestart = false
                 runRestart(allowInterrupt = true)
@@ -1036,6 +1047,7 @@ fun RuntimeEngineScreen(
                     "• Preserved: all projects, sessions, settings, and API keys / logins",
             ),
             confirmationLabel = tr("确认重建", "Rebuild"),
+            confirmationTone = palette.error,
             onConfirm = {
                 confirmRebuild = false
                 onRebuildRuntime()
@@ -1070,7 +1082,7 @@ private fun MetricTile(
         )
         Text(
             value,
-            style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+            style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
             color = palette.text,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

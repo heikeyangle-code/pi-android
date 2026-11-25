@@ -50,7 +50,6 @@ fun SlashPalette(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = PiShapes.card,
-        shadowElevation = 2.dp,
         border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
     ) {
         if (matches.isEmpty()) {

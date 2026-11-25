@@ -58,6 +58,8 @@ import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.contrastOn
+import androidx.compose.material.icons.filled.Close
 import kotlinx.coroutines.sync.withPermit
 
 /** 聊天页附件：选择后的压缩、落到工作区的拷贝、缩略图。从 ChatScreen.kt 拆出。 */
@@ -343,6 +345,7 @@ private val ATTACHMENT_THUMB_SIZE = 56.dp
 internal fun AttachmentThumb(
     image: PiImage,
     index: Int,
+    onPreview: () -> Unit,
     onRemove: () -> Unit,
 ) {
     val thumbPx = with(LocalDensity.current) { ATTACHMENT_THUMB_SIZE.roundToPx() }
@@ -356,16 +359,17 @@ internal fun AttachmentThumb(
         }
     }
     val palette = PiTheme.palette
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     Box(
         modifier = Modifier
             .padding(end = 8.dp, top = 4.dp)
-            .size(ATTACHMENT_THUMB_SIZE + 6.dp),
+            .size(ATTACHMENT_THUMB_SIZE + 8.dp),
     ) {
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .size(ATTACHMENT_THUMB_SIZE)
-                .clickable(onClickLabel = tr("移除第 ${index + 1} 张图片", "Remove image ${index + 1}"), onClick = onRemove),
+                .clickable(onClickLabel = tr("预览第 ${index + 1} 张图片", "Preview image ${index + 1}"), onClick = onPreview),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -375,7 +379,7 @@ internal fun AttachmentThumb(
                 if (decoded != null) {
                     Image(
                         bitmap = decoded.asImageBitmap(),
-                        contentDescription = tr("待发送的第 ${index + 1} 张图片，点击移除", "Pending image ${index + 1}, tap to remove"),
+                        contentDescription = tr("待发送的第 ${index + 1} 张图片，点击预览", "Pending image ${index + 1}, tap to preview"),
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -389,18 +393,22 @@ internal fun AttachmentThumb(
             }
         }
         Surface(
-            onClick = onRemove,
+            onClick = {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                onRemove()
+            },
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .size(20.dp),
+                .size(22.dp),
             shape = androidx.compose.foundation.shape.CircleShape,
             color = palette.error,
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = "×",
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onError,
+                Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Filled.Close,
+                    contentDescription = tr("移除第 ${index + 1} 张图片", "Remove image ${index + 1}"),
+                    modifier = Modifier.size(13.dp),
+                    tint = palette.contrastOn(palette.error),
                 )
             }
         }

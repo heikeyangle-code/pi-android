@@ -500,7 +500,7 @@ internal fun Composer(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            // 流式输入草稿时优先给「引导 / 后续 / 停止」留足宽度，避免 360dp 窄屏裁切按钮文案。
+            // 流式输入草稿时保留 @ 与附件键（支持引导/后续消息直接带图和文件），仅折叠 / 与 ! 防止 360dp 窄屏裁切。
             if (!showDeliveryPills) {
                 ComposerQuickKey(
                     label = "/",
@@ -509,13 +509,15 @@ internal fun Composer(
                     activeColor = palette.accent,
                     onClick = onOpenPalette,
                 )
-                ComposerQuickKey(
-                    label = "@",
-                    contentDescription = tr("提及工作区文件", "Mention workspace file"),
-                    active = app.pi.ui.chat.PiFileMentions.prefixOf(draft.substring(0, activeCaret)) != null,
-                    activeColor = palette.accent,
-                    onClick = onOpenMention,
-                )
+            }
+            ComposerQuickKey(
+                label = "@",
+                contentDescription = tr("提及工作区文件", "Mention workspace file"),
+                active = app.pi.ui.chat.PiFileMentions.prefixOf(draft.substring(0, activeCaret)) != null,
+                activeColor = palette.accent,
+                onClick = onOpenMention,
+            )
+            if (!showDeliveryPills) {
                 ComposerQuickKey(
                     label = "!",
                     contentDescription = tr("终端命令（长按不进上下文）", "Bash command (long-press for local only)"),
@@ -524,20 +526,22 @@ internal fun Composer(
                     onClick = onOpenBash,
                     onLongClick = onOpenBashExcluded,
                 )
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .clickable(onClickLabel = tr("添加图片或文件", "Attach image or file"), onClick = onPickAttachment),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.AttachFile,
-                        contentDescription = tr("附件", "Attach"),
-                        modifier = Modifier.size(19.dp),
-                        tint = palette.muted,
-                    )
-                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(onClickLabel = tr("添加图片或文件", "Attach image or file"), onClick = onPickAttachment),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.AttachFile,
+                    contentDescription = tr("附件", "Attach"),
+                    modifier = Modifier.size(19.dp),
+                    tint = palette.muted,
+                )
+            }
+            if (!showDeliveryPills) {
                 if (draft.isEmpty() && !streaming && hasPromptHistory && onRecallLastPrompt != null) {
                     Box(
                         modifier = Modifier
@@ -897,7 +901,7 @@ private fun ComposerExtensionChip(
             ) {
                 Text(
                     text = chip.count.toString(),
-                    style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 10.sp),
+                    style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
                     color = palette.accent,
                     maxLines = 1,
                 )

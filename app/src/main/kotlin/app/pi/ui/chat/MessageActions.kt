@@ -178,7 +178,7 @@ private fun MessageActionSheet(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.surfaceContainer)
+                                .background(app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg)
                                 .padding(horizontal = 12.dp, vertical = 9.dp),
                         )
                     }
@@ -224,7 +224,7 @@ private fun MessageActionSheet(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(cardShape)
-                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                                .background(app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg)
                                 .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.45f), cardShape),
                         ) {
                             if (onEditAndFork != null) {
@@ -284,7 +284,7 @@ private fun MessageActionSheet(
                             .fillMaxWidth()
                             .height(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                            .background(app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg)
                             .border(1.dp, palette.borderAccent.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
                             .padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -355,7 +355,7 @@ private fun MessageQuickTile(
     Column(
         modifier = modifier
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .background(app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg)
             .border(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.42f), shape)
             .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
             .padding(vertical = 12.dp, horizontal = 8.dp),

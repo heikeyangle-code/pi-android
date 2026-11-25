@@ -167,8 +167,9 @@ private fun ExtensionDialogShell(
         when (dialog.method) {
             ExtensionDialogMethod.Select -> SelectBody(dialog, onAnswer)
             ExtensionDialogMethod.Input -> InputBody(dialog, draft, { draft = it }, onAnswer)
-            ExtensionDialogMethod.Editor -> EditorBody(dialog, draft, { draft = it }, onAnswer)
-            ExtensionDialogMethod.Confirm -> Unit
+            ExtensionDialogMethod.Editor,
+            ExtensionDialogMethod.Confirm,
+            -> Unit
         }
 
         DialogActions(dialog, draft, onAnswer)
@@ -261,7 +262,7 @@ private fun SelectSheetBody(
                     .fillMaxWidth()
                     .heightIn(max = PiSettingsMetrics.sheetBodyMax)
                     .clip(shape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .background(app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg)
                     .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), shape),
             ) {
                 if (filtered.isEmpty()) {
@@ -326,6 +327,7 @@ private fun EditorSheetBody(
                 onSubmit = {},
                 minLinesOverride = 6,
                 maxLinesOverride = 14,
+                inSheet = true,
             )
             Spacer(Modifier.height(PiSpacing.small))
             Row(
@@ -370,7 +372,7 @@ private fun EditorSheetBody(
                             modifier = Modifier
                                 .heightIn(min = 32.dp)
                                 .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
                                 .clickable(role = Role.Button) {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     onDraftChange("")
@@ -478,31 +480,6 @@ private fun InputBody(
         paddingHorizontal = 10.dp,
         paddingVertical = 0.dp,
         onSubmit = { onAnswer(dialog.id, ExtensionAnswer.Value(value)) },
-    )
-}
-
-// -------------------------------------------------------------------- editor
-
-/** Multi-line, monospace: v2's `mono t13` box with `padding:10px 12px`. */
-@Composable
-private fun EditorBody(
-    dialog: ExtensionDialog,
-    value: String,
-    onValueChange: (String) -> Unit,
-    onAnswer: (String, ExtensionAnswer) -> Unit,
-) {
-    Spacer(Modifier.height(DialogControlGap))
-    ExtField(
-        value = value,
-        onValueChange = onValueChange,
-        placeholder = dialog.placeholder ?: tr("编辑内容", "Edit text"),
-        singleLine = false,
-        height = null,
-        paddingHorizontal = 12.dp,
-        paddingVertical = 10.dp,
-        // Enter inserts a newline in a multi-line editor, so the IME's done action
-        // is not wired for it — only the 确定 button answers.
-        onSubmit = {},
     )
 }
 
@@ -743,6 +720,7 @@ private fun ExtField(
     onSubmit: () -> Unit,
     minLinesOverride: Int = EditorMinLines,
     maxLinesOverride: Int = EditorMaxLines,
+    inSheet: Boolean = false,
 ) {
     val palette = PiTheme.palette
     val interaction = remember { MutableInteractionSource() }
@@ -750,12 +728,17 @@ private fun ExtField(
     val focusRequester = remember { FocusRequester() }
     PiAutoFocus(focusRequester)
     val shape = RoundedCornerShape(FieldRadius)
+    val fieldBg = if (inSheet) {
+        app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerLow
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (height != null) Modifier.height(height) else Modifier)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .background(fieldBg)
             .border(
                 width = 1.dp,
                 color = if (focused) palette.borderAccent else palette.borderMuted.copy(alpha = 0.7f),

@@ -232,56 +232,6 @@ private fun QueueModeRow(
     }
 }
 
-@Composable
-private fun SessionGridTile(
-    icon: ImageVector,
-    tint: Color,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        color = PiTheme.palette.cardBg,
-        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(9.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(tint.copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Text(
-                    title,
-                    style = PiType.rowTitle.copy(fontWeight = FontWeight.Medium),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    subtitle,
-                    style = PiTheme.text.meta,
-                    color = PiTheme.palette.muted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
-}
-
 /** 分叉选择器：编号卡片列表，严格保留 pi 可分叉消息顺序。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -855,6 +805,7 @@ internal fun LogoutPickerSheet(
     var providers by remember { mutableStateOf<List<HostAuth.Provider>>(emptyList()) }
     var busyId by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var confirmingLogout by remember { mutableStateOf<HostAuth.Provider?>(null) }
 
     LaunchedEffect(session) {
         loading = true
@@ -1000,22 +951,7 @@ internal fun LogoutPickerSheet(
                                 Surface(
                                     onClick = {
                                         if (busyId != null) return@Surface
-                                        val auth = session.hostAuth() ?: return@Surface
-                                        busyId = provider.id
-                                        scope.launch {
-                                            runCatching { auth.logout(provider.id) }
-                                                .onSuccess {
-                                                    providers = providers.filterNot { it.id == provider.id }
-                                                    session.refreshModels()
-                                                    session.notifyUser(
-                                                        tr("已退出「${provider.name}」的登录凭据。", "Logged out of \"${provider.name}\"."),
-                                                    )
-                                                }
-                                                .onFailure { err ->
-                                                    error = err.message ?: tr("退出登录失败", "Failed to log out")
-                                                }
-                                            busyId = null
-                                        }
+                                        confirmingLogout = provider
                                     },
                                     enabled = busyId == null,
                                     shape = RoundedCornerShape(8.dp),
@@ -1033,6 +969,53 @@ internal fun LogoutPickerSheet(
                         }
                     }
                 }
+            }
+        }
+    }
+
+    confirmingLogout?.let { target ->
+        app.pi.ui.components.PiDialog(onDismissRequest = { confirmingLogout = null }) {
+            app.pi.ui.components.PiDialogTitle(
+                title = tr("退出服务商登录？", "Log Out Provider?"),
+                glyph = "!",
+                glyphTone = palette.error,
+            )
+            app.pi.ui.components.PiDialogBody(
+                tr(
+                    "将移除本地保存的「${target.name}」登录凭据，之后需要重新登录或配置密钥。",
+                    "Locally stored credentials for \"${target.name}\" will be removed. You will need to sign in again to use its models.",
+                ),
+            )
+            app.pi.ui.components.PiDialogActions {
+                app.pi.ui.components.PiDialogAction(
+                    label = tr("取消", "Cancel"),
+                    primary = false,
+                    onClick = { confirmingLogout = null },
+                )
+                app.pi.ui.components.PiDialogAction(
+                    label = tr("退出登录", "Log Out"),
+                    primary = true,
+                    tone = palette.error,
+                    onClick = {
+                        confirmingLogout = null
+                        val auth = session.hostAuth() ?: return@PiDialogAction
+                        busyId = target.id
+                        scope.launch {
+                            runCatching { auth.logout(target.id) }
+                                .onSuccess {
+                                    providers = providers.filterNot { it.id == target.id }
+                                    session.refreshModels()
+                                    session.notifyUser(
+                                        tr("已退出「${target.name}」的登录凭据。", "Logged out of \"${target.name}\"."),
+                                    )
+                                }
+                                .onFailure { err ->
+                                    error = err.message ?: tr("退出登录失败", "Failed to log out")
+                                }
+                            busyId = null
+                        }
+                    },
+                )
             }
         }
     }

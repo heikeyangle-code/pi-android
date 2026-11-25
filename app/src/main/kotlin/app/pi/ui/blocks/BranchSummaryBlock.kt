@@ -82,11 +82,6 @@ fun BranchSummaryBlock(
                     // TUI 在同一个位置也有一句话（`branch-summary-message.ts:46-56`：
                     // "Branch summary (ctrl+o to expand)"）—— 那句说的是怎么展开，这句说的是它
                     // 是什么。
-                    Text(
-                        text = tr("跳转离开一条分支时留下的摘要，不是分叉。", "Summary left when navigating away from a branch, not a fork."),
-                        style = PiTheme.text.meta,
-                        color = palette.muted,
-                    )
                     val branchId = item.branchId
                     if (!branchId.isNullOrBlank()) {
                         Text(

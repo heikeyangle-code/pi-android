@@ -123,7 +123,7 @@ internal fun TrustOptionList(
                 ) {
                     Text(
                         option.label,
-                        style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                        style = app.pi.ui.components.PiType.rowTitle,
                         color = if (option.grants) palette.accent else palette.text,
                     )
                     option.hint?.let {

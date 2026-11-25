@@ -154,9 +154,10 @@ fun DeviceCapabilityScreen(
     val openNotificationListener: () -> Unit = {
         runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
     }
+    var showShizukuHelp by remember { mutableStateOf(false) }
     val requestShizuku: () -> Unit = {
         when {
-            !DeviceShizuku.isInstalled(context) -> Unit
+            !DeviceShizuku.isInstalled(context) -> showShizukuHelp = true
             !DeviceShizuku.binderAlive() -> openShizukuManager(context)
             else -> DeviceShizuku.requestPermission()
         }
@@ -385,6 +386,41 @@ fun DeviceCapabilityScreen(
 
         }
     }
+
+    if (showShizukuHelp) {
+        app.pi.ui.components.PiDialog(onDismissRequest = { showShizukuHelp = false }) {
+            app.pi.ui.components.PiDialogTitle(
+                title = tr("如何启用 Shizuku 提权", "How to Enable Shizuku"),
+            )
+            app.pi.ui.components.PiDialogBody(
+                tr(
+                    "Shizuku 为设备 Shell 提供 ADB/Root 级别权限（非必须，未安装时仍可使用普通应用沙箱 Shell）。
+
+" +
+                        "1. 安装 Shizuku 应用（GitHub / Google Play）
+" +
+                        "2. 在 Shizuku 中通过「无线调试」或 Root 启动服务
+" +
+                        "3. 返回本页再次点击「Shizuku 提权」完成授权",
+                    "Shizuku grants ADB/Root privileges for Device Shell (optional — standard sandbox Shell works without it).
+
+" +
+                        "1. Install Shizuku (GitHub / Google Play)
+" +
+                        "2. Start the Shizuku service via Wireless Debugging or Root
+" +
+                        "3. Return here and tap Shizuku again to authorize",
+                ),
+            )
+            app.pi.ui.components.PiDialogActions {
+                app.pi.ui.components.PiDialogAction(
+                    label = tr("知道了", "Got It"),
+                    primary = true,
+                    onClick = { showShizukuHelp = false },
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -554,6 +590,7 @@ private fun CapabilityCardRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = { onToggle(!state.enabled) })
             .padding(
                 horizontal = PiSettingsMetrics.rowPaddingHorizontal,
                 vertical = PiSettingsMetrics.rowPaddingVertical,
@@ -586,6 +623,7 @@ private fun CapabilityCardRow(
                 ) {
                     Text(
                         title,
+                        modifier = Modifier.weight(1f, fill = false),
                         style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,

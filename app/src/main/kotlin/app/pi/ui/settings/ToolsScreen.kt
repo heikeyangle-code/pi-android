@@ -43,6 +43,7 @@ import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
+import androidx.compose.foundation.clickable
 
 private val BUILTIN_CORE_TOOLS = setOf("read", "bash", "edit", "write", "grep", "find", "ls", "powershell")
 private val BUILTIN_EXT_TOOLS = setOf("codemode", "tool_search", "mcp")
@@ -290,6 +291,7 @@ internal fun ToolsScreen(
                             value = query,
                             onValueChange = { query = it },
                             placeholder = tr("搜索工具名、描述或来源", "Search tool name, description, or source"),
+                            height = PiSettingsMetrics.searchFieldHeight,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = PiSettingsMetrics.pageHorizontal),
@@ -497,6 +499,7 @@ private fun ToolGroupCard(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clickable(enabled = togglingName == null) { onToggle(tool, !tool.active) }
                             .padding(horizontal = ModelsCardPadding, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),

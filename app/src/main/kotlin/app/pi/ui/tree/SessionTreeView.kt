@@ -241,16 +241,6 @@ fun SessionTreeView(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (view.rows.isNotEmpty() && view.nearestToLeafId != null) {
-                MiniJumpPill(
-                    icon = Icons.Filled.MyLocation,
-                    label = tr("当前", "Now"),
-                    onClick = {
-                        val at = view.rows.indexOfFirst { it.item.id == view.nearestToLeafId }
-                        if (at >= 0) scope.launch { listState.animateScrollToItem((at - 2).coerceAtLeast(0)) }
-                    },
-                )
-            }
             if (branchIndices.size > 1) {
                 MiniJumpIcon(
                     icon = Icons.Filled.KeyboardArrowUp,
@@ -277,7 +267,7 @@ fun SessionTreeView(
             roots.isEmpty() && loading -> {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     PiEmptyState(
-                        icon = Icons.Filled.Refresh,
+                        icon = Icons.Filled.AccountTree,
                         title = tr("正在读取会话树…", "Loading session tree…"),
                         body = tr("正在解析当前会话的分支与节点。", "Reading branches and entries for the active session."),
                         modifier = Modifier.padding(top = 72.dp),
@@ -423,23 +413,6 @@ private fun TreeFilterPill(text: String, active: Boolean, onClick: () -> Unit) {
             color = fg,
             maxLines = 1,
         )
-    }
-}
-
-@Composable
-private fun MiniJumpPill(icon: ImageVector, label: String, onClick: () -> Unit) {
-    val accent = PiTheme.palette.accent
-    Row(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(accent.copy(alpha = 0.12f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(12.dp), tint = accent)
-        Text(label, style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = accent, maxLines = 1)
     }
 }
 
@@ -835,7 +808,7 @@ private fun EntrySheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .background(app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg)
                     .padding(horizontal = 12.dp, vertical = 10.dp),
             ) {
                 Text(
@@ -858,7 +831,7 @@ private fun EntrySheet(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(14.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                                    .background(app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg),
                             ) {
                                 var hasRow = false
                                 fun dividerIfNeeded() = hasRow
@@ -939,7 +912,7 @@ private fun EntrySheet(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(14.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                                    .background(app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg),
                             ) {
                                 ActionRow(tr("不摘要", "No summary"), tr("直接切换，不消耗 token", "Switch immediately without using tokens")) { onNavigate(BranchSummaryChoice.NoSummary, null) }
                                 SheetRowDivider(indent = 12.dp)
@@ -1000,20 +973,17 @@ private fun SheetRowDivider(indent: Dp = 54.dp) {
 
 @Composable
 private fun TreePillButton(label: String, primary: Boolean, onClick: () -> Unit) {
-    val p = PiTheme.palette
-    Box(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(if (primary) p.accent else MaterialTheme.colorScheme.surfaceContainerHigh)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 9.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-            color = if (primary) p.contrastOn(p.accent) else p.text,
-            maxLines = 1,
+    if (primary) {
+        app.pi.ui.components.PiPrimaryButton(
+            label = label,
+            onClick = onClick,
+            compact = true,
+        )
+    } else {
+        app.pi.ui.components.PiSecondaryButton(
+            label = label,
+            onClick = onClick,
+            compact = true,
         )
     }
 }
@@ -1075,7 +1045,7 @@ private fun TextBox(value: String, onChange: (String) -> Unit, placeholder: Stri
                 keyboard?.show()
             },
         shape = PiShapes.cardInner,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
     ) {
         Box(Modifier.fillMaxWidth().heightIn(min = boxMin).padding(12.dp)) {
             if (value.isEmpty()) Text(placeholder, style = PiTheme.text.meta, color = PiTheme.palette.dim)

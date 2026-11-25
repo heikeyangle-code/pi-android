@@ -2182,6 +2182,7 @@ internal fun ChatBody(
                         if (key !in hiddenWidgetKeys) hiddenWidgetKeys = hiddenWidgetKeys + key
                     },
                     onInteractWidget = { panel -> interactingWidgetKey = panel.key },
+                    onPreviewAttachment = { image -> viewedImage = image },
                 )
 
                 Box(
@@ -2223,7 +2224,10 @@ internal fun ChatBody(
                         canFollowUp = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
                         canSteer = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
                         onCycleThinking = { session.cycleThinkingLevel() },
-                        onPickThinking = { sheet = ChatSheet.Thinking },
+                        onPickThinking = {
+                            session.refreshThinkingLevels()
+                            sheet = ChatSheet.Thinking
+                        },
                         onOpenPalette = {
                             historyIndex = -1
                             setDraftWithCursor(

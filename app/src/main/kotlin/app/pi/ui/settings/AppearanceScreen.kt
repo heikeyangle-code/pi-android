@@ -621,6 +621,7 @@ fun AppearanceScreen(
             title = tr("删除主题「${pendingDelete.name}」", "Delete theme \"${pendingDelete.name}\""),
             body = tr("将删除本地主题文件，无法恢复。", "This removes the local theme file and cannot be undone."),
             confirmationLabel = tr("删除", "Delete"),
+            confirmationTone = PiTheme.palette.error,
             dismissalLabel = tr("取消", "Cancel"),
             onDismissButton = { deleteCandidate = null },
             onConfirm = {
@@ -950,22 +951,30 @@ private fun ThemeGalleryCard(
                             tint = PiTheme.palette.contrastOn(PiTheme.palette.accent),
                         )
                     }
-                } else if (onDelete != null) {
+                }
+                if (onDelete != null) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopStart)
-                            .size(22.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
-                            .background(p.cardBg.copy(alpha = 0.85f))
-                            .clickable(onClick = onDelete),
+                            .clickable(onClickLabel = tr("删除主题", "Delete theme"), onClick = onDelete),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            Icons.Outlined.DeleteOutline,
-                            contentDescription = tr("删除主题", "Delete theme"),
-                            modifier = Modifier.size(13.dp),
-                            tint = p.error,
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(p.cardBg.copy(alpha = 0.88f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Outlined.DeleteOutline,
+                                contentDescription = tr("删除主题", "Delete theme"),
+                                modifier = Modifier.size(14.dp),
+                                tint = p.error,
+                            )
+                        }
                     }
                 }
             }
@@ -992,7 +1001,7 @@ private fun ThemeGalleryCard(
                 if (entry.scope != PiThemeScope.Builtin) {
                     Text(
                         text = entry.scope.label,
-                        style = PiTheme.text.meta.copy(fontSize = 10.sp, lineHeight = 12.sp),
+                        style = PiTheme.text.meta,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 4.dp),
                     )

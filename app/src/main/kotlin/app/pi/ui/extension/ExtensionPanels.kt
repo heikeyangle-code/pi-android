@@ -608,14 +608,19 @@ fun ExtensionWorkingStrip(
 ) {
     if (!streaming || !working.visible) return
     val explicitEmptyFrames = working.frames != null && working.frames.isEmpty()
-    val frames = working.frames?.filter { it.isNotEmpty() }.orEmpty()
+    val customFrames = working.frames?.filter { it.isNotEmpty() }.orEmpty()
     val message = working.message?.takeIf { it.isNotBlank() }
-    if (frames.isEmpty() && message == null) return
+    if (customFrames.isEmpty() && message == null) return
+    val frames = when {
+        customFrames.isNotEmpty() -> customFrames
+        explicitEmptyFrames -> emptyList()
+        else -> DEFAULT_BRAILLE_FRAMES
+    }
 
     var frameIndex by remember(frames, working.intervalMs) { mutableIntStateOf(0) }
     LaunchedEffect(frames, working.intervalMs) {
         if (frames.size <= 1) return@LaunchedEffect
-        val stepMs = (working.intervalMs ?: 120).coerceIn(50, 2000).toLong()
+        val stepMs = (working.intervalMs ?: 100).coerceIn(50, 2000).toLong()
         while (true) {
             delay(stepMs)
             frameIndex = (frameIndex + 1) % frames.size
@@ -635,25 +640,15 @@ fun ExtensionWorkingStrip(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        when {
-            frames.isNotEmpty() -> {
-                val glyph = frames[frameIndex % frames.size]
-                ExtensionSpans(
-                    spans = remember(glyph) { chromeSpans(glyph) },
-                    defaultColor = palette.accent,
-                    style = PiTheme.text.monoSmall,
-                    maxLines = 1,
-                    richStyle = true,
-                )
-            }
-            !explicitEmptyFrames -> {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(13.dp),
-                    strokeWidth = 1.8.dp,
-                    color = palette.accent,
-                    trackColor = palette.accent.copy(alpha = 0.16f),
-                )
-            }
+        if (frames.isNotEmpty()) {
+            val glyph = frames[frameIndex % frames.size]
+            ExtensionSpans(
+                spans = remember(glyph) { chromeSpans(glyph) },
+                defaultColor = palette.accent,
+                style = PiTheme.text.monoSmall,
+                maxLines = 1,
+                richStyle = true,
+            )
         }
         if (message != null) {
             ExtensionSpans(
@@ -1015,3 +1010,5 @@ internal fun trimEmptyEdgeLines(rows: List<String>): List<String> {
 private val CARD_SIDE_PADDING = 10.dp
 private val EXPANDED_MAX_HEIGHT = 220.dp
 private val DEFAULT_STACK_MAX_HEIGHT = 136.dp
+
+private val DEFAULT_BRAILLE_FRAMES = listOf("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")

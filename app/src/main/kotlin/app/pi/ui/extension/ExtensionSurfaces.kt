@@ -186,7 +186,6 @@ fun ExtensionSurfaceHost(
             val pillShape = RoundedCornerShape(10.dp)
             Row(
                 modifier = Modifier
-                    .shadow(elevation = 3.dp, shape = pillShape, clip = false)
                     .clip(pillShape)
                     .background(surfaceKeyBg(palette))
                     .border(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.50f), pillShape)
@@ -317,7 +316,6 @@ fun ExtensionFloatingOverlayCard(
             val pillShape = RoundedCornerShape(10.dp)
             Row(
                 modifier = Modifier
-                    .shadow(elevation = 3.dp, shape = pillShape, clip = false)
                     .clip(pillShape)
                     .background(surfaceFloatBg(palette).copy(alpha = 0.97f))
                     .border(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.45f), pillShape)
@@ -372,7 +370,6 @@ fun ExtensionFloatingOverlayCard(
         Column(
             modifier = Modifier
                 .widthIn(min = 196.dp, max = 312.dp)
-                .shadow(elevation = 3.dp, shape = cardShape, clip = false)
                 .clip(cardShape)
                 .background(surfaceFloatBg(palette).copy(alpha = 0.97f))
                 .border(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.40f), cardShape)

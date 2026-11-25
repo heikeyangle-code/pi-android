@@ -305,8 +305,8 @@ internal fun PiImageViewerSurface(
         val boxWidthPx = constraints.maxWidth
         val boxHeightPx = constraints.maxHeight
 
-        val bitmap by produceState<Bitmap?>(null, image.cacheKey, boxWidthPx, boxHeightPx) {
-            value = withContext(Dispatchers.IO) {
+        val decodeState by produceState<ViewerDecodeState>(ViewerDecodeState.Pending, image.cacheKey, boxWidthPx, boxHeightPx) {
+            val result = withContext(Dispatchers.IO) {
                 // Through the same gate the transcript's cells use: the viewer is opened
                 // *from* a scroll (the user taps a picture the list may still be
                 // decoding), so this decode queues behind those instead of becoming one
@@ -326,6 +326,7 @@ internal fun PiImageViewerSurface(
                     underImageDecodeGate { decodePiImageSource(image, boxWidthPx, boxHeightPx) }
                 }
             }
+            value = if (result != null) ViewerDecodeState.Ready(result) else ViewerDecodeState.Failed
         }
 
         // 源图自己的像素尺寸：放大后那一块要按源图坐标算，所以需要它。只读头部（四个定长前言的
@@ -355,27 +356,29 @@ internal fun PiImageViewerSurface(
         )
 
         // ② 图片本身。
-        val decoded = bitmap
-        if (decoded == null) {
-            // The same labelled fallback the grid cell shows, for the same case:
-            // bytes the platform codec refuses. It is not an error screen — the
-            // viewer simply has nothing to draw.
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .padding(PiSpacing.pageHorizontal),
-                contentAlignment = Alignment.Center,
-            ) {
-                androidx.compose.material3.Text(
-                    text = tr(
-                        "这张图片无法解码（${image.mimeType.ifEmpty { "image" }}）。",
-                        "Unable to decode this image (${image.mimeType.ifEmpty { "image" }}).",
-                    ),
-                    style = PiTheme.text.meta,
-                    color = palette.muted,
-                )
+        when (val state = decodeState) {
+            ViewerDecodeState.Pending -> {
+                Box(Modifier.fillMaxSize())
             }
-        } else {
+            ViewerDecodeState.Failed -> {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(PiSpacing.pageHorizontal),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.material3.Text(
+                        text = tr(
+                            "这张图片无法解码（${image.mimeType.ifEmpty { "image" }}）。",
+                            "Unable to decode this image (${image.mimeType.ifEmpty { "image" }}).",
+                        ),
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                    )
+                }
+            }
+            is ViewerDecodeState.Ready -> {
+                val decoded = state.bitmap
             // Fit the picture into the window at 1×, preserving its aspect ratio,
             // and give the picture node exactly that size. Two consequences: the
             // letterboxed ground stays the backdrop's (so a tap there dismisses,
@@ -656,6 +659,7 @@ internal fun PiImageViewerSurface(
                     }
                 }
             }
+            }
         }
 
         // ③ 右上角两颗毛玻璃悬浮圆钮（避让状态栏，亮/暗图上均清晰可见）。
@@ -929,3 +933,9 @@ private const val ZOOM_ANIMATION_MILLIS = 200
  * 100 ms 细节才补上，而这段时间里画面上一直是 1× 那张（以及可能还在的那一块），不会闪、不会白。
  */
 private const val ZOOM_SETTLE_MILLIS = 100L
+
+private sealed interface ViewerDecodeState {
+    data object Pending : ViewerDecodeState
+    data class Ready(val bitmap: Bitmap) : ViewerDecodeState
+    data object Failed : ViewerDecodeState
+}

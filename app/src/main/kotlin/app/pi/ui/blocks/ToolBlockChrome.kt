@@ -184,10 +184,6 @@ internal fun toolAccentColor(state: ToolState, palette: PiPalette): Color =
  */
 private val BLOCKED_REASONS = listOf(
     "Tool execution was blocked",
-    "用户拒绝了这个设备操作：",
-    "设备策略拒绝这条 Shell 命令",
-    "确认对话框不可用",
-    "没有确认通道（ctx.hasUI=false）时默认拒绝",
 )
 
 /** Whether a result text is one of [BLOCKED_REASONS] — see that list for the rule. */

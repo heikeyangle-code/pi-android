@@ -685,10 +685,13 @@ private fun ExtensionFlagsSheet(
 
     PiSheet(onDismiss = onDismiss, fullHeight = false) {
         Column(
-            modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
-            verticalArrangement = Arrangement.spacedBy(PiSpacing.small),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSettingsMetrics.pageHorizontal)
+                .padding(bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(tr("扩展运行时参数（flag）", "Extension Runtime Flags"), style = PiTheme.text.prose, color = PiTheme.palette.text)
+            Text(tr("扩展运行时参数（flag）", "Extension Runtime Flags"), style = app.pi.ui.components.PiType.title, color = PiTheme.palette.text)
             error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
             val list = flags
             if (list == null) {
@@ -720,14 +723,18 @@ private fun ExtensionFlagsSheet(
                                 f.description?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.muted) }
                                 Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small), verticalAlignment = Alignment.CenterVertically) {
                                     PiEditorField(value = text, onValueChange = { text = it }, modifier = Modifier.weight(1f), placeholder = tr("值", "Value"))
-                                    PiSettingsChip(text = tr("保存", "Save"), onClick = {
-                                        val api = advanced() ?: return@PiSettingsChip
-                                        scope.launch {
-                                            runCatching { api.setFlag(f.name, text) }
-                                                .onSuccess { reload++ }
-                                                .onFailure { error = it.message ?: tr("保存失败", "Failed to save") }
-                                        }
-                                    })
+                                    app.pi.ui.components.PiPrimaryButton(
+                                        label = tr("保存", "Save"),
+                                        compact = true,
+                                        onClick = {
+                                            val api = advanced() ?: return@PiPrimaryButton
+                                            scope.launch {
+                                                runCatching { api.setFlag(f.name, text) }
+                                                    .onSuccess { reload++ }
+                                                    .onFailure { error = it.message ?: tr("保存失败", "Failed to save") }
+                                            }
+                                        },
+                                    )
                                 }
                             }
                         }

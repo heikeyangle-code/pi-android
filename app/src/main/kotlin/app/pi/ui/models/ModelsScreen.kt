@@ -242,7 +242,7 @@ fun ModelsScreen(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(top = PiSpacing.small * 2, bottom = contentPadding.calculateBottomPadding() + PiSpacing.scrollBottom),
-            verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupGap),
+            verticalArrangement = Arrangement.spacedBy(PiSpacing.small),
         ) {
             notice?.let { n ->
                 item(key = "notice") {
@@ -369,7 +369,10 @@ fun ModelsScreen(
 
             // ---- 2. 统一供应商（订阅账号 + OAuth 网页授权 + API Key + 云凭证 + 自定义 models.json 整合为一处） ----
             item(key = "providers-header") {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(
+                    modifier = Modifier.padding(top = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     ModelsSectionLabel(
                         text = if (unified.counts.connected > 0) {
                             tr(
@@ -529,7 +532,7 @@ fun ModelsScreen(
             }
 
             // ---- 3. 推理、作用域与缓存（100% 对齐 Pi SDK） ----
-            item(key = "l:reasoning") { ModelsSectionLabel(tr("推理、作用域与缓存", "Reasoning, Scoped Models & Caching")) }
+            item(key = "l:reasoning") { ModelsSectionLabel(tr("推理、作用域与缓存", "Reasoning, Scoped Models & Caching"), Modifier.padding(top = 10.dp)) }
             item(key = "c:reasoning") {
                 val settingByKey = remember(modelSettings) { modelSettings.associateBy { it.key } }
                 val defaultThinkingSetting = settingByKey["defaultThinkingLevel"]

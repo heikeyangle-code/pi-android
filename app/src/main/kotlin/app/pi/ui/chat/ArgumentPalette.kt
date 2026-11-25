@@ -44,7 +44,6 @@ fun ArgumentPalette(
         modifier = modifier.fillMaxWidth(),
         shape = PiShapes.card,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shadowElevation = 2.dp,
         border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
     ) {
         Column {
@@ -116,7 +115,6 @@ fun ExtensionAutocompletePalette(
         modifier = modifier.fillMaxWidth(),
         shape = PiShapes.card,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shadowElevation = 2.dp,
         border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
     ) {
         LazyColumn(Modifier.heightIn(max = 260.dp).padding(vertical = 4.dp)) {

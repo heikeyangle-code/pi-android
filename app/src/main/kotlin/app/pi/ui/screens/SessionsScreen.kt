@@ -834,14 +834,20 @@ fun SessionsScreen(
         PiDialog(onDismissRequest = { confirming = null }) {
             PiDialogTitle(
                 title = tr("删除会话", "Delete Session"),
-                glyph = if (isActive) "⊘" else "!",
-                glyphTone = if (isActive) PiTheme.palette.muted else PiTheme.palette.error,
+                glyph = "!",
+                glyphTone = PiTheme.palette.error,
             )
             PiDialogBody(
                 if (isActive) {
-                    tr("「$pendingTitle」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。", "\"$pendingTitle\" is the active session and pi is writing to it. Switch to another session before deleting.")
+                    tr(
+                        "将自动新建空白对话并删除当前会话「$pendingTitle」。有回收站时会移到回收站，没有就直接删除，无法恢复。",
+                        "A new empty chat will be created and active session \"$pendingTitle\" will be deleted (moved to Trash if available, otherwise permanently deleted).",
+                    )
                 } else {
-                    tr("删除「$pendingTitle」？有回收站时会移到回收站，没有就直接删除，无法恢复。", "Delete \"$pendingTitle\"? It will be moved to Trash if available, or permanently deleted.")
+                    tr(
+                        "删除「$pendingTitle」？有回收站时会移到回收站，没有就直接删除，无法恢复。",
+                        "Delete \"$pendingTitle\"? It will be moved to Trash if available, or permanently deleted.",
+                    )
                 },
             )
             PiDialogActions {
@@ -849,7 +855,6 @@ fun SessionsScreen(
                 PiDialogAction(
                     label = tr("删除", "Delete"),
                     primary = true,
-                    enabled = !isActive,
                     tone = PiTheme.palette.error,
                     onClick = {
                         session.deleteSession(pending)
@@ -1392,7 +1397,7 @@ private fun SessionFilterPill(
 @Composable
 private fun SessionsLoading(loaded: Int, total: Int) {
     SessionsEmpty(
-        icon = Icons.Filled.Refresh,
+        icon = Icons.Filled.Schedule,
         title = tr("正在读取会话…", "Loading sessions…"),
         body = if (total > 0) {
             tr("已读 $loaded/$total 个会话文件，读到的会陆续出现。", "Loaded $loaded/$total session files; results appear as they load.")

@@ -26,6 +26,8 @@ import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 
 /**
  * Third-party licence notices for what this app distributes.
@@ -183,8 +185,30 @@ private fun LicenceTextScreen(
         value = withContext(Dispatchers.IO) { readAsset(context, notice.file) }
     }
     val bodyScroll = rememberScrollState()
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    var copied by remember(notice.file) { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = notice.title, onBack = onBack, scrolled = bodyScroll.canScrollBackward)
+        PiTopBar(
+            title = notice.title,
+            onBack = onBack,
+            scrolled = bodyScroll.canScrollBackward,
+            actions = {
+                val copyable = body
+                if (copyable != null) {
+                    app.pi.ui.components.PiTopBarIcon(
+                        onClick = {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(copyable))
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            copied = true
+                        },
+                        contentDescription = if (copied) tr("已复制许可文本", "License text copied") else tr("复制许可文本", "Copy license text"),
+                        icon = if (copied) androidx.compose.material.icons.Icons.Filled.Check else androidx.compose.material.icons.Icons.Filled.ContentCopy,
+                        highlighted = copied,
+                    )
+                }
+            },
+        )
         val text = body
         if (text == null) {
             Text(
@@ -208,12 +232,14 @@ private fun LicenceTextScreen(
                 ),
         ) {
             PiSettingsCard {
-                Text(
-                    text,
-                    modifier = Modifier.padding(PiSettingsMetrics.cardPadding),
-                    style = PiTheme.text.monoSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(
+                        text,
+                        modifier = Modifier.padding(PiSettingsMetrics.cardPadding),
+                        style = PiTheme.text.monoSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
         }
     }

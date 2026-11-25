@@ -232,7 +232,6 @@ private fun ExtensionSnack(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(elevation = 2.dp, shape = shape, clip = false)
             .clip(shape)
             .background(container)
             .border(0.5.dp, accent.copy(alpha = 0.28f), shape)

@@ -188,7 +188,7 @@ fun BlockRenderer(
         // (design decision D19), and pi agrees with the user.
         is ModelChange -> Unit
 
-        is SkillInvocation -> SkillInvocationBlock(item, modifier)
+        is SkillInvocation -> SkillInvocationBlock(item, modifier, defaultExpanded = toolsDefaultExpanded)
 
         is ErrorText -> ErrorBlock(item, modifier)
 

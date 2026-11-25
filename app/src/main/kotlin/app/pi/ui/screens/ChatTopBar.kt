@@ -226,15 +226,15 @@ internal fun ChatTopBar(
                         )
                     }
                 }
-                PiTopBarIcon(
-                    onClick = {
-                        hideIme()
-                        onOpenWorkspace()
-                    },
-                    contentDescription = tr("项目与文件", "Project & Files"),
-                    icon = Icons.Filled.FolderOpen,
-                )
-                if (wideScreen || searchOpen) {
+                if (wideScreen) {
+                    PiTopBarIcon(
+                        onClick = {
+                            hideIme()
+                            onOpenWorkspace()
+                        },
+                        contentDescription = tr("项目与文件", "Project & Files"),
+                        icon = Icons.Filled.FolderOpen,
+                    )
                     PiTopBarIcon(
                         onClick = { onToggleSearch(false) },
                         contentDescription = if (searchOpen) tr("关闭对话内查找", "Close search") else tr("在对话里查找", "Search in chat"),
@@ -270,6 +270,10 @@ internal fun ChatTopBar(
                 // 连续点击上一问/下一问时不强关面板，让用户边看上方画布滚动边连续定位
                 onJumpQuestion(forward)
             },
+            onOpenWorkspace = {
+                commandCenterOpen = false
+                onOpenWorkspace()
+            },
             onToggleTools = {
                 commandCenterOpen = false
                 onToggleTools()
@@ -292,6 +296,7 @@ private fun ChatCommandCenterSheet(
     onDismiss: () -> Unit,
     onToggleSearch: () -> Unit,
     onJumpQuestion: (forward: Boolean) -> Unit,
+    onOpenWorkspace: () -> Unit,
     onToggleTools: () -> Unit,
     onAction: (ChatAction) -> Unit,
 ) {
@@ -400,6 +405,13 @@ private fun ChatCommandCenterSheet(
             // 显示与导航组
             ActionGroupCard(title = tr("视图与定位", "View & Navigation")) {
                 SheetActionRow(
+                    icon = Icons.Filled.FolderOpen,
+                    label = tr("项目与文件", "Project & Files"),
+                    subtitle = workspaceName,
+                    onClick = onOpenWorkspace,
+                )
+                SheetHairline()
+                SheetActionRow(
                     icon = Icons.Filled.Search,
                     label = if (searchOpen) tr("关闭对话内查找", "Close search") else tr("查找内容 / 快速定位提问", "Search chat / jump prompts"),
                     onClick = onToggleSearch,
@@ -416,7 +428,7 @@ private fun ChatCommandCenterSheet(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
                             .clickable {
                                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                                 onJumpQuestion(false)
@@ -433,7 +445,7 @@ private fun ChatCommandCenterSheet(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
                             .clickable {
                                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                                 onJumpQuestion(true)
@@ -519,8 +531,8 @@ private fun QuickTile(
     Column(
         modifier = modifier
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainer)
-            .border(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.45f), shape)
+            .background(app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg)
+            .border(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.45f), shape)
             .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
             .padding(vertical = 12.dp, horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -567,8 +579,8 @@ private fun ActionGroupCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(shape)
-                .background(MaterialTheme.colorScheme.surfaceContainer)
-                .border(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.4f), shape),
+                .background(app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg)
+                .border(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.45f), shape),
         ) {
             content()
         }

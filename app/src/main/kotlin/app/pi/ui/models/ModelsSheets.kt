@@ -54,6 +54,8 @@ import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.filled.Close
 
 // ------------------------------------------------------------------ 跨供应商选模型
 
@@ -156,8 +158,8 @@ internal fun UseBar(
             .fillMaxWidth()
             .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 8.dp),
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        border = BorderStroke(0.5.dp, PiTheme.palette.accent.copy(alpha = 0.40f)),
+        color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
+        border = BorderStroke(0.5.dp, PiTheme.palette.accent.copy(alpha = 0.42f)),
     ) {
         Column(
             Modifier
@@ -165,17 +167,55 @@ internal fun UseBar(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                title,
-                style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
-                color = PiTheme.palette.text,
-                maxLines = 1,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    title,
+                    modifier = Modifier.weight(1f),
+                    style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+                    color = PiTheme.palette.text,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
+                        .clickable(onClickLabel = tr("取消", "Cancel"), onClick = onCancel),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = tr("取消", "Cancel"),
+                        modifier = Modifier.size(16.dp),
+                        tint = PiTheme.palette.muted,
+                    )
+                }
+            }
             error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                PrimaryAction(UseScope.Session.label, enabled = !working, onClick = { onUse(UseScope.Session) })
-                SecondaryAction(UseScope.Default.label, enabled = !working, onClick = { onUse(UseScope.Default) })
-                SecondaryAction(tr("取消", "Cancel"), onClick = onCancel)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                app.pi.ui.components.PiPrimaryButton(
+                    label = UseScope.Session.label,
+                    enabled = !working,
+                    compact = true,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onUse(UseScope.Session) },
+                )
+                app.pi.ui.components.PiSecondaryButton(
+                    label = UseScope.Default.label,
+                    enabled = !working,
+                    compact = true,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onUse(UseScope.Default) },
+                )
             }
         }
     }

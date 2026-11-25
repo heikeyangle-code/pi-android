@@ -379,36 +379,35 @@ internal fun ProviderFormSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (!isNew) {
-                    DestructiveAction(
-                        text = if (overriding) tr("移除覆盖", "Remove") else tr("删除", "Delete"),
+                    app.pi.ui.components.PiDestructiveButton(
+                        label = if (overriding) tr("移除覆盖", "Remove") else tr("删除", "Delete"),
                         enabled = !saving,
                         onClick = { confirmDelete = true },
                     )
                 }
-                SecondaryAction(
-                    text = tr("取消", "Cancel"),
+                app.pi.ui.components.PiSecondaryButton(
+                    label = tr("取消", "Cancel"),
                     onClick = onDismiss,
                 )
-                PrimaryAction(
-                    text = if (saving) tr("保存中…", "Saving…") else tr("保存配置", "Save"),
+                app.pi.ui.components.PiPrimaryButton(
+                    label = if (saving) tr("保存中…", "Saving…") else tr("保存配置", "Save"),
                     enabled = !saving,
-                    fullWidth = true,
                     modifier = Modifier.weight(1f),
                     onClick = {
                         val id = (if (isNew) f.id else initial.id).trim()
                         when {
                             id.isEmpty() -> {
                                 error = tr("供应商 ID 不能为空。", "Provider ID cannot be empty.")
-                                return@PrimaryAction
+                                return@PiPrimaryButton
                             }
                             isNew && idCheck == IdCheck.AlreadyCustom -> {
                                 error = tr("models.json 里已经有「$id」了，请直接编辑它。", "models.json already defines \"$id\". Please edit it directly.")
-                                return@PrimaryAction
+                                return@PiPrimaryButton
                             }
                         }
                         val h = host() ?: run {
                             error = tr("引擎没在运行。", "Engine is not running.")
-                            return@PrimaryAction
+                            return@PiPrimaryButton
                         }
                         when (val r = f.toJson()) {
                             is ProviderForm.Result.Invalid -> error = r.message

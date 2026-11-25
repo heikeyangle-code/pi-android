@@ -55,6 +55,7 @@ internal fun ChatDockStatusAndWidgets(
     hiddenWidgetKeys: Set<String>,
     onHideWidget: (String) -> Unit,
     onInteractWidget: (ExtPanel) -> Unit,
+    onPreviewAttachment: (PiImage) -> Unit = {},
 ) {
     val context = LocalContext.current
     val exportScope = rememberCoroutineScope()
@@ -188,6 +189,7 @@ internal fun ChatDockStatusAndWidgets(
                     AttachmentThumb(
                         image = image,
                         index = index,
+                        onPreview = { onPreviewAttachment(image) },
                         onRemove = {
                             onAttachments(attachments.filterIndexed { i, _ -> i != index })
                         },
