@@ -130,7 +130,7 @@ class ActivityGroupProjectorTest {
 
     @Test
     fun `running step, error snippet, hidden thinking, and images project accurately`() {
-        val img = PiImage(data = "AAAA", mimeType = "image/png")
+        val img = PiImage(base64 = "AAAA", mimeType = "image/png")
         val thinking = ThinkingBlock(key = "th1", ts = 1L, text = "plan", streaming = false)
         val failed = ToolCall(
             key = "tc1",
