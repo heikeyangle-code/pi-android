@@ -317,7 +317,8 @@ internal fun formatActivityHeadline(s: ActivitySummary): String {
                 ?: tr("正在搜索代码", "Searching")
             ActiveStepKind.Browse -> s.activeTarget?.let { tr("正在查看 $it", "Listing $it") }
                 ?: tr("正在查看目录", "Listing directory")
-            ActiveStepKind.Shell -> tr("正在运行命令", "Running command")
+            ActiveStepKind.Shell -> s.activeTarget?.let { tr("正在运行 $it", "Running $it") }
+                ?: tr("正在运行命令", "Running command")
             ActiveStepKind.Other, null -> s.activeToolName?.takeIf { it.isNotBlank() }?.let {
                 tr("正在执行 $it", "Running $it")
             } ?: tr("正在处理…", "Working…")
@@ -339,7 +340,7 @@ internal fun formatActivityHeadline(s: ActivitySummary): String {
             "grep" -> t?.let { tr("搜索了 $it", "Searched $it") } ?: tr("搜索了代码", "Searched code")
             "find" -> t?.let { tr("查找了 $it", "Found $it") } ?: tr("查找了文件", "Found files")
             "ls" -> t?.let { tr("查看了 $it", "Listed $it") } ?: tr("查看了目录", "Listed directory")
-            "bash", "powershell" -> tr("运行了命令", "Ran command")
+            "bash", "powershell" -> t?.let { tr("运行了 $it", "Ran $it") } ?: tr("运行了命令", "Ran command")
             else -> tr("执行了 ${s.singleToolName}", "Ran ${s.singleToolName}")
         }
         return if (s.thinkingCount > 0) {

@@ -306,7 +306,7 @@ internal fun ShellBlock(
  * action menu rather than wrapped into the title.
  */
 private fun shellSubject(command: String, timeout: Int?): List<ToolCallPart> = buildList {
-    val head = command.lineSequence().firstOrNull().orEmpty()
+    val head = command.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty()
     add(ToolCallPart(head, ToolCallToken.ToolTitle, bold = true))
     if (timeout != null) add(ToolCallPart(" (timeout ${timeout}s)", ToolCallToken.Muted))
 }

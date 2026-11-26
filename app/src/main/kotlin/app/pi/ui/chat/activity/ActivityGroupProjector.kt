@@ -316,7 +316,11 @@ object ActivityGroupProjector {
             "edit" -> (str("file_path", "path", "filePath") ?: pairedDiff?.path?.takeIf { it.isNotBlank() })?.let { shortTail(it) }
             "grep", "find" -> str("pattern")?.take(24) ?: str("path")?.let { shortTail(it) }
             "ls" -> str("path")?.let { shortTail(it) }
-            "bash", "powershell" -> str("command", "cmd")?.lineSequence()?.firstOrNull()?.trim()?.take(28)
+            "bash", "powershell" -> str("command", "cmd")
+                ?.lineSequence()
+                ?.map { it.trim() }
+                ?.firstOrNull { it.isNotEmpty() }
+                ?.take(28)
             else -> call.argsSummary.takeIf { it.isNotBlank() }?.take(28)
         }
     }
