@@ -9,270 +9,36 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
-/**
- * One markdown heading slot: size and leading, in `sp`.
- *
- * A pair of plain numbers rather than a `TextStyle`, because the colour
- * (`mdHeading`) and the weight (600) are pi's, not the preset's — the caller
- * (`render/PiMarkdownTheme.kt`) owns those and only the two numbers here move
- * with the preset. Same split as `PiTextStyles`: the profile decides sizes, the
- * theme decides tokens.
- */
+/** One markdown heading slot: size and leading, in `sp`. */
 @Immutable
 data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
 
 /**
- * The four presets' numbers, as a **pure function of the three settings rows**
- * `app.appearance.typography` / `.lineHeight` / `.fontSize`.
+ * Clean-slate modular editorial typography profile for Pi Android.
  *
- * ## Why this exists
- *
- * Before this, three sizes were decided in three unrelated places: the chat body
- * came from `PiTextStyles` (14/23), the markdown rhythm from a top-level `val`
- * in `PiMarkdownTheme.kt` (paragraph 2 dp, list item 2 dp, indent 12 dp) and the
- * transcript's block gap from `ChatScreen`'s `when (messageDensity)`. A user who
- * wanted a larger transcript could only move `fontScaleDelta`, which shifts
- * *sizes* and leaves every leading, gap and radius where it was — that is what
- * "字号微调" did and what the density row did, and neither touched the other.
- *
- * This object is the one place that answers "what does 舒适 mean": it resolves
- * the three stored strings into every number the render path needs, so the
- * settings registry, the compose theme and the markdown theme cannot disagree.
- *
- * ## The numbers, and where they come from
- *
- * 经典 keeps today's **numbers**: [styles] for `classic` is literally
- * [PiTextStyles.Default], the heading sizes are the ones `PiMarkdownTheme.kt`
- * already hard-coded (22/20/18/16/15/14), the paragraph gap is today's 2 dp, the
- * indent is today's 12 dp, and 行距 does not move it. Those numbers are also this
- * whole file's **anchor**: 14/23 is where the non-classic leadings' rule comes
- * from (below), so re-cutting them would be re-cutting the scale rather than
- * perfecting it.
- *
- * The one thing 经典 does *not* keep is the platform's text metrics: the
- * app-wide `TextStyle.piPrecise()` (`PiTheme.kt`) — no `includeFontPadding`, leading
- * centred in the line box, first/last line trimmed — applies to `PiTextStyles.Default`
- * and therefore to 经典 too. It is a metric, not a preset number, and giving it to
- * every preset but one would leave two different text engines in one app.
- *
- * The other three come from the approved direction sheet
- * (`/root/design-preview/typography-preview.html`, screenshots `s1.png`–`s3.png`)
- * and its sources: Tailwind Typography for the prose scale and Android M3's 16 sp
- * body for the comfortable step.
- *
- * ## 阅读字体（2026-10-31 字体升级）
- *
- * 聊天 Markdown 的阅读正文用随包的思源宋体（`PiProseFamily`，Source Han Serif CN
- * 2.003R 裁出的 450 / 700 两个静态字重，OFL-1.1，见 `tools/build-prose-font.py`），但**不新增排版角色**：`render/PiMarkdownTheme.kt`
- * 在自己的消费点把本档 `styles.prose` 的字族覆盖成 `PiProseFamily`、字重 `Normal`（450）。
- * 四档的字号/行高仍就是下表的 `proseSize`/`proseLine`（经典 14/23、紧凑 15/24、
- * 舒适 16/25、宽松 17/26）；`prose` 本身仍是系统 Sans，设置页、Boot、文件页、
- * 诊断页不受影响。粗体由 Markdown 的 `**strong**` 落到 `PiProseFamily` 里注册为
- * `Bold` 的真实 Bold（700）实例上，不出现合成粗体。
- *
- * **The sheet's 1.75–1.8 leading for 舒适 was not kept, and that is the one place
- * this file now contradicts the direction sheet.** The number came from Latin
- * reading practice (and from Tailwind's `prose` scale, which is a web-Latin scale),
- * and it was applied here to CJK body text. The two are not the same quantity: a
- * Latin line box has to clear ascenders and descenders, while a CJK glyph fills
- * ~0.87 em of its em box with almost no variation above and below, so **the same
- * ratio leaves visibly more air on Chinese text** — which is what "舒适和松都有点太松垮"
- * is. The app's own board draws its body at **1.62** (v2 `.t14{font-size:14px;
- * line-height:1.62}`, `direction-b-v2.html:157`) and 经典 — the look the user is
- * happy with — is **1.643**; the preset's 1.75/1.82 were the outliers, not the
- * board. The three non-classic leadings are therefore CJK ratios (1.53–1.60) and
- * they **fall as the size rises**, which is the ordinary typographic rule
- * (larger type needs proportionally less leading) and the reason the largest
- * preset used to feel loose twice over: it grew the glyphs *and* the ratio.
- * **No colour moves with a preset** —
- * the sheet only re-uses `PiPalette` tokens, and everything here is a size or a
- * gap. (The draft's "unify the card/code-block radius to 10" was **dropped**: the
- * cards and the code block are already 12 today, so there was no inconsistency to
- * fix, and 10 is not a multiple of 8 while 12 is — see the file's git history and
- * `PiMarkdownDimens`. The table's 8 was never in question.)
- *
- * |                    | classic | compact | comfortable | loose |
- * |--------------------|---------|---------|-------------|-------|
- * | prose size/leading |  14/23  |  15/25  |   16/27     | 17/28 |
- * | markdown `block`   |    2    |   10    |     14      |  22   |
- * | list item top/bot  |   2/2   |   3/3   |     5/5     |  6/6  |
- * | list indent        |   12    |   18    |     22      |  26   |
- * | inline code size/w | 12.5/400|  13/500 |    14/500   | 15/500|
- * | code size/leading  |  13/19  |  13/21  |    14/22    | 15/24 |
- * | table size/leading | 12.5/18 |  14/22  |    15/24    | 16/25 |
- * | headings size/leading | 22/30 20/28 18/26 16/24 15/22 14/21 | 22/28 20/26 18/24 17/24 16/23 15/22 | 24/31 22/29 20/27 18/25 17/24 16/23 | 26/34 24/32 22/30 20/28 19/27 18/26 |
- * | transcript gap     |    8    |    4    |      8      |  12   |
- * | 换人：消息之前       |    8    |   18    |     24      |  36   |
- *
- * **2026-11-01 重排：** 舒适档重做为母版（16/27、段间 14、项间 10、标题 24/22/20/18/17/16、表格 15/24），
- * 紧凑/宽松按同一组比例推出；下面几段里的 25/26、12/20、25/23/21 等是此前的历史数字。
- *
- * 2026-10-26 修订（经典档不动）：列表项上下 padding 改为 **3 / 4 / 5**
- * （项间实际 6 / 8 / 10；库的 `list` 是整组上下 padding，非经典收到 0），
- * 行内代码字重 600 → 500（与正文一致，等宽本来就显重）。下面的段落里
- * 「列表项 4 / 8 / 8」和「600」是修订前的历史数字。
- *
- * The body leading ratios are **1.643 / 1.600 / 1.563 / 1.529** — flat to within
- * 7 %, and monotonically **falling** as the size rises (the leading itself still
- * grows: 23 / 24 / 25 / 26 sp). The paragraph step is **8 / 12 / 20**: each level
- * of the transcript's hierarchy is one 4 dp grid unit away from the next
- * (同一条消息内部 + 8 = 段间距; 段间距 + 8 or + 12 = 换人间距), which is the
- * arithmetic behind "these two gaps are actually distinguishable":
- * 紧凑 4 < 8 < 16, 舒适 8 < 12 < 20, 宽松 12 < 20 < 32 — every pair is ≥ 1.5×
- * apart **and** ≥ 8 dp apart. 经典 was 2/8/8 for 段间距/块间距/换人, i.e. the
- * levels did not exist there; that is what makes it today, and it is untouched.
- *
- * 舒适's paragraph step is **12**, not the 16 this feature first shipped: at
- * 16 sp body that is 0.75 em, and 0.55 × its own line height (25 × 0.55 = 13.75)
- * is the rule the design spec states (`docs/pi-android-ui-spec.md:123`
- * 「段落间距 = 0.55 × 行高」) — 12 is the nearest 4 dp multiple. The 16 also made
- * the gap *equal* to what a card between two paragraphs already produces
- * (同一条消息内部 8 + 8 = 16), so a tool card read exactly like a paragraph
- * break; at 12 the card reads as the bigger break it is.
- * 宽松's 24 → 20 has the same two reasons (a 24 dp gap on a 17 sp body is 1.41 em,
- * and it left only 8 dp of difference from its own 换人间距).
- * 紧凑's 8 is left alone: its three levels are already 2× apart (the one residue is
- * that 2 × its 4 dp 同一条消息内部 = 8 = 段间距, so a card between two paragraphs is
- * still exactly as wide as a paragraph break there; raising the paragraph step to
- * 12 would make 紧凑's own 换人间距 collide with its 换人 layer and dropping the
- * block gap to 2 dp would leave the 4 dp grid — both are worse than the collision).
- *
- * 列表项与缩进跟着上了 4 dp 网格：紧凑 16（1.07 em）、舒适 20（1.25）、宽松 24（1.41），
- * 列表项 4 / 8 / 8（0.27 / 0.50 / 0.47 em，Tailwind 的 `li` 台阶就是 0.5 em）。
- * 改动只有三处：紧凑缩进 18→16、宽松缩进 22→24、宽松列表项 10→8 ——
- * 18/22/10 都不在 4 dp 网格上，而这是全表唯一一处「不是网格值」的地方。
- *
- * **The heading ladder is shifted up by the body's growth.** Every non-classic
- * ladder has 经典's exact step shape (2/2/2/1/1) and the bottom rung clears the
- * body by 1 sp — 紧凑 24…16 over a 15 sp body, 舒适 25…17 over 16, 宽松 26…18
- * over 17. The previous numbers put **h6 below the body** (舒适 15 < 16) and made
- * **h4 and h5 the same size** (16/16) with 1 dp of leading between them: two of
- * six levels were not a level at all, and the smallest was smaller than a
- * paragraph. 经典 keeps its own 22/20/18/16/15/14 (its h6 == body — the one place
- * the frozen档 is below this file's own rule, and it is left alone rather than
- * re-cut: see below).
- *
- * **标题行高按任务书重排（2026-10-31）**：舒适档 h1…h6 为 25/30、23/28、21/26、
- * 19/24、18/23、17/22；紧凑/宽松用**同一组比例**（30/25、28/23、26/21、24/19、
- * 23/18、22/17）乘各自字号四舍五入，得紧凑 24/29…16/21、宽松 26/31…18/23。
- * 经典保持它自己的 30/28/26/24/22/21 不变 —— 那是它「保留改前密度」的承诺。
- * 这组比例是 1.20–1.29，**低于正文的 CJK 行距地板 1.40**，所以「行距」档的
- * ×0.92/×1.08 落在带外被丢弃：标题行高只按本表，不随「行距」移动；正文、行内
- * 代码、代码块与表格仍照旧随「行距」移动（见下节）。
- *
- * 换人那一行 takes the single number above, and 同一条消息内部 keeps the transcript
- * gap. **One** 换人 number, not one per speaker: that is what every chat UI does
- * (`chatview`'s `messageGroupSpacing` is a single parameter), and an asymmetry
- * between "before a user message" and "before an assistant message" would be a
- * difference no user can see the reason for. It also keeps the three gaps ordered
- * for the three non-classic presets — 同一条消息内部 < 段间距 < 换人间距
- * (紧凑 4 < 8 < 16, 舒适 8 < 12 < 20, 宽松 12 < 20 < 32). 经典 sets all three to 8,
- * the single uniform gap the transcript had before this existed. pi's terminal has
- * no such notion, so the number is the app's own. 舒适's 20 — not 24 — is a
- * deliberate down-adjustment: 20 is still on the 4 dp grid, is still strictly larger
- * than 舒适's own 12 dp paragraph step (so a new message still reads as a new
- * message), and no longer collides with 紧凑's 16.
- *
- * Two of those rows deserve their reasoning written down, because both are
- * places where the task book and the code disagreed and the code won:
- *
- * * **Classic's headings are not 28/22/17/15/15/14.** The direction sheet lists
- *   those six numbers as "今天", but they are Material 3's
- *   `displaySmall`/`headlineSmall`/`titleMedium`/`titleSmall`/`bodyLarge`/
- *   `bodyMedium` slots (`PiTheme.kt`'s `piTypography`), not the markdown heading
- *   sizes. The renderer's h1…h6 are hard-coded in `render/PiMarkdownTheme.kt` at
- *   22/20/18/16/15/14 and have been since before this feature, so those are what
- *   classic keeps.
- * * **Classic's inline code is 12.5/400, not 13/400.** Today's `inlineCode` slot
- *   is `mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp)` — a half-step off the
- *   `code` role, and the sheet's 13 is that role's number. Classic keeps 12.5.
- *
- * **A table follows the preset's type, and only its type.** [tableSizeSp] and
- * [tableLineHeightSp] are the two numbers this profile carries for a table
- * (经典 12.5/18 — the `mono` override the renderer had hard-coded before this
- * feature). Everything else about a table is today's at **every** preset: the cell
- * width is 160 dp, the horizontal scroll is the library's
- * (`render/PiMarkdownComponents.kt`'s `PiTable` only adds a header tint and a
- * right-edge fade on top of it, and does not touch either), the corner size is
- * 8 dp, the cell padding is 8 dp and the surface is `cardBg`. The preset carries
- * no other table field for that reason. Both multipliers do reach the table's two
- * numbers now, along with every other role: a cell is a monospace box whose leading
- * only decides how tall the cell is (the column width it has to fit into is the
- * renderer's 160 dp), so stepping its leading changes no line count — but that is an
- * argument for it being *harmless*, not for it being the one role that ignores the
- * two rows. Left out, the table was the only place where `字号 = 更大` moved 正文 to
- * 18 sp and left the cell at 14 (0.78 em, i.e. fine print at an 18 sp body).
- *
- * Why those four sizes: Tailwind Typography draws a `prose` table at `0.875em`,
- * and on a phone whose body is at least 16 sp that is 14 sp — 舒适's number. The
- * leading ratio stays at or above 1.53 for every new step (13/20 = 1.538,
- * 14/22 = 1.571, 15/23 = 1.533), the documented floor for small CJK text being
- * 1.5. 经典's 12.5/18 is 1.44 and deliberately below that floor: it is the value
- * that was already on screen, not a number chosen now.
- *
- * **The code fence's leading is now the table's, number for number** (13/20,
- * 14/22, 15/23). Both are machine output inside a fixed-width box; there was no
- * argument for them to disagree, and the old code leadings (13/21, 14/24, 15/26 —
- * ratios 1.615 / 1.714 / 1.733) were *looser than the body they sat in*, which is
- * the opposite of what a scanned, monospaced block wants. Keeping the two equal
- * also means the body's own ratio (1.53–1.60) is now the ratio every
- * fixed-width role uses, so "how many roles does this system have" has the answer
- * two (body/fixed-width at ~1.55, headings at 1.36–1.53) instead of five.
- *
- * ## The two multipliers
- *
- * `app.appearance.lineHeight` multiplies every **body, code and table leading**
- * (never a size) by 0.92 / 1.0 / 1.08, and the result must stay inside
- * [MIN_LEADING_RATIO]…[MAX_LEADING_RATIO] (1.40–1.85): a step that would leave
- * that band is **dropped entirely** and the base leading stands. 1.40 is the floor
- * below which CJK glyphs start to collide (a CJK glyph fills ~0.87 em of its box,
- * so 1.40 still leaves ~0.5 em of clearance — the old 1.5 came from Latin
- * ascender/descender clearance, which Chinese does not have); 1.85 is where a
- * body column starts to come apart. Because the presets now sit at 1.53–1.60,
- * **both steps apply at every non-classic preset** — the row used to be a no-op in
- * half its combinations:
- *
- * * 紧凑 is 15/24 (1.60) — `tight` is 22 (1.47); `loose` is 26 (1.73).
- * * 舒适 is 16/25 (1.56) — `tight` is 23 (1.44); `loose` is 27 (1.69).
- * * 宽松 is 17/26 (1.53) — `tight` is 24 (1.41); `loose` is 28 (1.65).
- * * 经典 is 14/23 (1.64) and, as below, exempt altogether.
- *
- * **Classic is exempt from the leading multiplier**: it is forced to 1.0 there,
- * which is what keeps 经典's numbers the ones the app had before this feature.
- * (That is now a *design* choice rather than a floor: 经典 is the preset a user
- * picks to get the old scale back, so a row that re-times every leading would
- * delete the thing that preset promises. The app-wide text metrics do reach it —
- * see the note at the top of this KDoc.)
- *
- * `app.appearance.fontSize` adds −1 / 0 / +1 / +2 sp to **every role in
- * [PiTextStyles]**, and now to the markdown profile's own roles as well (the six
- * heading slots, the inline-code size, and the table's two numbers) — all by the
- * same flat `±sp` on size *and* leading, which is [PiTextStyles.scaled]'s rule.
- * Leaving the markdown roles out was the earlier behaviour and it broke this
- * file's own rule: at `字号 = 更大` the body (18 sp) overtook h5 and h6 (18/17),
- * so three of the six heading levels were no longer headings. Because every slot
- * gets the **same** offset, the heading ladder's shape (2/2/2/1/1) and the
- * invariant **h6 = 正文 + 1** hold at all four steps.
- *
- * The row **changes the ratio** (by exactly `offset / size`), and that is
- * deliberate: a flat ±sp on both numbers is what `fontScaleDelta` did and this row
- * is that row with four named steps instead of five anonymous ones. The drift is
- * harmless: across all three presets and all four steps the body ratio only ranges
- * over **1.47…1.64**, inside the band above. (Before the leading was de-Latinised
- * it reached **1.88** at 宽松 + 小, outside the band this file claims to enforce —
- * the band is checked against the 行距 step only, never against this offset, so
- * the hole was real and closing it by shrinking the preset leadings was cheaper
- * than redefining the row.)
+ * Built around two strictly orthogonal user controls plus font pairing:
+ * 1. [textSizeSp] (`14 | 15 | 16 | 17 | 18`, default `16`, stored in `app.appearance.fontSize`):
+ *    drives prose, code, inline code, tables, headings H1–H6, and gentle UI chrome scaling in one
+ *    coherent modular ladder — never fighting with spacing density.
+ * 2. [density] (`compact | comfortable | relaxed`, default `comfortable`, stored in
+ *    `app.appearance.typography`): drives the entire vertical baseline rhythm (prose & code line
+ *    height ratios, paragraph gaps, list spacing, heading top spacing, and message turn gaps)
+ *    harmonically — never altering font sizes or silently dropping out-of-band steps.
+ * 3. Unified whole-app font pairing: [proseFont] (`sans`[IBM Plex Sans SC] / `serif`[Source Han
+ *    Serif CN] / `kai`[LXGW WenKai] / `system`), [codeFont] (`jetbrains` / `geist_mono`), and
+ *    [codeLigatures].
  */
 @Immutable
 data class PiTypographyProfile(
-    /** One of [CLASSIC] / [COMPACT] / [COMFORTABLE] / [LOOSE]. */
-    val preset: String,
-    /** One of `tight` / `normal` / `loose`; ignored when [preset] is [CLASSIC]. */
-    val lineHeight: String,
-    /** One of `small` / `normal` / `large` / `xlarge`. */
-    val fontSize: String,
-    /** The five text roles, with the leading multiplier and the size offset applied. */
+    /** One of [COMPACT] / [COMFORTABLE] / [RELAXED]. */
+    val density: String,
+    /** Explicit prose base size in `sp`: one of `14..18` (default `16`). */
+    val textSizeSp: Int,
+    /** Prose line-height multiplier (`1.50` / `1.64` / `1.78`). */
+    val proseLineRatio: Float,
+    /** Code & table line-height multiplier (`1.46` / `1.56` / `1.64`). */
+    val codeLineRatio: Float,
+    /** The five core text roles with active font families, features, size, and leading applied. */
     val styles: PiTextStyles,
     val h1: PiHeading,
     val h2: PiHeading,
@@ -280,77 +46,52 @@ data class PiTypographyProfile(
     val h4: PiHeading,
     val h5: PiHeading,
     val h6: PiHeading,
-    /** `inlineCode`: `mdCode`-coloured, so only its size/leading/weight move. */
     val inlineCodeSizeSp: Float,
     val inlineCodeLineHeightSp: Float,
     val inlineCodeWeight: FontWeight,
-    /**
-     * 表格单元格的字号/行高，`sp`。阅读字族（思源宋体）与 `body` 配色由
-     * `render/PiMarkdownTheme.kt` 给，这里只有两个数。
-     *
-     * 这两个数与别的角色同待遇：`app.appearance.lineHeight` 按 [steppedLeading] 乘行高、
-     * `app.appearance.fontSize` 平移两者（见 `forPreset`）。理由写在类注释那句
-     * 「A table follows the preset's type」里。
-     *
-     * 表格的其余一切（列宽按可用宽拟合、120 dp 下限、横滑、圆角 8 dp、内边距 8 dp、
-     * `cardBg` 底色）不随预设动；这一笔没有碰它们。
-     */
     val tableSizeSp: Float,
     val tableLineHeightSp: Float,
-    /** Markdown paragraph spacing (`MarkdownPadding.block`). */
+    /** Markdown vertical rhythm tokens. */
     val markdownBlock: Dp,
     val markdownListItemTop: Dp,
     val markdownListItemBottom: Dp,
     val markdownListIndent: Dp,
-    /**
-     * The gap above the first row of a **new** message (换人间距) — user and
-     * assistant alike, one number.
-     *
-     * `render/TranscriptSpacing.kt` decides which row starts a message, and
-     * `screens/ChatScreen.kt` applies the difference against [blockSpacing] as that
-     * row's own top padding; the list's `spacedBy` stays [blockSpacing], so 同一条
-     * 消息内部 and 换人间距 cannot disagree about the baseline.
-     */
+    val headingTopH1: Dp,
+    val headingTopH2: Dp,
+    val headingTopH3: Dp,
+    val headingTopSmall: Dp,
+    /** Gap above the first row of a new message (speaker change). */
     val messageSpacing: Dp,
-    /** The transcript `LazyColumn`'s `Arrangement.spacedBy`, i.e. 同一条消息内部. */
+    /** Intra-message block spacing (`LazyColumn` `spacedBy`). */
     val blockSpacing: Dp,
-    /** The `sp` this profile's [fontSize] adds to every text role, headings included. */
+    /** Gentle UI chrome offset in `sp` (`-1..+2`), keeping buttons/labels legible at all text sizes. */
     val fontSizeOffsetSp: Int,
-    /** Markdown & UI reading font family: `sans` (Inter), `geist` (Geist Sans), `serif` (Source Han Serif CN), `mono` (active code font), or `system` (Android ROM default). */
+    /** Whole-app UI & reading font: `sans` (IBM Plex Sans SC), `serif` (Source Han Serif CN), `kai` (LXGW WenKai), or `system`. */
     val proseFont: String = FONT_SANS,
-    /** Code, terminal & TUI monospace family: `jetbrains` (JetBrains Mono) or `geist_mono` (Geist Mono). */
+    /** Code, diff, terminal, and TUI monospace font: `jetbrains` or `geist_mono`. */
     val codeFont: String = CODE_JETBRAINS,
     /** Enable OpenType coding ligatures (`=>`, `!=`, `->`) in code fences and code viewers. */
     val codeLigatures: Boolean = true,
 ) {
-    /** App-wide UI chrome typeface (buttons, top bar, settings, dialogs). Follows Geist / System when chosen, else Inter. */
-    fun uiFontFamily(): FontFamily = when (proseFont) {
-        FONT_GEIST -> PiGeistFamily
-        FONT_SYSTEM -> FontFamily.Default
-        else -> PiInterFamily
-    }
-
-    /** OpenType feature string for UI chrome text (`cv05, cv11` on Inter for crisp lowercase l / single-story a). */
-    fun uiFontFeatures(): String? = when (proseFont) {
-        FONT_GEIST, FONT_SYSTEM -> null
-        else -> PiFontFeatures.INTER_UI
-    }
-
-    /** Chat Markdown reading prose typeface. */
-    fun proseFontFamily(): FontFamily = when (proseFont) {
-        FONT_GEIST -> PiGeistFamily
+    /** Unified whole-app typeface (UI chrome, top bar, settings, composer, chat prose, headings, dialogs, thinking). */
+    fun appFontFamily(): FontFamily = when (proseFont) {
         FONT_SERIF -> PiProseFamily
-        FONT_MONO -> codeFontFamily()
+        FONT_KAI -> PiWenKaiFamily
         FONT_SYSTEM -> FontFamily.Default
-        else -> PiInterFamily
+        else -> PiPlexSansFamily
     }
+
+    /** App-wide UI chrome typeface — unified with [proseFontFamily] so switching fonts transforms 100% of the app. */
+    fun uiFontFamily(): FontFamily = appFontFamily()
+
+    /** OpenType feature string for UI chrome text. */
+    fun uiFontFeatures(): String? = null
+
+    /** Chat Markdown reading prose typeface — unified with [uiFontFamily]. */
+    fun proseFontFamily(): FontFamily = appFontFamily()
 
     /** OpenType feature string for chat Markdown reading prose. */
-    fun proseFontFeatures(): String? = when (proseFont) {
-        FONT_SANS -> PiFontFeatures.INTER_UI
-        FONT_MONO -> codeFontFeatures(allowLigatures = false)
-        else -> null
-    }
+    fun proseFontFeatures(): String? = null
 
     /** Active code, diff, terminal, and TUI monospace typeface (complete 6 static cuts: 400/500/600/700 + 400i/700i). */
     fun codeFontFamily(): FontFamily = when (codeFont) {
@@ -374,12 +115,12 @@ data class PiTypographyProfile(
     fun codeFontResBoldItalic(): Int =
         if (codeFont == CODE_GEIST_MONO) app.pi.R.font.geist_mono_bold_italic else app.pi.R.font.jetbrains_mono_bold_italic
 
-    /** Subtly scaled-down profile for expanded reasoning / thinking blocks so they read cleanly yet stay subordinate to answers. */
+    /** Subtly scaled-down profile for expanded reasoning blocks so they read cleanly yet stay subordinate to answers. */
     fun forThinking(): PiTypographyProfile {
         val proseSz = (styles.prose.fontSize.value - 1.5f).coerceAtLeast(12.5f)
-        val proseLh = (styles.prose.lineHeight.value - 2f).coerceAtLeast(19f)
+        val proseLh = roundHalfSp(proseSz * (proseLineRatio - 0.04f).coerceAtLeast(1.44f))
         val codeSz = (styles.code.fontSize.value - 1f).coerceAtLeast(11.5f)
-        val codeLh = (styles.code.lineHeight.value - 1.5f).coerceAtLeast(17.5f)
+        val codeLh = roundHalfSp(codeSz * (codeLineRatio - 0.04f).coerceAtLeast(1.40f))
         fun PiHeading.shrink(): PiHeading = PiHeading(
             sizeSp = (sizeSp - 2).coerceAtLeast(13),
             lineHeightSp = (lineHeightSp - 2).coerceAtLeast(19),
@@ -396,33 +137,38 @@ data class PiTypographyProfile(
             h5 = h5.shrink(),
             h6 = h6.shrink(),
             inlineCodeSizeSp = (inlineCodeSizeSp - 1f).coerceAtLeast(11.5f),
-            inlineCodeLineHeightSp = (inlineCodeLineHeightSp - 1.5f).coerceAtLeast(16.5f),
+            inlineCodeLineHeightSp = roundHalfSp((inlineCodeSizeSp - 1f).coerceAtLeast(11.5f) * 1.40f),
             tableSizeSp = (tableSizeSp - 1f).coerceAtLeast(12f),
-            tableLineHeightSp = (tableLineHeightSp - 1.5f).coerceAtLeast(18f),
-            markdownBlock = (markdownBlock.value * 0.7f).coerceAtLeast(6f).dp,
+            tableLineHeightSp = roundHalfSp((tableSizeSp - 1f).coerceAtLeast(12f) * (codeLineRatio - 0.04f).coerceAtLeast(1.40f)),
+            markdownBlock = (markdownBlock.value * 0.72f).coerceAtLeast(6f).dp,
             markdownListItemTop = (markdownListItemTop.value * 0.75f).coerceAtLeast(2f).dp,
             markdownListItemBottom = (markdownListItemBottom.value * 0.75f).coerceAtLeast(2f).dp,
+            headingTopH1 = (headingTopH1.value * 0.75f).coerceAtLeast(10f).dp,
+            headingTopH2 = (headingTopH2.value * 0.75f).coerceAtLeast(8f).dp,
+            headingTopH3 = (headingTopH3.value * 0.75f).coerceAtLeast(6f).dp,
+            headingTopSmall = 3.dp,
         )
     }
 
     companion object {
         const val COMPACT = "compact"
         const val COMFORTABLE = "comfortable"
-        const val LOOSE = "loose"
+        const val RELAXED = "relaxed"
+
+        const val DEFAULT_TEXT_SIZE_SP = 16
+        val TEXT_SIZE_STOPS: List<Int> = listOf(14, 15, 16, 17, 18)
 
         const val FONT_SANS = "sans"
-        const val FONT_GEIST = "geist"
         const val FONT_SERIF = "serif"
-        const val FONT_MONO = "mono"
+        const val FONT_KAI = "kai"
         const val FONT_SYSTEM = "system"
 
         const val CODE_JETBRAINS = "jetbrains"
         const val CODE_GEIST_MONO = "geist_mono"
 
         fun proseFontOf(raw: String?): String = when (raw) {
-            FONT_GEIST -> FONT_GEIST
             FONT_SERIF -> FONT_SERIF
-            FONT_MONO -> FONT_MONO
+            FONT_KAI -> FONT_KAI
             FONT_SYSTEM -> FONT_SYSTEM
             else -> FONT_SANS
         }
@@ -432,284 +178,228 @@ data class PiTypographyProfile(
             else -> CODE_JETBRAINS
         }
 
-        /** Unknown or absent → the default preset, never a crash over a text file. */
-        fun presetOf(raw: String?): String = when (raw) {
+        /** Resolve reading density wire value; defaults to [COMFORTABLE]. */
+        fun densityOf(raw: String?): String = when (raw) {
             COMPACT -> COMPACT
-            LOOSE -> LOOSE
+            RELAXED, "loose" -> RELAXED
             else -> COMFORTABLE
         }
 
-        /** Unknown or absent → `normal`. */
-        fun lineHeightOf(raw: String?): String = when (raw) {
-            "tight" -> "tight"
-            "loose" -> "loose"
-            else -> "normal"
+        /** Resolve prose base size (`14..18` sp); defaults to [DEFAULT_TEXT_SIZE_SP]. */
+        fun textSizeOf(raw: String?): Int {
+            val numeric = raw?.toIntOrNull()
+            if (numeric != null) return numeric.coerceIn(TEXT_SIZE_STOPS.first(), TEXT_SIZE_STOPS.last())
+            return DEFAULT_TEXT_SIZE_SP
         }
 
-        /** Unknown or absent → `normal`, i.e. no offset. */
-        fun fontSizeOf(raw: String?): String = when (raw) {
-            "small" -> "small"
-            "large" -> "large"
-            "xlarge" -> "xlarge"
-            else -> "normal"
-        }
+        private data class DensitySpec(
+            val proseLineRatio: Float,
+            val codeLineRatio: Float,
+            val markdownBlock: Int,
+            val listItemHalf: Int,
+            val listIndent: Int,
+            val blockSpacing: Int,
+            val messageSpacing: Int,
+            val headingTopH1: Int,
+            val headingTopH2: Int,
+            val headingTopH3: Int,
+            val headingTopSmall: Int,
+        )
 
-        /** `−1 / 0 / +1 / +2 sp`; the four steps, in one place. */
-        fun offsetSp(fontSize: String): Int = when (fontSize) {
-            "small" -> -1
-            "large" -> 1
-            "xlarge" -> 2
-            else -> 0
-        }
+        private data class ScaleSpec(
+            val codeSize: Float,
+            val inlineCodeSize: Float,
+            val tableSize: Float,
+            val headings: IntArray,
+            val uiOffsetSp: Int,
+        )
 
-        private val PRESETS: Map<String, Preset> = mapOf(
-            COMPACT to Preset(
-                proseSize = 15, proseLine = 24,
-                block = 10, listItem = 3, indent = 18,
-                codeSize = 12, codeLine = 19,
+        private val DENSITIES: Map<String, DensitySpec> = mapOf(
+            COMPACT to DensitySpec(
+                proseLineRatio = 1.50f,
+                codeLineRatio = 1.46f,
+                markdownBlock = 10,
+                listItemHalf = 3,
+                listIndent = 18,
                 blockSpacing = 6,
-                messageGap = 18,
-                inlineSize = 12.5f, inlineWeight = 500,
-                tableSize = 13.5f, tableLine = 21,
-                headings = intArrayOf(22, 20, 18, 17, 16, 15),
+                messageSpacing = 18,
+                headingTopH1 = 14,
+                headingTopH2 = 10,
+                headingTopH3 = 7,
+                headingTopSmall = 4,
             ),
-            COMFORTABLE to Preset(
-                proseSize = 16, proseLine = 26,
-                block = 12, listItem = 4, indent = 20,
-                codeSize = 13, codeLine = 21,
+            COMFORTABLE to DensitySpec(
+                proseLineRatio = 1.64f,
+                codeLineRatio = 1.56f,
+                markdownBlock = 13,
+                listItemHalf = 4,
+                listIndent = 20,
                 blockSpacing = 8,
-                messageGap = 24,
-                inlineSize = 13.5f, inlineWeight = 500,
-                tableSize = 14f, tableLine = 22,
+                messageSpacing = 24,
+                headingTopH1 = 18,
+                headingTopH2 = 13,
+                headingTopH3 = 9,
+                headingTopSmall = 5,
+            ),
+            RELAXED to DensitySpec(
+                proseLineRatio = 1.78f,
+                codeLineRatio = 1.64f,
+                markdownBlock = 17,
+                listItemHalf = 5,
+                listIndent = 22,
+                blockSpacing = 11,
+                messageSpacing = 30,
+                headingTopH1 = 22,
+                headingTopH2 = 16,
+                headingTopH3 = 11,
+                headingTopSmall = 6,
+            ),
+        )
+
+        private val SCALES: Map<Int, ScaleSpec> = mapOf(
+            14 to ScaleSpec(
+                codeSize = 12.5f,
+                inlineCodeSize = 12.5f,
+                tableSize = 13.0f,
+                headings = intArrayOf(22, 19, 17, 16, 15, 14),
+                uiOffsetSp = -1,
+            ),
+            15 to ScaleSpec(
+                codeSize = 13.0f,
+                inlineCodeSize = 13.0f,
+                tableSize = 13.5f,
+                headings = intArrayOf(23, 20, 18, 17, 16, 15),
+                uiOffsetSp = 0,
+            ),
+            16 to ScaleSpec(
+                codeSize = 13.5f,
+                inlineCodeSize = 13.5f,
+                tableSize = 14.0f,
                 headings = intArrayOf(24, 21, 19, 18, 17, 16),
+                uiOffsetSp = 0,
             ),
-            LOOSE to Preset(
-                proseSize = 17, proseLine = 28,
-                block = 18, listItem = 5, indent = 24,
-                codeSize = 14, codeLine = 23,
-                blockSpacing = 12,
-                messageGap = 32,
-                inlineSize = 14.5f, inlineWeight = 500,
-                tableSize = 15f, tableLine = 24,
-                headings = intArrayOf(26, 23, 21, 19, 18, 17),
+            17 to ScaleSpec(
+                codeSize = 14.5f,
+                inlineCodeSize = 14.5f,
+                tableSize = 15.0f,
+                headings = intArrayOf(26, 23, 20, 19, 18, 17),
+                uiOffsetSp = 1,
+            ),
+            18 to ScaleSpec(
+                codeSize = 15.0f,
+                inlineCodeSize = 15.0f,
+                tableSize = 15.5f,
+                headings = intArrayOf(27, 24, 21, 20, 19, 18),
+                uiOffsetSp = 2,
             ),
         )
 
-        private val HEADING_LEADING_RATIO = doubleArrayOf(
-            31.0 / 24.0, 29.0 / 22.0, 27.0 / 20.0, 25.0 / 18.0, 24.0 / 17.0, 23.0 / 16.0,
-        )
+        private val HEADING_LINE_RATIOS = floatArrayOf(1.26f, 1.29f, 1.32f, 1.36f, 1.40f, 1.44f)
 
-        private fun heading(
-            numbers: Preset,
-            slot: Int,
-            offsetSp: Int = 0,
-        ): PiHeading {
-            val size = numbers.headings[slot]
-            val ratio = HEADING_LEADING_RATIO[slot]
-            val base = PiHeading(size, (size * ratio).roundToInt())
-            return if (offsetSp == 0) {
-                base
-            } else {
-                PiHeading(base.sizeSp + offsetSp, base.lineHeightSp + offsetSp)
-            }
-        }
+        private fun roundHalfSp(value: Float): Float = (value * 2f).roundToInt() / 2f
 
-        /** The whole profile from the stored strings. */
-        fun forPreset(
-            preset: String,
-            lineHeight: String,
-            fontSize: String,
+        private fun heading(sizeSp: Int, slot: Int): PiHeading =
+            PiHeading(sizeSp = sizeSp, lineHeightSp = (sizeSp * HEADING_LINE_RATIOS[slot]).roundToInt())
+
+        /** Build a complete typography profile from the two orthogonal axes and unified font pairing. */
+        fun build(
+            textSizeSp: Int = DEFAULT_TEXT_SIZE_SP,
+            density: String = COMFORTABLE,
             proseFont: String = FONT_SANS,
             codeFont: String = CODE_JETBRAINS,
             codeLigatures: Boolean = true,
         ): PiTypographyProfile {
-            val resolved = presetOf(preset)
+            val resolvedSize = textSizeSp.coerceIn(TEXT_SIZE_STOPS.first(), TEXT_SIZE_STOPS.last())
+            val resolvedDensity = densityOf(density)
             val resolvedProseFont = proseFontOf(proseFont)
             val resolvedCodeFont = codeFontOf(codeFont)
-            val numbers = PRESETS.getValue(resolved)
-            val leading = when (lineHeightOf(lineHeight)) {
-                "tight" -> 0.92
-                "loose" -> 1.08
-                else -> 1.0
-            }
-            val offset = offsetSp(fontSizeOf(fontSize))
 
-            val uiFamily = when (resolvedProseFont) {
-                FONT_GEIST -> PiGeistFamily
+            val d = DENSITIES.getValue(resolvedDensity)
+            val s = SCALES.getValue(resolvedSize)
+
+            val appFamily = when (resolvedProseFont) {
+                FONT_SERIF -> PiProseFamily
+                FONT_KAI -> PiWenKaiFamily
                 FONT_SYSTEM -> FontFamily.Default
-                else -> PiInterFamily
-            }
-            val uiFeatures = when (resolvedProseFont) {
-                FONT_GEIST, FONT_SYSTEM -> null
-                else -> PiFontFeatures.INTER_UI
+                else -> PiPlexSansFamily
             }
             val monoFamily = if (resolvedCodeFont == CODE_GEIST_MONO) PiGeistMonoFamily else PiJetBrainsMonoFamily
             val codeFeatures = if (codeLigatures) PiFontFeatures.CODE_LIGATURES_ON else PiFontFeatures.CODE_LIGATURES_OFF
 
+            val proseLineSp = roundHalfSp(resolvedSize * d.proseLineRatio)
+            val codeLineSp = roundHalfSp(s.codeSize * d.codeLineRatio)
+            val inlineLineSp = roundHalfSp(s.inlineCodeSize * 1.42f)
+            val tableLineSp = roundHalfSp(s.tableSize * d.codeLineRatio)
+
+            val uiShift = s.uiOffsetSp
+            val styles = PiTextStyles(
+                meta = TextStyle(
+                    fontFamily = appFamily,
+                    fontSize = (12 + uiShift).sp,
+                    lineHeight = (18 + uiShift).sp,
+                    fontWeight = FontWeight.Normal,
+                ).piPrecise(),
+                mono = TextStyle(
+                    fontFamily = monoFamily,
+                    fontSize = (13 + uiShift).sp,
+                    lineHeight = (20 + uiShift).sp,
+                    fontFeatureSettings = PiFontFeatures.CODE_LIGATURES_OFF,
+                ).piPrecise(),
+                monoSmall = TextStyle(
+                    fontFamily = monoFamily,
+                    fontSize = (12 + uiShift).sp,
+                    lineHeight = (18 + uiShift).sp,
+                    fontFeatureSettings = PiFontFeatures.CODE_LIGATURES_OFF,
+                ).piPrecise(),
+                prose = TextStyle(
+                    fontFamily = appFamily,
+                    fontSize = resolvedSize.sp,
+                    lineHeight = proseLineSp.sp,
+                    fontWeight = FontWeight.Normal,
+                ).piPrecise(),
+                code = TextStyle(
+                    fontFamily = monoFamily,
+                    fontSize = s.codeSize.sp,
+                    lineHeight = codeLineSp.sp,
+                    fontFeatureSettings = codeFeatures,
+                ).piPrecise(),
+            )
+
             return PiTypographyProfile(
-                preset = resolved,
-                lineHeight = lineHeightOf(lineHeight),
-                fontSize = fontSizeOf(fontSize),
-                styles = PiTextStyles(
-                    meta = TextStyle(
-                        fontFamily = uiFamily,
-                        fontSize = 12.sp,
-                        lineHeight = 18.sp,
-                        fontWeight = FontWeight.Normal,
-                        fontFeatureSettings = uiFeatures,
-                    ).piPrecise(),
-                    mono = TextStyle(
-                        fontFamily = monoFamily,
-                        fontSize = 13.sp,
-                        lineHeight = 20.sp,
-                        fontFeatureSettings = PiFontFeatures.CODE_LIGATURES_OFF,
-                    ).piPrecise(),
-                    monoSmall = TextStyle(
-                        fontFamily = monoFamily,
-                        fontSize = 12.sp,
-                        lineHeight = 18.sp,
-                        fontFeatureSettings = PiFontFeatures.CODE_LIGATURES_OFF,
-                    ).piPrecise(),
-                    prose = TextStyle(
-                        fontFamily = uiFamily,
-                        fontSize = numbers.proseSize.sp,
-                        lineHeight = numbers.proseLine.sp,
-                        fontWeight = FontWeight.Normal,
-                        fontFeatureSettings = uiFeatures,
-                    ).piPrecise(),
-                    code = TextStyle(
-                        fontFamily = monoFamily,
-                        fontSize = numbers.codeSize.sp,
-                        lineHeight = numbers.codeLine.sp,
-                        fontFeatureSettings = codeFeatures,
-                    ).piPrecise(),
-                ).leadingScaled(leading).scaled(offset),
-                h1 = heading(numbers, 0, offset),
-                h2 = heading(numbers, 1, offset),
-                h3 = heading(numbers, 2, offset),
-                h4 = heading(numbers, 3, offset),
-                h5 = heading(numbers, 4, offset),
-                h6 = heading(numbers, 5, offset),
-                inlineCodeSizeSp = numbers.inlineSize + offset,
-                inlineCodeLineHeightSp =
-                    (if (numbers.inlineSize >= 14f) 19f else 18f) + offset,
-                inlineCodeWeight = when {
-                    numbers.inlineWeight >= 600 -> FontWeight.SemiBold
-                    numbers.inlineWeight >= 500 -> FontWeight.Medium
-                    else -> FontWeight.Normal
-                },
-                tableSizeSp = numbers.tableSize + offset,
-                tableLineHeightSp = steppedLeading(
-                    numbers.tableLine.toFloat(),
-                    numbers.tableSize,
-                    leading,
-                ) + offset,
-                markdownBlock = numbers.block.dp,
-                markdownListItemTop = numbers.listItem.dp,
-                markdownListItemBottom = numbers.listItem.dp,
-                markdownListIndent = numbers.indent.dp,
-                messageSpacing = numbers.messageGap.dp,
-                blockSpacing = numbers.blockSpacing.dp,
-                fontSizeOffsetSp = offset,
+                density = resolvedDensity,
+                textSizeSp = resolvedSize,
+                proseLineRatio = d.proseLineRatio,
+                codeLineRatio = d.codeLineRatio,
+                styles = styles,
+                h1 = heading(s.headings[0], 0),
+                h2 = heading(s.headings[1], 1),
+                h3 = heading(s.headings[2], 2),
+                h4 = heading(s.headings[3], 3),
+                h5 = heading(s.headings[4], 4),
+                h6 = heading(s.headings[5], 5),
+                inlineCodeSizeSp = s.inlineCodeSize,
+                inlineCodeLineHeightSp = inlineLineSp,
+                inlineCodeWeight = FontWeight.Medium,
+                tableSizeSp = s.tableSize,
+                tableLineHeightSp = tableLineSp,
+                markdownBlock = d.markdownBlock.dp,
+                markdownListItemTop = d.listItemHalf.dp,
+                markdownListItemBottom = d.listItemHalf.dp,
+                markdownListIndent = d.listIndent.dp,
+                headingTopH1 = d.headingTopH1.dp,
+                headingTopH2 = d.headingTopH2.dp,
+                headingTopH3 = d.headingTopH3.dp,
+                headingTopSmall = d.headingTopSmall.dp,
+                messageSpacing = d.messageSpacing.dp,
+                blockSpacing = d.blockSpacing.dp,
+                fontSizeOffsetSp = uiShift,
                 proseFont = resolvedProseFont,
                 codeFont = resolvedCodeFont,
                 codeLigatures = codeLigatures,
             )
         }
 
-        /** 舒适 at standard leading, no offset — what an unset profile resolves to. */
-        val Default: PiTypographyProfile = forPreset(COMFORTABLE, "normal", "normal")
+        /** 16sp prose at comfortable editorial density with IBM Plex Sans SC + JetBrains Mono. */
+        val Default: PiTypographyProfile = build()
     }
-}
-
-/**
- * A preset's numbers, one field per number the render path needs. Private: the
- * public surface is [PiTypographyProfile] and its `forPreset`, so a caller
- * cannot read half a preset.
- */
-private class Preset(
-    val proseSize: Int,
-    val proseLine: Int,
-    val block: Int,
-    val listItem: Int,
-    val indent: Int,
-    val codeSize: Int,
-    val codeLine: Int,
-    val blockSpacing: Int,
-    /** 换人间距: above the first row of a new message (one number, either speaker). */
-    val messageGap: Int,
-    val inlineSize: Float,
-    val inlineWeight: Int,
-    /** 表格单元格的字号/行高；经典 12.5/18 是改前写死的那个 `mono.copy(…)`。 */
-    val tableSize: Float,
-    val tableLine: Int,
-    /** h1…h6, in that order. */
-    val headings: IntArray,
-)
-
-/**
- * The band a **leading ratio** (`lineHeight / fontSize`) may live in, applied to
- * the 行距 step (and to each heading slot, by the same rule).
- *
- * **1.40** is the floor below which CJK glyphs start to collide. It used to be
- * 1.50, and that number was a **Latin** one — a Latin line box has to keep
- * ascenders and descenders of one line clear of the next, which is why 1.5 is the
- * familiar English floor. A CJK glyph fills ~0.87 em of its em box with no
- * ascender/descender variation, so at 1.40 there is still ~0.5 em of clear air
- * between two lines. The floor only exists so that 行距 = 紧 cannot produce
- * colliding text; with the presets at 1.53–1.60 (see the class KDoc), 1.40 is what
- * lets 紧 actually do something at **every** preset instead of being dropped.
- *
- * 1.85 is where a single body column starts to come apart: at 1.85 the gap between
- * two CJK lines is nearly a full character, and a 16 sp body starts to read as
- * 1.5-line-spaced rather than as prose.
- *
- * The step is all-or-nothing: a 紧/松 that would leave the band is **dropped**, and
- * the preset's own leading stands — see `PiTypographyProfile`'s KDoc for the four
- * presets' answers. 经典 is unaffected either way (its factor is forced to 1.0).
- */
-private const val MIN_LEADING_RATIO = 1.40
-private const val MAX_LEADING_RATIO = 1.85
-
-/**
- * [lineHeightSp] in [fontSizeSp] stepped by [factor], or **unchanged** when the
- * result would leave [MIN_LEADING_RATIO]…[MAX_LEADING_RATIO]; [factor] 1.0 is
- * identity.
- *
- * The band is checked **twice**: once on the ideal (`lineHeight × factor`) and once
- * on the value that is actually returned after `roundToInt`. The second check is
- * not paranoia — it is a defect this file had: the rounded ratio can fall *out* of
- * the band the ideal one sat in. At 13/20 and `factor = 0.92` the ideal ratio is
- * 1.4154 (inside), the rounded leading is `round(18.4) = 18`, and 18/13 = **1.385**
- * — below the CJK floor, i.e. exactly what the band exists to prevent. A step whose
- * rounded result leaves the band is therefore dropped, like any other out-of-band
- * step, and the base leading stands.
- */
-private fun steppedLeading(lineHeightSp: Float, fontSizeSp: Float, factor: Double): Float {
-    if (factor == 1.0 || fontSizeSp <= 0f) return lineHeightSp
-    val ratio = lineHeightSp * factor / fontSizeSp
-    if (ratio < MIN_LEADING_RATIO || ratio > MAX_LEADING_RATIO) return lineHeightSp
-    val stepped = (lineHeightSp * factor).roundToInt().toFloat()
-    val steppedRatio = stepped / fontSizeSp
-    if (steppedRatio < MIN_LEADING_RATIO || steppedRatio > MAX_LEADING_RATIO) return lineHeightSp
-    return stepped
-}
-
-/**
- * Every role's leading stepped by [factor], sizes untouched — the 行距 row.
- *
- * `factor == 1.0` is identity (every `normal` profile, and every classic one), so
- * a normal preset allocates nothing here and classic is byte-for-byte its base.
- */
-private fun PiTextStyles.leadingScaled(factor: Double): PiTextStyles {
-    if (factor == 1.0) return this
-    fun TextStyle.lead(): TextStyle =
-        copy(lineHeight = steppedLeading(lineHeight.value, fontSize.value, factor).sp)
-    return PiTextStyles(
-        meta = meta.lead(),
-        mono = mono.lead(),
-        monoSmall = monoSmall.lead(),
-        prose = prose.lead(),
-        code = code.lead(),
-    )
 }

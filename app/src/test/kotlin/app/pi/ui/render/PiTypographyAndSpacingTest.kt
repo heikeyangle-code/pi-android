@@ -1,13 +1,13 @@
 package app.pi.ui.render
 
+import androidx.compose.ui.text.font.FontFamily
 import app.pi.ui.theme.PiFontFeatures
-import app.pi.ui.theme.PiGeistFamily
 import app.pi.ui.theme.PiGeistMonoFamily
-import app.pi.ui.theme.PiInterFamily
 import app.pi.ui.theme.PiJetBrainsMonoFamily
+import app.pi.ui.theme.PiPlexSansFamily
 import app.pi.ui.theme.PiProseFamily
 import app.pi.ui.theme.PiTypographyProfile
-import androidx.compose.ui.text.font.FontFamily
+import app.pi.ui.theme.PiWenKaiFamily
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -53,36 +53,85 @@ class PiTypographyAndSpacingTest {
     }
 
     @Test
-    fun `typography profile resolves all five reading fonts and two code fonts`() {
-        val inter = PiTypographyProfile.forPreset("comfortable", "normal", "normal", proseFont = "sans", codeFont = "jetbrains", codeLigatures = true)
-        assertEquals(PiInterFamily, inter.uiFontFamily())
-        assertEquals(PiInterFamily, inter.proseFontFamily())
-        assertEquals(PiJetBrainsMonoFamily, inter.codeFontFamily())
-        assertEquals(PiFontFeatures.CODE_LIGATURES_ON, inter.codeFontFeatures(allowLigatures = true))
-        assertEquals(PiFontFeatures.CODE_LIGATURES_OFF, inter.codeFontFeatures(allowLigatures = false))
+    fun `whole-app CJK+Latin fonts stay strictly unified across UI and prose`() {
+        val plex = PiTypographyProfile.build(16, PiTypographyProfile.COMFORTABLE, proseFont = "sans", codeFont = "jetbrains", codeLigatures = true)
+        assertEquals(PiPlexSansFamily, plex.uiFontFamily())
+        assertEquals(PiPlexSansFamily, plex.proseFontFamily())
+        assertEquals(PiPlexSansFamily, plex.styles.prose.fontFamily)
+        assertEquals(PiPlexSansFamily, plex.styles.meta.fontFamily)
+        assertEquals(PiJetBrainsMonoFamily, plex.codeFontFamily())
+        assertEquals(PiFontFeatures.CODE_LIGATURES_ON, plex.codeFontFeatures(allowLigatures = true))
+        assertEquals(PiFontFeatures.CODE_LIGATURES_OFF, plex.codeFontFeatures(allowLigatures = false))
 
-        val geist = PiTypographyProfile.forPreset("comfortable", "normal", "normal", proseFont = "geist", codeFont = "geist_mono", codeLigatures = false)
-        assertEquals(PiGeistFamily, geist.uiFontFamily())
-        assertEquals(PiGeistFamily, geist.proseFontFamily())
-        assertEquals(PiGeistMonoFamily, geist.codeFontFamily())
-        assertEquals(PiFontFeatures.CODE_LIGATURES_OFF, geist.codeFontFeatures(allowLigatures = true))
-
-        val serif = PiTypographyProfile.forPreset("comfortable", "normal", "normal", proseFont = "serif")
-        assertEquals(PiInterFamily, serif.uiFontFamily())
+        val serif = PiTypographyProfile.build(16, PiTypographyProfile.COMFORTABLE, proseFont = "serif", codeFont = "geist_mono", codeLigatures = false)
+        assertEquals(PiProseFamily, serif.uiFontFamily())
         assertEquals(PiProseFamily, serif.proseFontFamily())
+        assertEquals(PiProseFamily, serif.styles.prose.fontFamily)
+        assertEquals(PiProseFamily, serif.styles.meta.fontFamily)
+        assertEquals(PiGeistMonoFamily, serif.codeFontFamily())
+        assertEquals(PiFontFeatures.CODE_LIGATURES_OFF, serif.codeFontFeatures(allowLigatures = true))
 
-        val mono = PiTypographyProfile.forPreset("comfortable", "normal", "normal", proseFont = "mono", codeFont = "geist_mono")
-        assertEquals(PiInterFamily, mono.uiFontFamily())
-        assertEquals(PiGeistMonoFamily, mono.proseFontFamily())
+        val kai = PiTypographyProfile.build(16, PiTypographyProfile.COMFORTABLE, proseFont = "kai")
+        assertEquals(PiWenKaiFamily, kai.uiFontFamily())
+        assertEquals(PiWenKaiFamily, kai.proseFontFamily())
+        assertEquals(PiWenKaiFamily, kai.styles.prose.fontFamily)
+        assertEquals(PiWenKaiFamily, kai.styles.meta.fontFamily)
 
-        val system = PiTypographyProfile.forPreset("comfortable", "normal", "normal", proseFont = "system")
+        val system = PiTypographyProfile.build(16, PiTypographyProfile.COMFORTABLE, proseFont = "system")
         assertEquals(FontFamily.Default, system.uiFontFamily())
         assertEquals(FontFamily.Default, system.proseFontFamily())
+        assertEquals(FontFamily.Default, system.styles.prose.fontFamily)
+        assertEquals(FontFamily.Default, system.styles.meta.fontFamily)
+    }
+
+    @Test
+    fun `text size and reading density axes are strictly orthogonal across all 15 combinations`() {
+        val densities = listOf(PiTypographyProfile.COMPACT, PiTypographyProfile.COMFORTABLE, PiTypographyProfile.RELAXED)
+        for (size in PiTypographyProfile.TEXT_SIZE_STOPS) {
+            val profiles = densities.map { PiTypographyProfile.build(textSizeSp = size, density = it) }
+            // Changing density must NEVER alter font sizes or heading sizes.
+            val (compact, comfortable, relaxed) = profiles
+            assertEquals(size.toFloat(), compact.styles.prose.fontSize.value, 0.001f)
+            assertEquals(compact.styles.prose.fontSize, comfortable.styles.prose.fontSize)
+            assertEquals(comfortable.styles.prose.fontSize, relaxed.styles.prose.fontSize)
+            assertEquals(compact.styles.code.fontSize, relaxed.styles.code.fontSize)
+            assertEquals(compact.h1.sizeSp, relaxed.h1.sizeSp)
+            assertEquals(compact.tableSizeSp, relaxed.tableSizeSp, 0.001f)
+
+            // Density must strictly widen vertical rhythm & leading at EVERY size (zero silent drops).
+            assertTrue(compact.styles.prose.lineHeight.value < comfortable.styles.prose.lineHeight.value)
+            assertTrue(comfortable.styles.prose.lineHeight.value < relaxed.styles.prose.lineHeight.value)
+            assertTrue(compact.styles.code.lineHeight.value < comfortable.styles.code.lineHeight.value)
+            assertTrue(comfortable.styles.code.lineHeight.value < relaxed.styles.code.lineHeight.value)
+            assertTrue(compact.markdownBlock < comfortable.markdownBlock)
+            assertTrue(comfortable.markdownBlock < relaxed.markdownBlock)
+            assertTrue(compact.messageSpacing < comfortable.messageSpacing)
+            assertTrue(comfortable.messageSpacing < relaxed.messageSpacing)
+
+            // Modular scale invariants: strictly monotonic headings and readable code floor (>= 12.5sp).
+            for (p in profiles) {
+                assertTrue(p.styles.code.fontSize.value >= 12.5f)
+                assertTrue(p.h1.sizeSp > p.h2.sizeSp)
+                assertTrue(p.h2.sizeSp > p.h3.sizeSp)
+                assertTrue(p.h3.sizeSp > p.h4.sizeSp)
+                assertTrue(p.h4.sizeSp > p.h5.sizeSp)
+                assertTrue(p.h5.sizeSp > p.h6.sizeSp)
+                assertEquals(size, p.h6.sizeSp)
+            }
+        }
+
+        // Changing text size must NEVER alter density spacing tokens.
+        val small = PiTypographyProfile.build(textSizeSp = 14, density = PiTypographyProfile.COMFORTABLE)
+        val large = PiTypographyProfile.build(textSizeSp = 18, density = PiTypographyProfile.COMFORTABLE)
+        assertEquals(small.markdownBlock, large.markdownBlock)
+        assertEquals(small.messageSpacing, large.messageSpacing)
+        assertEquals(small.blockSpacing, large.blockSpacing)
+        assertEquals(small.headingTopH1, large.headingTopH1)
     }
 
     @Test
     fun `thinking typography profile scales prose and headings down cleanly`() {
-        val base = PiTypographyProfile.forPreset("comfortable", "normal", "normal", proseFont = "geist", codeFont = "geist_mono")
+        val base = PiTypographyProfile.build(16, PiTypographyProfile.COMFORTABLE, proseFont = "kai", codeFont = "geist_mono")
         val thinking = base.forThinking()
         assertTrue(thinking.styles.prose.fontSize.value < base.styles.prose.fontSize.value)
         assertTrue(thinking.h1.sizeSp < base.h1.sizeSp)

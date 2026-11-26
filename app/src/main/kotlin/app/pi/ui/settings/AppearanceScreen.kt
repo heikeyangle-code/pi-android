@@ -5,11 +5,15 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -75,11 +79,10 @@ import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiFontFeatures
-import app.pi.ui.theme.PiGeistFamily
 import app.pi.ui.theme.PiGeistMonoFamily
-import app.pi.ui.theme.PiInterFamily
 import app.pi.ui.theme.PiJetBrainsMonoFamily
 import app.pi.ui.theme.PiPalette
+import app.pi.ui.theme.PiPlexSansFamily
 import app.pi.ui.theme.PiProseFamily
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiSystemPalettes
@@ -88,6 +91,7 @@ import app.pi.ui.theme.PiThemeEntry
 import app.pi.ui.theme.PiThemeLoader
 import app.pi.ui.theme.PiThemeScope
 import app.pi.ui.theme.PiTypographyProfile
+import app.pi.ui.theme.PiWenKaiFamily
 import app.pi.ui.theme.contrastOn
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -150,9 +154,8 @@ fun AppearanceScreen(
     val proseFont = remember(store, freshness) { PiTypographyProfile.proseFontOf(readStr("app.appearance.proseFont", "sans")) }
     val codeFont = remember(store, freshness) { PiTypographyProfile.codeFontOf(readStr("app.appearance.codeFont", "jetbrains")) }
     val codeLigatures = remember(store, freshness) { readBool("app.appearance.codeLigatures", true) }
-    val typography = remember(store, freshness) { PiTypographyProfile.presetOf(readStr("app.appearance.typography", "comfortable")) }
-    val fontSize = remember(store, freshness) { PiTypographyProfile.fontSizeOf(readStr("app.appearance.fontSize", "normal")) }
-    val lineHeight = remember(store, freshness) { PiTypographyProfile.lineHeightOf(readStr("app.appearance.lineHeight", "normal")) }
+    val textSizeSp = remember(store, freshness) { PiTypographyProfile.textSizeOf(readStr("app.appearance.fontSize", "16")) }
+    val density = remember(store, freshness) { PiTypographyProfile.densityOf(readStr("app.appearance.typography", PiTypographyProfile.COMFORTABLE)) }
     val showTimestamps = remember(store, freshness) { readBool("app.appearance.showTimestamps", false) }
     val thinkingCollapsed = remember(store, freshness) { readBool("app.appearance.thinkingCollapsedByDefault", true) }
     val hideThinking = remember(store, freshness) { readBool("hideThinkingBlock", false) }
@@ -195,10 +198,14 @@ fun AppearanceScreen(
     }
 
     val activeProfile = PiTheme.typography
-    val proseSz = activeProfile.styles.prose.fontSize.value.toInt()
-    val proseLh = activeProfile.styles.prose.lineHeight.value.toInt()
-    val lhRatioText = remember(proseSz, proseLh) {
-        String.format(java.util.Locale.US, "%.2f×", proseLh.toFloat() / proseSz.coerceAtLeast(1))
+    val lhRatioText = remember(activeProfile.proseLineRatio) {
+        String.format(java.util.Locale.US, "%.2f×", activeProfile.proseLineRatio)
+    }
+    val codeSizeLabel = remember(activeProfile.styles.code.fontSize.value) {
+        formatSpCompact(activeProfile.styles.code.fontSize.value)
+    }
+    val showStickyPreview by remember(listState) {
+        derivedStateOf { listState.firstVisibleItemIndex >= 1 }
     }
     val thinkingDisplay = when {
         hideThinking -> "hidden"
@@ -221,6 +228,24 @@ fun AppearanceScreen(
                 )
             },
         )
+
+        // Sticky live specimen bar: docks right under the top bar once the Hero Preview Card scrolls away,
+        // giving immediate eye-level feedback while tuning fonts, size, and reading density below.
+        AnimatedVisibility(
+            visible = showStickyPreview,
+            enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+            exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+        ) {
+            StickyAppearancePreviewBar(
+                activeThemeName = activeDisplayTheme,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = PiSettingsMetrics.pageHorizontal,
+                        vertical = 6.dp,
+                    ),
+            )
+        }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -428,78 +453,7 @@ fun AppearanceScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupHeaderGap)) {
                     AppearanceSectionHeader(tr("字体与排版", "Typography & Reading"))
                     PiSettingsCard {
-                        // 1. UI & Reading Font cards (each rendered in its authentic FontFamily)
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                tr("界面与阅读字体", "UI & Reading Font"),
-                                style = PiType.rowTitle,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal),
-                            )
-                            val activeCodeFamily = if (codeFont == PiTypographyProfile.CODE_GEIST_MONO) {
-                                PiGeistMonoFamily
-                            } else {
-                                PiJetBrainsMonoFamily
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState())
-                                    .padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                FontChoiceTile(
-                                    sample = tr("Aa 精致", "Aa Clean"),
-                                    label = "Inter",
-                                    fontFamily = PiInterFamily,
-                                    fontFeatures = PiFontFeatures.INTER_UI,
-                                    selected = proseFont == PiTypographyProfile.FONT_SANS,
-                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_SANS) },
-                                    modifier = Modifier.width(96.dp),
-                                )
-                                FontChoiceTile(
-                                    sample = tr("Aa 几何", "Aa Sharp"),
-                                    label = "Geist",
-                                    fontFamily = PiGeistFamily,
-                                    selected = proseFont == PiTypographyProfile.FONT_GEIST,
-                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_GEIST) },
-                                    modifier = Modifier.width(96.dp),
-                                )
-                                FontChoiceTile(
-                                    sample = tr("Aa 宋体", "Aa Serif"),
-                                    label = tr("思源宋体", "Serif"),
-                                    fontFamily = PiProseFamily,
-                                    selected = proseFont == PiTypographyProfile.FONT_SERIF,
-                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_SERIF) },
-                                    modifier = Modifier.width(96.dp),
-                                )
-                                FontChoiceTile(
-                                    sample = "Aa Mono",
-                                    label = tr("等宽阅读", "Mono"),
-                                    fontFamily = activeCodeFamily,
-                                    selected = proseFont == PiTypographyProfile.FONT_MONO,
-                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_MONO) },
-                                    modifier = Modifier.width(96.dp),
-                                )
-                                FontChoiceTile(
-                                    sample = tr("Aa 系统", "Aa Native"),
-                                    label = tr("跟随系统", "System"),
-                                    fontFamily = FontFamily.Default,
-                                    selected = proseFont == PiTypographyProfile.FONT_SYSTEM,
-                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_SYSTEM) },
-                                    modifier = Modifier.width(96.dp),
-                                )
-                            }
-                        }
-
-                        PiSettingsHairline()
-
-                        // 2. Code & Terminal Font selector
+                        // 1. Unified Whole-App Font selector (2x2 real CJK+Latin multi-weight specimen grid)
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -509,11 +463,94 @@ fun AppearanceScreen(
                                 ),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text(
-                                tr("代码与终端字体", "Code & Terminal Font"),
-                                style = PiType.rowTitle,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    tr("全局字体", "App Font"),
+                                    style = PiType.rowTitle,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    tr("全 App 界面与对话正文统一生效（含真实中英多字重）", "Applies to all UI & reading prose with native CJK+Latin weights"),
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                FontChoiceTile(
+                                    sample = tr("永字排版 Aa", "Studio Aa"),
+                                    label = tr("IBM Plex 黑体", "IBM Plex SC"),
+                                    badge = tr("4 字重", "4 wts"),
+                                    fontFamily = PiPlexSansFamily,
+                                    selected = proseFont == PiTypographyProfile.FONT_SANS,
+                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_SANS) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                                FontChoiceTile(
+                                    sample = tr("永字排版 Aa", "Studio Aa"),
+                                    label = tr("思源宋体", "Han Serif"),
+                                    badge = tr("双字重", "2 wts"),
+                                    fontFamily = PiProseFamily,
+                                    selected = proseFont == PiTypographyProfile.FONT_SERIF,
+                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_SERIF) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                FontChoiceTile(
+                                    sample = tr("永字排版 Aa", "Studio Aa"),
+                                    label = tr("霞鹜文楷", "LXGW WenKai"),
+                                    badge = tr("双字重", "2 wts"),
+                                    fontFamily = PiWenKaiFamily,
+                                    selected = proseFont == PiTypographyProfile.FONT_KAI,
+                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_KAI) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                                FontChoiceTile(
+                                    sample = tr("永字排版 Aa", "Studio Aa"),
+                                    label = tr("跟随系统", "System"),
+                                    badge = tr("原生", "Native"),
+                                    fontFamily = FontFamily.Default,
+                                    selected = proseFont == PiTypographyProfile.FONT_SYSTEM,
+                                    onClick = { writeStr("app.appearance.proseFont", PiTypographyProfile.FONT_SYSTEM) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+
+                        PiSettingsHairline()
+
+                        // 2. Code & Terminal Font selector (pure machine text: code, diffs, paths, terminal, TUI)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                                    vertical = 12.dp,
+                                ),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    tr("代码与终端字体", "Code & Terminal Font"),
+                                    style = PiType.rowTitle,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    tr("专用于代码块、行内代码、Diff、路径与内置终端（6 字重含真斜体）", "Dedicated to code, diffs, paths & terminal (6 cuts w/ true italic)"),
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                             val ligFeat = if (codeLigatures) PiFontFeatures.CODE_LIGATURES_ON else PiFontFeatures.CODE_LIGATURES_OFF
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -552,44 +589,25 @@ fun AppearanceScreen(
                         PiSettingsHairline()
 
                         InlineSegmentRow(
-                            title = tr("排版节奏", "Reading Rhythm"),
-                            subtitle = tr("段距 ${activeProfile.markdownBlock.value.toInt()}dp", "${activeProfile.markdownBlock.value.toInt()}dp gap"),
-                            options = listOf(
-                                PiTypographyProfile.COMPACT to tr("紧凑", "Compact"),
-                                PiTypographyProfile.COMFORTABLE to tr("舒适", "Cozy"),
-                                PiTypographyProfile.LOOSE to tr("宽松", "Loose"),
-                            ),
-                            selected = typography,
-                            onSelect = { writeStr("app.appearance.typography", it) },
-                        )
-
-                        PiSettingsHairline()
-
-                        InlineSegmentRow(
                             title = tr("字号", "Font Size"),
-                            subtitle = "${proseSz}sp",
-                            options = listOf(
-                                "small" to tr("小", "S"),
-                                "normal" to tr("标准", "M"),
-                                "large" to tr("大", "L"),
-                                "xlarge" to tr("更大", "XL"),
-                            ),
-                            selected = fontSize,
+                            subtitle = tr("正文 ${activeProfile.textSizeSp}sp · 代码 ${codeSizeLabel}sp", "Prose ${activeProfile.textSizeSp}sp · Code ${codeSizeLabel}sp"),
+                            options = PiTypographyProfile.TEXT_SIZE_STOPS.map { sp -> sp.toString() to sp.toString() },
+                            selected = textSizeSp.toString(),
                             onSelect = { writeStr("app.appearance.fontSize", it) },
                         )
 
                         PiSettingsHairline()
 
                         InlineSegmentRow(
-                            title = tr("行距", "Line Height"),
-                            subtitle = lhRatioText,
+                            title = tr("阅读密度", "Reading Density"),
+                            subtitle = tr("行高 $lhRatioText · 段距 ${activeProfile.markdownBlock.value.toInt()}dp", "$lhRatioText · ${activeProfile.markdownBlock.value.toInt()}dp gap"),
                             options = listOf(
-                                "tight" to tr("紧", "Tight"),
-                                "normal" to tr("标准", "Normal"),
-                                "loose" to tr("松", "Loose"),
+                                PiTypographyProfile.COMPACT to tr("紧凑", "Compact"),
+                                PiTypographyProfile.COMFORTABLE to tr("舒适", "Comfortable"),
+                                PiTypographyProfile.RELAXED to tr("舒展", "Relaxed"),
                             ),
-                            selected = lineHeight,
-                            onSelect = { writeStr("app.appearance.lineHeight", it) },
+                            selected = density,
+                            onSelect = { writeStr("app.appearance.typography", it) },
                         )
                     }
                 }
@@ -773,7 +791,128 @@ private fun AppearanceSectionHeader(title: String) {
     )
 }
 
-/** Real-time WYSIWYG preview reacting to theme, font family, density, font size, line height, timestamps & thinking. */
+private fun formatSpCompact(sp: Float): String {
+    val whole = sp.toInt()
+    return if (kotlin.math.abs(sp - whole) < 0.05f) whole.toString() else String.format(java.util.Locale.US, "%.1f", sp)
+}
+
+/** Compact live specimen docked below PiTopBar while scrolling through font & typography controls. */
+@Composable
+private fun StickyAppearancePreviewBar(
+    activeThemeName: String,
+    modifier: Modifier = Modifier,
+) {
+    val palette = PiTheme.palette
+    val profile = PiTheme.typography
+    val proseStyle = profile.styles.prose.copy(
+        fontFamily = profile.proseFontFamily(),
+        fontFeatureSettings = profile.proseFontFeatures(),
+    )
+    val codeStyle = profile.styles.code.copy(
+        fontFamily = profile.codeFontFamily(),
+        fontFeatureSettings = profile.codeFontFeatures(allowLigatures = true),
+    )
+    val proseFontTag = when (profile.proseFont) {
+        PiTypographyProfile.FONT_SERIF -> tr("思源宋体", "Serif")
+        PiTypographyProfile.FONT_KAI -> tr("霞鹜文楷", "WenKai")
+        PiTypographyProfile.FONT_SYSTEM -> tr("系统", "Sys")
+        else -> tr("Plex 黑体", "Plex SC")
+    }
+    val codeFontTag = if (profile.codeFont == PiTypographyProfile.CODE_GEIST_MONO) "Geist Mono" else "JB Mono"
+    val ratioLabel = remember(profile.proseLineRatio) {
+        String.format(java.util.Locale.US, "%.2f×", profile.proseLineRatio)
+    }
+
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = palette.pageBg,
+        border = BorderStroke(PiSpacing.hairline, palette.borderMuted),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(palette.accent),
+                    )
+                    Text(
+                        "$activeThemeName · $proseFontTag · $codeFontTag",
+                        style = PiTheme.text.monoSmall,
+                        color = palette.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "${profile.textSizeSp}sp · $ratioLabel",
+                    style = PiTheme.text.monoSmall.copy(
+                        fontWeight = FontWeight.Medium,
+                        fontFeatureSettings = PiFontFeatures.TABULAR,
+                    ),
+                    color = palette.accent,
+                    maxLines = 1,
+                )
+            }
+            Text(
+                text = buildAnnotatedString {
+                    append(tr("排版实时预览：", "Live specimen: "))
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append(tr("清晰字阶", "crisp scale"))
+                    }
+                    append(tr(" 与 ", " & "))
+                    withStyle(
+                        SpanStyle(
+                            fontFamily = profile.codeFontFamily(),
+                            fontSize = profile.inlineCodeSizeSp.sp,
+                            fontWeight = profile.inlineCodeWeight,
+                            color = palette.mdCode,
+                            background = palette.borderMuted.copy(alpha = 0.34f),
+                            fontFeatureSettings = profile.codeFontFeatures(allowLigatures = false),
+                        ),
+                    ) {
+                        append("\u2009inline\u2009")
+                    }
+                },
+                style = proseStyle,
+                color = palette.text,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = palette.syntaxKeyword, fontWeight = FontWeight.Medium)) { append("val ") }
+                    withStyle(SpanStyle(color = palette.syntaxVariable)) { append("ok") }
+                    withStyle(SpanStyle(color = palette.syntaxOperator)) { append(" = ") }
+                    withStyle(SpanStyle(color = palette.syntaxFunction)) { append("render") }
+                    withStyle(SpanStyle(color = palette.syntaxPunctuation)) { append("() ") }
+                    withStyle(SpanStyle(color = palette.syntaxOperator)) { append("!= null -> true") }
+                },
+                style = codeStyle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** Real-time WYSIWYG preview reacting to theme, font family, density, font size, timestamps & thinking. */
 @Composable
 private fun LiveAppearancePreviewCard(
     activeThemeName: String,
@@ -807,13 +946,15 @@ private fun LiveAppearancePreviewCard(
         ) {
             // Header badges: active theme + active font pair & resolved prose metrics
             val proseFontTag = when (profile.proseFont) {
-                PiTypographyProfile.FONT_GEIST -> "Geist"
-                PiTypographyProfile.FONT_SERIF -> tr("宋体", "Serif")
-                PiTypographyProfile.FONT_MONO -> "Mono"
+                PiTypographyProfile.FONT_SERIF -> tr("思源宋体", "Serif")
+                PiTypographyProfile.FONT_KAI -> tr("霞鹜文楷", "WenKai")
                 PiTypographyProfile.FONT_SYSTEM -> tr("系统", "Sys")
-                else -> "Inter"
+                else -> tr("Plex 黑体", "Plex SC")
             }
             val codeFontTag = if (profile.codeFont == PiTypographyProfile.CODE_GEIST_MONO) "Geist Mono" else "JB Mono"
+            val ratioLabel = remember(profile.proseLineRatio) {
+                String.format(java.util.Locale.US, "%.2f×", profile.proseLineRatio)
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -840,8 +981,8 @@ private fun LiveAppearancePreviewCard(
                 }
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "$proseFontTag · $codeFontTag · ${proseStyle.fontSize.value.toInt()}/${proseStyle.lineHeight.value.toInt()}",
-                    style = PiTheme.text.monoSmall,
+                    "$proseFontTag · $codeFontTag · ${profile.textSizeSp}sp · $ratioLabel",
+                    style = PiTheme.text.monoSmall.copy(fontFeatureSettings = PiFontFeatures.TABULAR),
                     color = palette.muted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -892,7 +1033,7 @@ private fun LiveAppearancePreviewCard(
                     )
                     if (thinkingCollapsed) {
                         Text(
-                            tr("思考 4s ▸", "Thought for 4s ▸"),
+                            tr("已思考 ▸", "Thought ▸"),
                             style = PiTheme.text.meta,
                             color = palette.thinkingText,
                         )
@@ -1321,6 +1462,7 @@ private fun FontChoiceTile(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    badge: String? = null,
     fontFeatures: String? = null,
 ) {
     val bg = if (selected) PiTheme.palette.selectedBg else MaterialTheme.colorScheme.surfaceContainer
@@ -1335,7 +1477,7 @@ private fun FontChoiceTile(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 10.dp),
+                .padding(horizontal = 10.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -1343,22 +1485,37 @@ private fun FontChoiceTile(
                 text = sample,
                 style = PiTheme.text.prose.copy(
                     fontFamily = fontFamily,
-                    fontSize = 15.sp,
-                    lineHeight = 20.sp,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    fontSize = 15.5.sp,
+                    lineHeight = 21.sp,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                     fontFeatureSettings = fontFeatures,
                 ),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = label,
-                style = PiTheme.text.meta,
-                color = if (selected) PiTheme.palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = label,
+                    style = PiTheme.text.meta.copy(
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    ),
+                    color = if (selected) PiTheme.palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (badge != null) {
+                    Text(
+                        text = badge,
+                        style = PiTheme.text.meta.copy(fontSize = 10.5.sp, lineHeight = 14.sp),
+                        color = if (selected) PiTheme.palette.accent.copy(alpha = 0.85f) else PiTheme.palette.dim,
+                        maxLines = 1,
+                    )
+                }
+            }
         }
     }
 }
@@ -1404,7 +1561,7 @@ private fun InlineSegmentRow(
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = subtitle,
-                    style = PiTheme.text.monoSmall,
+                    style = PiTheme.text.monoSmall.copy(fontFeatureSettings = PiFontFeatures.TABULAR),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1443,6 +1600,7 @@ private fun InlineSegmentRow(
                             text = label,
                             style = PiTheme.text.meta.copy(
                                 fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                                fontFeatureSettings = PiFontFeatures.TABULAR,
                             ),
                             color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,

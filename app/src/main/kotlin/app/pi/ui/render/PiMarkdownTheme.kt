@@ -185,10 +185,10 @@ internal fun piMarkdownSpacing(profile: PiTypographyProfile): PiMarkdownSpacing 
         block = profile.markdownBlock,
         listItem = itemGap,
         listIndent = profile.markdownListIndent,
-        headingTopH1 = 16.dp,
-        headingTopH2 = 12.dp,
-        headingTopH3 = 8.dp,
-        headingTopSmall = 4.dp,
+        headingTopH1 = profile.headingTopH1,
+        headingTopH2 = profile.headingTopH2,
+        headingTopH3 = profile.headingTopH3,
+        headingTopSmall = profile.headingTopSmall,
     )
 }
 

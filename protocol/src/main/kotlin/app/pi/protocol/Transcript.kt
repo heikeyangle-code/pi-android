@@ -1118,6 +1118,13 @@ class TranscriptReducer(
      */
     private val textIndexByContentIndex = mutableMapOf<Int, Int>()
     private val thinkingIndexByContentIndex = mutableMapOf<Int, Int>()
+    /** Timestamp captured on `thinking_start` so pre-delta silent reasoning is included in elapsed time. */
+    private val thinkingStartedAtByContentIndex = mutableMapOf<Int, Long>()
+    /**
+     * Thinking blocks closed implicitly when answer text or a tool call began before a late `thinking_end`
+     * (notably official `@earendil-works/pi-ai` `openai-completions.js`, which flushes `finishBlock` at EOF).
+     */
+    private val settledThinkingIndexByContentIndex = mutableMapOf<Int, Int>()
     private var currentDay: Long? = null
     private var seq = 0
 
@@ -1514,6 +1521,35 @@ class TranscriptReducer(
 
     // ------------------------------------------------------------- live blocks
 
+    /**
+     * Close every still-streaming [ThinkingBlock] in the current assistant message and stamp its
+     * elapsed duration at [ts]. Called when answer text (`text_start` / `text_delta`) or a tool call
+     * (`toolcall_start`) begins before a provider emits `thinking_end` (e.g. `openai-completions.js`
+     * flushes `thinking_end` only after the whole SSE stream finishes).
+     */
+    private fun settleOpenThinkingBlocks(ts: Long = now()): Int {
+        if (thinkingIndexByContentIndex.isEmpty()) return -1
+        var touched = -1
+        val openEntries = thinkingIndexByContentIndex.entries.toList()
+        for ((contentIndex, rowIndex) in openEntries) {
+            thinkingIndexByContentIndex.remove(contentIndex)
+            val acc = pendingThinkingBuilders.remove(contentIndex)
+            lastThinkingPublishAt.remove(contentIndex)
+            thinkingStartedAtByContentIndex.remove(contentIndex)
+            suppressedMessageIndices.remove(rowIndex)
+            val current = items.getOrNull(rowIndex) as? ThinkingBlock ?: continue
+            val accumulated = acc?.toString() ?: current.text
+            items[rowIndex] = current.copy(
+                text = accumulated,
+                streaming = false,
+                elapsedMs = current.elapsedMs ?: (ts - current.ts).coerceAtLeast(0),
+            )
+            settledThinkingIndexByContentIndex[contentIndex] = rowIndex
+            touched = rowIndex
+        }
+        return touched
+    }
+
     private fun onMessageUpdate(event: PiEvent.MessageUpdate): TranscriptChange {
         // Latest accounting for the status row (F10); `message_update.usage` is
         // cumulative, so the newest value simply replaces the previous one.
@@ -1521,7 +1557,19 @@ class TranscriptReducer(
         val delta = event.delta ?: return TranscriptChange.None
         streaming = true
         return when (delta) {
+            is AssistantDelta.ThinkingStart -> {
+                thinkingStartedAtByContentIndex.putIfAbsent(delta.contentIndex, now())
+                TranscriptChange.None
+            }
+
+            is AssistantDelta.TextStart -> {
+                val settled = settleOpenThinkingBlocks()
+                if (settled >= 0) TranscriptChange.Updated(settled) else TranscriptChange.None
+            }
+
             is AssistantDelta.TextDelta -> {
+                val ts = now()
+                val settled = settleOpenThinkingBlocks(ts)
                 // One row per pi content block, keyed by `contentIndex`, so an
                 // interleaved block lands after the tool card rather than inside
                 // the first text row.
@@ -1530,8 +1578,7 @@ class TranscriptReducer(
                     val current = items[index] as AssistantText
                     val acc = pendingTextBuilders.getOrPut(delta.contentIndex) { StringBuilder(current.text) }
                     acc.append(delta.delta)
-                    if (messageDeltaThrottleMs > 0L) {
-                        val ts = now()
+                    if (messageDeltaThrottleMs > 0L && settled < 0) {
                         val last = lastTextPublishAt[delta.contentIndex]
                         if (last != null && ts - last < messageDeltaThrottleMs) {
                             suppressedMessageIndices += index
@@ -1539,11 +1586,13 @@ class TranscriptReducer(
                         }
                         lastTextPublishAt[delta.contentIndex] = ts
                         suppressedMessageIndices.remove(index)
+                    } else if (messageDeltaThrottleMs > 0L) {
+                        lastTextPublishAt[delta.contentIndex] = ts
+                        suppressedMessageIndices.remove(index)
                     }
                     items[index] = current.copy(text = acc.toString())
                     TranscriptChange.Updated(index)
                 } else {
-                    val ts = now()
                     textIndexByContentIndex[delta.contentIndex] = items.size
                     pendingTextBuilders[delta.contentIndex] = StringBuilder(delta.delta)
                     if (messageDeltaThrottleMs > 0L) {
@@ -1561,9 +1610,18 @@ class TranscriptReducer(
             }
 
             is AssistantDelta.ThinkingDelta -> {
-                val index = thinkingIndexByContentIndex[delta.contentIndex]
+                if (delta.delta.isEmpty()) return TranscriptChange.None
+                var index = thinkingIndexByContentIndex[delta.contentIndex]
+                if (index == null) {
+                    val reopened = settledThinkingIndexByContentIndex.remove(delta.contentIndex)
+                    if (reopened != null && items.getOrNull(reopened) is ThinkingBlock) {
+                        thinkingIndexByContentIndex[delta.contentIndex] = reopened
+                        val prev = items[reopened] as ThinkingBlock
+                        items[reopened] = prev.copy(streaming = true, elapsedMs = null)
+                        index = reopened
+                    }
+                }
                 if (index != null && items.getOrNull(index) is ThinkingBlock) {
-                    if (delta.delta.isEmpty()) return TranscriptChange.None
                     val current = items[index] as ThinkingBlock
                     val acc = pendingThinkingBuilders.getOrPut(delta.contentIndex) { StringBuilder(current.text) }
                     acc.append(delta.delta)
@@ -1580,8 +1638,8 @@ class TranscriptReducer(
                     items[index] = current.copy(text = acc.toString())
                     TranscriptChange.Updated(index)
                 } else {
-                    if (delta.delta.isEmpty()) return TranscriptChange.None
                     val ts = now()
+                    val startedAt = thinkingStartedAtByContentIndex.remove(delta.contentIndex) ?: ts
                     thinkingIndexByContentIndex[delta.contentIndex] = items.size
                     pendingThinkingBuilders[delta.contentIndex] = StringBuilder(delta.delta)
                     if (messageDeltaThrottleMs > 0L) {
@@ -1590,7 +1648,7 @@ class TranscriptReducer(
                     append(
                         ThinkingBlock(
                             key = nextKey("thinking"),
-                            ts = ts,
+                            ts = startedAt,
                             text = delta.delta,
                             streaming = true,
                             level = thinkingLevel,
@@ -1632,39 +1690,52 @@ class TranscriptReducer(
             // does not merely risk a corrupt row, it loses the block entirely.
             is AssistantDelta.ThinkingEnd -> {
                 val content = delta.content
-                val index = thinkingIndexByContentIndex.remove(delta.contentIndex)
+                val activeIndex = thinkingIndexByContentIndex.remove(delta.contentIndex)
+                val settledIndex = if (activeIndex == null) {
+                    settledThinkingIndexByContentIndex.remove(delta.contentIndex)
+                } else {
+                    null
+                }
+                val index = activeIndex ?: settledIndex
                 val acc = pendingThinkingBuilders.remove(delta.contentIndex)
                 lastThinkingPublishAt.remove(delta.contentIndex)
+                val startedAt = thinkingStartedAtByContentIndex.remove(delta.contentIndex)
                 val current = if (index == null) null else items.getOrNull(index) as? ThinkingBlock
                 if (index != null) suppressedMessageIndices.remove(index)
                 if (current != null) {
-                    // `thinking_end` is where **thinking** ends — not the message. The row used
-                    // to stay "思考中…" with its clock running until `message_end`
-                    // ([finishStreaming]), i.e. through the whole answer text that follows, so the
-                    // reported time included the reply and the state never matched what the model
-                    // was doing. Close it here and stamp the duration at this moment.
                     // Guard against empty string `""` in `thinking_end.content` from some providers:
                     // never wipe accumulated streaming deltas with an empty string.
+                    // If the block was already settled implicitly when answer text started (e.g.
+                    // `openai-completions.js`), preserve its true thinking duration rather than
+                    // overwriting with the end-of-message timestamp.
                     val accumulated = acc?.toString() ?: current.text
-                    items[index!!] = current.copy(
-                        text = content?.takeIf { it.isNotEmpty() } ?: accumulated,
-                        streaming = false,
-                        elapsedMs = current.elapsedMs ?: (now() - current.ts).coerceAtLeast(0),
-                    )
-                    TranscriptChange.Updated(index)
+                    val finalText = content?.takeIf { it.isNotEmpty() } ?: accumulated
+                    val finalElapsed = current.elapsedMs ?: (now() - current.ts).coerceAtLeast(0)
+                    if (!current.streaming && current.text == finalText && current.elapsedMs == finalElapsed) {
+                        TranscriptChange.None
+                    } else {
+                        items[index!!] = current.copy(
+                            text = finalText,
+                            streaming = false,
+                            elapsedMs = finalElapsed,
+                        )
+                        TranscriptChange.Updated(index)
+                    }
                 } else if (content.isNullOrEmpty()) {
                     TranscriptChange.None
                 } else {
-                    // Redacted thinking can be complete at start with no deltas: this event is the
-                    // only thing that carries it, and it is already finished, so no running state
-                    // and no duration (nothing was measured).
+                    // Delta-less reasoning (e.g. redacted thinking or summary-only reasoning):
+                    // measure from `thinking_start` when real time elapsed; omit 0ms instant blocks.
+                    val endTs = now()
+                    val elapsed = startedAt?.let { (endTs - it).coerceAtLeast(0L) }?.takeIf { it > 0L }
                     append(
                         ThinkingBlock(
                             key = nextKey("thinking"),
-                            ts = now(),
+                            ts = startedAt ?: endTs,
                             text = content,
                             streaming = false,
                             level = thinkingLevel,
+                            elapsedMs = elapsed,
                         ),
                     )
                 }
@@ -1673,16 +1744,22 @@ class TranscriptReducer(
             // A tool call announces itself before its arguments finish streaming,
             // so the card can show the tool name immediately.
             is AssistantDelta.ToolCallStart -> {
+                val ts = now()
+                val settled = settleOpenThinkingBlocks(ts)
                 val flushed = flushMessageDeltas(clearBuilders = false)
                 val callId = delta.id ?: nextKey("toolcall")
                 if (toolIndexByCallId.containsKey(callId)) {
-                    if (flushed >= 0) TranscriptChange.Updated(flushed) else TranscriptChange.None
+                    when {
+                        settled >= 0 -> TranscriptChange.Updated(settled)
+                        flushed >= 0 -> TranscriptChange.Updated(flushed)
+                        else -> TranscriptChange.None
+                    }
                 } else {
                     toolIndexByCallId[callId] = items.size
                     append(
                         ToolCall(
                             key = callId,
-                            ts = now(),
+                            ts = ts,
                             toolCallId = callId,
                             toolName = delta.toolName.orEmpty(),
                             status = ToolStatus.Pending,
@@ -2791,6 +2868,8 @@ class TranscriptReducer(
         // Content-block numbering restarts with the next assistant message.
         textIndexByContentIndex.clear()
         thinkingIndexByContentIndex.clear()
+        thinkingStartedAtByContentIndex.clear()
+        settledThinkingIndexByContentIndex.clear()
         // F8: the tail of a throttled burst must not be lost. Every end-of-message
         // event comes through here (`message_end`, `agent_end`, `agent_settled`),
         // so the row the throttle was still holding is reported now — otherwise a
@@ -2860,6 +2939,8 @@ class TranscriptReducer(
         summarizationNoticeIndex = null
         textIndexByContentIndex.clear()
         thinkingIndexByContentIndex.clear()
+        thinkingStartedAtByContentIndex.clear()
+        settledThinkingIndexByContentIndex.clear()
         pendingTextBuilders.clear()
         pendingThinkingBuilders.clear()
         lastTextPublishAt.clear()

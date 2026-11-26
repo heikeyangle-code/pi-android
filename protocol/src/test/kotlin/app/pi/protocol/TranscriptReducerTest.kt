@@ -713,4 +713,107 @@ class TranscriptReducerTest {
         assertFalse(second.streaming)
         assertFalse(r.hasPendingMessageDeltas())
     }
+
+    @Test
+    fun `thinking settles when text_start arrives before late openai-completions thinking_end`() {
+        val r = TranscriptReducer(messageDeltaThrottleMs = MESSAGE_DELTA_THROTTLE_MS) { clock }
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}"""))
+        clock += 1_500L
+        r.onEvent(thinking("Evaluating options"))
+        clock += 2_500L
+        r.onEvent(thinking(" -> plan ready"))
+
+        // openai-completions.js opens text without emitting thinking_end until EOF.
+        clock += 200L
+        val settleChange = r.onEvent(
+            PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":1}}"""),
+        )
+        assertEquals(TranscriptChange.Updated(0), settleChange)
+        val settled = r.transcript[0] as ThinkingBlock
+        assertFalse(settled.streaming)
+        assertEquals("Evaluating options -> plan ready", settled.text)
+        assertEquals(4_200L, settled.elapsedMs)
+
+        // Answer streams for 20 seconds; thinking block must stay settled at 4.2s.
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"Final answer."}}"""))
+        clock += 20_000L
+
+        // Late thinking_end flushed at EOF must NOT duplicate the row or overwrite elapsedMs.
+        val lateEnd = r.onEvent(
+            PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"Evaluating options -> plan ready"}}"""),
+        )
+        assertEquals(TranscriptChange.None, lateEnd)
+        assertEquals(2, r.transcript.size)
+        val finalThinking = r.transcript[0] as ThinkingBlock
+        assertFalse(finalThinking.streaming)
+        assertEquals(4_200L, finalThinking.elapsedMs)
+    }
+
+    @Test
+    fun `thinking settles immediately on text_delta or toolcall_start even without text_start`() {
+        val r = TranscriptReducer { clock }
+        r.onEvent(thinking("checking files"))
+        clock += 3_100L
+        r.onEvent(
+            PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":1,"id":"tc_1","toolName":"read"}}"""),
+        )
+        val settled = r.transcript[0] as ThinkingBlock
+        assertFalse(settled.streaming)
+        assertEquals(3_100L, settled.elapsedMs)
+
+        // Delayed thinking_end reconciles authoritative text in place without overwriting duration.
+        clock += 5_000L
+        val lateEnd = r.onEvent(
+            PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"checking files!"}}"""),
+        )
+        assertEquals(TranscriptChange.Updated(0), lateEnd)
+        assertEquals(2, r.transcript.size)
+        val updated = r.transcript[0] as ThinkingBlock
+        assertEquals("checking files!", updated.text)
+        assertEquals(3_100L, updated.elapsedMs)
+    }
+
+    @Test
+    fun `delta-less thinking_start to thinking_end records real elapsed time but omits 0ms instant blocks`() {
+        val r = TranscriptReducer { clock }
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}"""))
+        clock += 6_400L
+        r.onEvent(
+            PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"Summary reasoning"}}"""),
+        )
+        val measured = r.transcript[0] as ThinkingBlock
+        assertFalse(measured.streaming)
+        assertEquals(6_400L, measured.elapsedMs)
+
+        // Instant redacted thinking (0ms between start and end) keeps elapsedMs null.
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":1}}"""))
+        r.onEvent(
+            PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":1,"content":"[Reasoning redacted]"}}"""),
+        )
+        val redacted = r.transcript[1] as ThinkingBlock
+        assertFalse(redacted.streaming)
+        assertEquals(null, redacted.elapsedMs)
+    }
+
+    @Test
+    fun `interleaved thinking_delta after implicit settlement reopens same row cleanly`() {
+        val r = TranscriptReducer { clock }
+        r.onEvent(thinking("part 1"))
+        clock += 1_000L
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"Hi"}}"""))
+        assertFalse((r.transcript[0] as ThinkingBlock).streaming)
+
+        clock += 500L
+        r.onEvent(thinking(" + part 2"))
+        val reopened = r.transcript[0] as ThinkingBlock
+        assertTrue(reopened.streaming)
+        assertEquals("part 1 + part 2", reopened.text)
+        assertEquals(2, r.transcript.size)
+
+        clock += 500L
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"part 1 + part 2"}}"""))
+        val done = r.transcript[0] as ThinkingBlock
+        assertFalse(done.streaming)
+        assertEquals(2_000L, done.elapsedMs)
+    }
 }

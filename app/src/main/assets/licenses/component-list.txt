@@ -194,31 +194,34 @@
       许可证    Apache-2.0
       上游      https://github.com/mathjax/MathJax
 
-■ 编译进 App 代码（随包打包的界面与阅读无衬线字体，Regular / Medium / SemiBold / Bold / Italic / BoldItalic）
+■ 编译进 App 代码（随包打包的全 App 中英多字重字体，GB2312 + 常用字 + 拉丁子集，已按 OFL §3 重命名）
 ------------------------------------------------------------------------------------------------
-  Inter
-      版本      4.1
+  IBM Plex Sans SC（4 档静态字重 400/500/600/700，已改名为 Pi Studio Sans）
+      版本      1.1.0
       许可证    OFL-1.1
-      上游      https://github.com/rsms/inter
+      上游      https://github.com/IBM/plex
 
-  Geist Sans & Geist Mono
-      版本      1.9.2
+  Source Han Serif CN（思源宋体 CN，450/700 双字重，已改名为 Pi Reading Serif）
+      版本      2.003R
       许可证    OFL-1.1
-      上游      https://github.com/vercel/geist-font
+      上游      https://github.com/adobe-fonts/source-han-serif
 
-■ 编译进 App 代码（随包打包的等宽字体，Regular / Medium / SemiBold / Bold / Italic / BoldItalic）
+  LXGW WenKai（霞鹜文楷，400/500 双字重，已改名为 Pi Studio Kai）
+      版本      1.530
+      许可证    OFL-1.1
+      上游      https://github.com/lxgw/LxgwWenKai
+
+■ 编译进 App 代码（随包打包的代码与终端等宽字体，6 档完整静态字重含真斜体；Mermaid 图表含 Geist 子集）
 ------------------------------------------------------------------------------------------
   JetBrains Mono
       版本      2.304
       许可证    OFL-1.1
       上游      https://github.com/JetBrains/JetBrainsMono
 
-■ 编译进 App 代码（随包打包的阅读字体：由 CN 子集可变字体裁出的 450 / 700 两个静态字重，GB2312 子集，已改名为 Pi Reading Serif）
----------------------------------------------------------------------------------------
-  Source Han Serif CN（思源宋体 CN）
-      版本      2.003R
+  Geist Mono & Geist（Mermaid 离线字体）
+      版本      1.9.2
       许可证    OFL-1.1
-      上游      https://github.com/adobe-fonts/source-han-serif
+      上游      https://github.com/vercel/geist-font
 
 ■ 不随包分发
 -------

@@ -155,10 +155,6 @@ internal fun PiSessionViewModel.readPrefs(): UiPrefs {
     fun raw(key: String): String? =
         (settingsStore.read(key) as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
 
-    // 一次性读时迁移（**不是死代码**：这两个键已从注册表删除，这里是全仓唯一的读者，
-    // 删掉它就等于把用户已经设过的排版偏好悄悄清零）。新键在场时永远优先，所以迁移
-    // 不会覆盖之后的编辑；新键不在场时每次读都按旧值解析，两份文档因此不会各说各话。
-    // 两个映射表与理由在 `PiTypographyProfile.migratedTypography` / `migratedFontSize`。
     // Mirror app.appearance.language from app-prefs.json into PiLocale on startup/refresh.
     val langWire = raw(PiLocale.SETTING_KEY)
     if (langWire != null) {
@@ -168,14 +164,13 @@ internal fun PiSessionViewModel.readPrefs(): UiPrefs {
         }
     }
 
-    val typography = raw("app.appearance.typography") ?: PiTypographyProfile.COMFORTABLE
-    val fontSize = raw("app.appearance.fontSize") ?: "normal"
+    val textSizeSp = PiTypographyProfile.textSizeOf(raw("app.appearance.fontSize"))
+    val density = PiTypographyProfile.densityOf(raw("app.appearance.typography"))
 
     return UiPrefs(
-        typographyProfile = PiTypographyProfile.forPreset(
-            preset = typography,
-            lineHeight = string("app.appearance.lineHeight", "normal"),
-            fontSize = fontSize,
+        typographyProfile = PiTypographyProfile.build(
+            textSizeSp = textSizeSp,
+            density = density,
             proseFont = string("app.appearance.proseFont", PiTypographyProfile.FONT_SANS),
             codeFont = string("app.appearance.codeFont", PiTypographyProfile.CODE_JETBRAINS),
             codeLigatures = bool("app.appearance.codeLigatures", true),

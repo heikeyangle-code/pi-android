@@ -35,7 +35,9 @@ sealed interface AssistantDelta {
     data class TextEnd(val contentIndex: Int, val content: String?) : AssistantDelta {
         override val kind = "text_end"
     }
-    data object ThinkingStart : AssistantDelta { override val kind = "thinking_start" }
+    data class ThinkingStart(val contentIndex: Int = 0) : AssistantDelta {
+        override val kind = "thinking_start"
+    }
     data class ThinkingDelta(val contentIndex: Int, val delta: String) : AssistantDelta {
         override val kind = "thinking_delta"
     }
@@ -617,7 +619,9 @@ object PiEvents {
                 contentIndex = e.int("contentIndex") ?: 0,
                 content = e.str("content"),
             )
-            "thinking_start" -> AssistantDelta.ThinkingStart
+            "thinking_start" -> AssistantDelta.ThinkingStart(
+                contentIndex = e.int("contentIndex") ?: 0,
+            )
             "thinking_delta" -> AssistantDelta.ThinkingDelta(
                 contentIndex = e.int("contentIndex") ?: 0,
                 delta = e.str("delta").orEmpty(),

@@ -278,43 +278,39 @@ object PiShapes {
 
 /**
  * OpenType feature presets shared across the Studio typography system:
- *  - [INTER_UI]: Inter's `cv05` (tailed lowercase `l`) + `cv11` (single-story `a`) for razor-sharp UI legibility.
  *  - [TABULAR]: Tabular lining figures so live counters, timestamps, and tables never jitter horizontally.
  *  - [CODE_LIGATURES_ON]: Coding ligatures (`=>`, `!=`, `->`, `<=`) + slashed zero for code fences and viewers.
  *  - [CODE_LIGATURES_OFF]: Literal character fidelity + slashed zero + tabular numerals for diffs, paths, commands, and inline code.
  */
 object PiFontFeatures {
-    const val INTER_UI: String = "cv05, cv11"
     const val TABULAR: String = "tnum"
     const val CODE_LIGATURES_ON: String = "calt, liga, zero, tnum"
+    /** Literal machine code (diffs, paths, commands, line numbers, token counters): tabular + slashed zero, no ligatures. */
     const val CODE_LIGATURES_OFF: String = "calt 0, liga 0, zero, tnum"
 }
 
 /**
- * Primary Studio UI & modern reading sans: Inter v4.1 (OFL-1.1), 6 complete static cuts
- * (`400 / 500 / 600 / 700 + Italic / BoldItalic`). CJK glyphs fall back seamlessly to the
- * device's system CJK sans face with zero missing characters across Simplified/Traditional/JP/KR.
+ * Primary whole-app CJK + Latin sans: IBM Plex Sans SC 1.1.0 (OFL-1.1), 4 complete static weights
+ * (`Regular 400`, `Medium 500`, `SemiBold 600`, `Bold 700`) subsetted to GB2312 + everyday hanzi +
+ * full ASCII/Latin/punctuation via `tools/build-cjk-fonts.py` (OFL §3 renamed to "Pi Studio Sans").
  */
-val PiInterFamily: FontFamily = FontFamily(
-    Font(R.font.inter_regular, FontWeight.Normal, FontStyle.Normal),
-    Font(R.font.inter_medium, FontWeight.Medium, FontStyle.Normal),
-    Font(R.font.inter_semibold, FontWeight.SemiBold, FontStyle.Normal),
-    Font(R.font.inter_bold, FontWeight.Bold, FontStyle.Normal),
-    Font(R.font.inter_italic, FontWeight.Normal, FontStyle.Italic),
-    Font(R.font.inter_bold_italic, FontWeight.Bold, FontStyle.Italic),
+val PiPlexSansFamily: FontFamily = FontFamily(
+    Font(R.font.plex_sans_sc_regular, FontWeight.Normal, FontStyle.Normal),
+    Font(R.font.plex_sans_sc_medium, FontWeight.Medium, FontStyle.Normal),
+    Font(R.font.plex_sans_sc_semibold, FontWeight.SemiBold, FontStyle.Normal),
+    Font(R.font.plex_sans_sc_bold, FontWeight.Bold, FontStyle.Normal),
 )
 
 /**
- * Geometric Studio UI & reading sans: Vercel Geist v1.9.2 (OFL-1.1), 6 complete static cuts
- * (`400 / 500 / 600 / 700 + Italic / BoldItalic`).
+ * Humanist whole-app CJK + Latin kai face: LXGW WenKai 1.530 (OFL-1.1), 2 real static weights
+ * (`Regular 400`, `Medium 500` mapped to SemiBold/Bold) subsetted via `tools/build-cjk-fonts.py`
+ * (OFL §3 renamed to "Pi Studio Kai").
  */
-val PiGeistFamily: FontFamily = FontFamily(
-    Font(R.font.geist_regular, FontWeight.Normal, FontStyle.Normal),
-    Font(R.font.geist_medium, FontWeight.Medium, FontStyle.Normal),
-    Font(R.font.geist_semibold, FontWeight.SemiBold, FontStyle.Normal),
-    Font(R.font.geist_bold, FontWeight.Bold, FontStyle.Normal),
-    Font(R.font.geist_italic, FontWeight.Normal, FontStyle.Italic),
-    Font(R.font.geist_bold_italic, FontWeight.Bold, FontStyle.Italic),
+val PiWenKaiFamily: FontFamily = FontFamily(
+    Font(R.font.lxgw_wenkai_regular, FontWeight.Normal, FontStyle.Normal),
+    Font(R.font.lxgw_wenkai_regular, FontWeight.Medium, FontStyle.Normal),
+    Font(R.font.lxgw_wenkai_medium, FontWeight.SemiBold, FontStyle.Normal),
+    Font(R.font.lxgw_wenkai_medium, FontWeight.Bold, FontStyle.Normal),
 )
 
 /**
@@ -348,68 +344,15 @@ val PiGeistMonoFamily: FontFamily = FontFamily(
 val PiMonoFamily: FontFamily = PiJetBrainsMonoFamily
 
 /**
- * The bundled reading face for the transcript's Markdown body: a **cut-down Source Han
- * Serif CN（思源宋体 CN）2.003R** (Adobe, OFL-1.1) — two static TrueType instances,
- * `app/src/main/res/font/source_han_serif_cn_{text,bold}.ttf`, produced by
- * `tools/build-prose-font.py` from Adobe's official Simplified-Chinese subset variable
- * font. The OFL text is in the in-app licence list (`SourceHanSerif-OFL-1.1.txt`).
- *
- * ## Why this is a cut-down pair and not the 25 MB variable file
- *
- * A reading face is only ever asked for two weights, and a chat transcript only needs the
- * GB2312 hanzi (6 763), ASCII/Latin-1, punctuation and the full-width forms — ~7.7 k glyphs
- * instead of the CN subset's 31 k. So the build script instances the variable font at
- * `wght` **450** and **700**, subsets each to that set and drops hinting and vertical
- * forms: **3.0 MB per file, 6.1 MB for the pair**, against 25 MB (≈15 MB deflated) for the
- * variable file. A character outside the subset is not tofu — Compose falls back to the
- * platform face for that glyph only (the repo's own 540 k hanzi of Chinese text has one
- * such character).
- *
- * Static instances also mean no variation settings at runtime: each entry is a plain file,
- * so there is no `wght` axis to resolve on API 26/27 and no dependence on the variable
- * default instance (this font's default is ExtraLight 250).
- *
- * The TTFs are stored **uncompressed** in the APK (`noCompress += "ttf"` in
- * `app/build.gradle.kts`) so the platform can `mmap` them and only the glyph pages that are
- * actually drawn become resident; a deflated resource has to be inflated into memory first.
- *
- * ## Why 450 for the body
- *
- * 400 is Source Han Serif's Regular, and on a dark page at 16 sp its hairline strokes read
- * spindly; the system-face body this replaced was Medium (500). 450 keeps the serif's
- * stroke contrast and stays close to the density the transcript had before. `Normal` is
- * therefore the 450 cut; weights are matched by Compose to the nearest entry, so the
- * headings' `SemiBold` lands on the 700 file and Material's `Medium` on the 450 one.
- *
- * ## Why 700, and why both SemiBold and Bold point at it
- *
- * Markdown's `**strong**` is fixed to `FontWeight.Bold` (700) by the renderer library, so a
- * real 700 cut exists for it to land on; without one Android would **synthesise** a faux-bold
- * from the 450 outlines — wrong advance widths, smeared strokes. The cut is 700 rather than
- * 600 because 600 against 450 is a step of barely 150 units: on a dark page at 16 sp bold and
- * body were hard to tell apart (measured side by side with 600/700/750 — 700 is the first
- * clearly bold step, 750 starts to clot the dense hanzi). Headings' `SemiBold` is declared on
- * the same file, so headings and `**strong**` share one real face.
- *
- * ## The name is not "Source Han Serif"
- *
- * Adobe's licence reserves the font name 'Source' (OFL §3: a modified version may not use a
- * Reserved Font Name). Instancing and subsetting make these files modified versions, so the
- * script rewrites the `name` table to "Pi Reading Serif" and fails if 'Source' survives
- * anywhere but the copyright/trademark notices, which are kept as the licence requires.
- *
- * ## Why there is no italic file
- *
- * Source Han Serif publishes no italic (CJK type is not oblique by convention), and this app
- * does not bundle an algorithmic slanted copy. Markdown's block quote keeps
- * `fontStyle = FontStyle.Italic` in `render/PiMarkdownTheme.kt`, so Compose synthesises the
- * oblique at draw time — a *semantic* emphasis, not another font file.
+ * Editorial whole-app CJK + Latin serif: Source Han Serif CN 2.003R (OFL-1.1), 2 real static
+ * weights (`wght 450` Text mapped to Normal/Medium, `wght 700` Bold mapped to SemiBold/Bold)
+ * built via `tools/build-prose-font.py` (OFL §3 renamed to "Pi Reading Serif").
  */
 val PiProseFamily: FontFamily = FontFamily(
-    Font(R.font.source_han_serif_cn_text, FontWeight.Normal),
-    Font(R.font.source_han_serif_cn_bold, FontWeight.SemiBold),
-    // Markdown's **strong** is `FontWeight.Bold`; point it at the real 700 file, not a synthesis.
-    Font(R.font.source_han_serif_cn_bold, FontWeight.Bold),
+    Font(R.font.source_han_serif_cn_text, FontWeight.Normal, FontStyle.Normal),
+    Font(R.font.source_han_serif_cn_text, FontWeight.Medium, FontStyle.Normal),
+    Font(R.font.source_han_serif_cn_bold, FontWeight.SemiBold, FontStyle.Normal),
+    Font(R.font.source_han_serif_cn_bold, FontWeight.Bold, FontStyle.Normal),
 )
 
 /**
@@ -507,16 +450,7 @@ data class PiTextStyles(
     /** v2's code/diff override: `mono` at a fixed 13/19. */
     val code: TextStyle,
 ) {
-    /**
-     * The same roles with every size shifted by [deltaSp].
-     *
-     * This is what the `app.appearance.fontSize` row drives: the base sizes above
-     * are v2's own five steps, and the row only nudges them, exactly as its
-     * description promises. Line heights move with the size so the transcript's
-     * leading does not collapse. (It replaced `app.appearance.fontScaleDelta`,
-     * whose ±2 offset this reproduces step for step; see
-     * [PiTypographyProfile.migratedFontSize].)
-     */
+    /** Shift every text role by [deltaSp] while preserving font families and OpenType features. */
     fun scaled(deltaSp: Int): PiTextStyles = if (deltaSp == 0) this else PiTextStyles(
         meta = meta.shifted(deltaSp),
         mono = mono.shifted(deltaSp),
@@ -526,20 +460,13 @@ data class PiTextStyles(
     )
 
     companion object {
-        /**
-         * 经典档的字面值，也是全 App 五个角色的基线。
-         *
-         * 每一行都以 [piPrecise] 收尾 —— 这是**唯一**一处把「没有字体自带内边距 + 行距居中
-         * + 首末行裁掉」写进角色定义的地方，别的角色（`PiTypographyProfile` 造的非经典档、
-         * 六个标题槽、表格与行内代码）都由这里的 `TextStyle` 派生（`copy` 会带上这两个字段）。
-         */
+        /** Baseline text roles matching [PiTypographyProfile.Default] (16sp prose, comfortable density). */
         val Default = PiTextStyles(
             meta = TextStyle(
-                fontFamily = PiInterFamily,
+                fontFamily = PiPlexSansFamily,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
                 fontWeight = FontWeight.Normal,
-                fontFeatureSettings = PiFontFeatures.INTER_UI,
             ).piPrecise(),
             mono = TextStyle(
                 fontFamily = PiJetBrainsMonoFamily,
@@ -554,16 +481,15 @@ data class PiTextStyles(
                 fontFeatureSettings = PiFontFeatures.CODE_LIGATURES_OFF,
             ).piPrecise(),
             prose = TextStyle(
-                fontFamily = PiInterFamily,
-                fontSize = 14.sp,
-                lineHeight = 23.sp,
+                fontFamily = PiPlexSansFamily,
+                fontSize = 16.sp,
+                lineHeight = 26.sp,
                 fontWeight = FontWeight.Normal,
-                fontFeatureSettings = PiFontFeatures.INTER_UI,
             ).piPrecise(),
             code = TextStyle(
                 fontFamily = PiJetBrainsMonoFamily,
-                fontSize = 13.sp,
-                lineHeight = 19.sp,
+                fontSize = 13.5.sp,
+                lineHeight = 21.sp,
                 fontFeatureSettings = PiFontFeatures.CODE_LIGATURES_ON,
             ).piPrecise(),
         )
@@ -695,8 +621,8 @@ private fun PiPalette.colorScheme(): androidx.compose.material3.ColorScheme {
  */
 private fun piTypography(
     textScaleDelta: Int = 0,
-    uiFontFamily: FontFamily = PiInterFamily,
-    uiFontFeatures: String? = PiFontFeatures.INTER_UI,
+    uiFontFamily: FontFamily = PiPlexSansFamily,
+    uiFontFeatures: String? = null,
 ): Typography {
     fun TextStyle.shift(lineBreak: LineBreak = LineBreak.Simple): TextStyle = copy(
         fontFamily = uiFontFamily,
@@ -796,7 +722,11 @@ fun PiTheme(
             colorScheme = colorScheme,
             typography = typography,
             shapes = shapes,
-            content = content,
-        )
+        ) {
+            androidx.compose.material3.ProvideTextStyle(
+                value = typography.bodyLarge,
+                content = content,
+            )
+        }
     }
 }

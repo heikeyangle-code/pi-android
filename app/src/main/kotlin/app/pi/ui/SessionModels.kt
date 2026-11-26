@@ -365,21 +365,10 @@ data class HistoryCursor(
 
 data class UiPrefs(
     /**
-     * The whole 排版 preset, resolved once here from
-     * `app.appearance.typography` / `.lineHeight` / `.fontSize`.
-     *
-     * Built in [readPrefs] rather than exposed as three raw strings with a
-     * computed property, because the three consumers (`MainActivity`'s
-     * `PiTheme`, `PiMarkdownText`'s five library objects, `ChatScreen`'s
-     * `spacedBy`) each need a different part of it and a property would rebuild
-     * the five `TextStyle`s on every read. Being a data-class field also lets
-     * `remember` key on a value that compares structurally, so an equal preset
-     * does not invalidate anything.
-     *
-     * It replaces `fontScaleDelta: Int` and `messageDensity: String`. Those two
-     * keys are gone from the registry and are read only by the migration in
-     * `readPrefs`; see [PiTypographyProfile.migratedTypography] and
-     * [PiTypographyProfile.migratedFontSize].
+     * Complete modular editorial typography profile resolved once from `app.appearance.fontSize`,
+     * `app.appearance.typography`, `app.appearance.proseFont`, `app.appearance.codeFont`, and
+     * `app.appearance.codeLigatures`. Structural equality lets Compose `remember` skip rebuilds
+     * when preferences are unchanged.
      */
     val typographyProfile: PiTypographyProfile = PiTypographyProfile.Default,
     /**
