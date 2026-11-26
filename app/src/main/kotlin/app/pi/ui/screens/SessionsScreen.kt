@@ -22,6 +22,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -1312,13 +1313,13 @@ private fun WorkspaceGroupHeader(
                 )
                 if (current) {
                     Text(
-                        tr("当前", "Current"),
+                        tr("当前项目", "Active"),
                         modifier = Modifier
                             .clip(PiShapes.tag)
-                            .background(accent.copy(alpha = 0.13f))
+                            .border(0.5.dp, PiTheme.palette.borderMuted.copy(alpha = 0.72f), PiShapes.tag)
                             .padding(horizontal = 6.dp, vertical = 1.dp),
-                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                        color = accent,
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.muted,
                         maxLines = 1,
                     )
                 }

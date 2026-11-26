@@ -69,6 +69,7 @@ internal fun ChatSheetHost(
                 session.compact()
                 onSheet(null)
             },
+            onOpenSettings = { key -> session.requestNav(NavRequest.SettingsFocus(key)) },
             onDismiss = { onSheet(null) },
         )
 
@@ -77,7 +78,8 @@ internal fun ChatSheetHost(
         ChatSheet.Context -> ContextSheet(
             state = state,
             onDismiss = { onSheet(null) },
-            onCompact = { session.compact() },
+            onCompact = { instructions -> session.compact(instructions) },
+            onOpenCompactionSettings = { session.requestNav(NavRequest.SettingsFocus("compaction.enabled")) },
         )
 
         ChatSheet.Fork -> ForkPickerSheet(

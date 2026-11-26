@@ -53,16 +53,19 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.contrastOn
 import java.util.Locale
 
-/** 上下文与用量仪表盘：环形占比主卡 + 本轮/累计双卡对比 + 缓存命中率 + 一键压缩。 */
+/** 上下文与用量仪表盘：环形占比主卡 + 本轮/累计双卡对比 + 缓存命中率 + 支持可选保留重点的一键压缩。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ContextSheet(
     state: PiSessionViewModel.UiState,
     onDismiss: () -> Unit,
-    onCompact: (() -> Unit)? = null,
+    onCompact: ((instructions: String?) -> Unit)? = null,
+    onOpenCompactionSettings: (() -> Unit)? = null,
 ) {
     val stats = state.stats
     val palette = PiTheme.palette
+    var compactInstructions by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var showInstructionsInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     PiSheet(onDismiss = onDismiss) {
         Box(
             modifier = Modifier.fillMaxWidth(),
@@ -89,8 +92,9 @@ fun ContextSheet(
                     if (onCompact != null) {
                         Surface(
                             onClick = {
+                                val note = compactInstructions.trim().takeIf { it.isNotEmpty() }
                                 onDismiss()
-                                onCompact()
+                                onCompact(note)
                             },
                             shape = RoundedCornerShape(999.dp),
                             color = palette.accent,
@@ -135,6 +139,72 @@ fun ContextSheet(
                             autoCompaction = state.meta.autoCompaction,
                             modelContextWindow = state.meta.model?.contextWindow,
                         )
+                        if (onCompact != null) {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(14.dp),
+                                color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
+                                border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.52f)),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                    ) {
+                                        Text(
+                                            text = tr("压缩保留重点（可选，同 /compact 指令）", "Compaction focus (optional, same as /compact)"),
+                                            style = PiTheme.text.meta,
+                                            color = palette.muted,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        if (!showInstructionsInput && compactInstructions.isEmpty()) {
+                                            Surface(
+                                                onClick = { showInstructionsInput = true },
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg,
+                                            ) {
+                                                Text(
+                                                    text = tr("填写", "Add"),
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                                    color = palette.accent,
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (showInstructionsInput || compactInstructions.isNotEmpty()) {
+                                        androidx.compose.foundation.text.BasicTextField(
+                                            value = compactInstructions,
+                                            onValueChange = { compactInstructions = it },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(palette.pageBg.copy(alpha = 0.65f), RoundedCornerShape(9.dp))
+                                                .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.65f), RoundedCornerShape(9.dp))
+                                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                                            textStyle = PiTheme.text.meta.copy(color = palette.text),
+                                            cursorBrush = androidx.compose.ui.graphics.SolidColor(palette.accent),
+                                            maxLines = 3,
+                                            decorationBox = { inner ->
+                                                Box {
+                                                    if (compactInstructions.isEmpty()) {
+                                                        Text(
+                                                            text = tr("例如：保留已确认的接口字段与未完成待办…", "e.g. Keep confirmed API schema and open TODOs…"),
+                                                            style = PiTheme.text.meta,
+                                                            color = palette.dim,
+                                                        )
+                                                    }
+                                                    inner()
+                                                }
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         UsageBlock(
                             turn = state.turnUsage,
                             session = stats.tokens?.let { totals ->
@@ -149,6 +219,37 @@ fun ContextSheet(
                             },
                             lastMessage = state.lastUsage,
                         )
+                        if (onOpenCompactionSettings != null) {
+                            Surface(
+                                onClick = {
+                                    onDismiss()
+                                    onOpenCompactionSettings()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
+                                border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.52f)),
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(
+                                        text = tr("调整自动压缩阈值与保留窗口", "Configure auto-compaction & reserve window"),
+                                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                        color = palette.muted,
+                                    )
+                                    Text(
+                                        text = "→",
+                                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                        color = palette.accent,
+                                    )
+                                }
+                            }
+                        }
                     }
                     Spacer(Modifier.height(6.dp))
                 }
@@ -214,29 +315,29 @@ fun SessionStatsSheet(
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerLow,
-                        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.45f)),
+                        color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
+                        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.50f)),
                     ) {
                         Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
                             StatLine(tr("会话名称", "Name"), state.meta.sessionName ?: tr("未命名", "Untitled"))
-                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                            HorizontalDivider(thickness = 0.5.dp, color = PiTheme.palette.borderMuted.copy(alpha = 0.45f))
                             StatLine(tr("会话 ID", "Session ID"), stats.sessionId ?: state.meta.sessionId ?: "—", mono = true)
-                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                            HorizontalDivider(thickness = 0.5.dp, color = PiTheme.palette.borderMuted.copy(alpha = 0.45f))
                             StatLine(tr("会话文件", "Session File"), stats.sessionFile ?: state.meta.sessionFile ?: tr("（尚未落盘）", "(not saved yet)"), mono = true)
                             val primaryModel = state.meta.model?.let { "${it.provider}/${it.id}" }
                             val routed = state.meta.routedModel?.takeIf { it.isNotBlank() && it != primaryModel }
                             if (routed != null) {
-                                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                                HorizontalDivider(thickness = 0.5.dp, color = PiTheme.palette.borderMuted.copy(alpha = 0.45f))
                                 StatLine(tr("路由模型", "Routed Model"), routed, mono = true)
                             }
                             if (state.meta.scopedModelCount > 0) {
-                                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                                HorizontalDivider(thickness = 0.5.dp, color = PiTheme.palette.borderMuted.copy(alpha = 0.45f))
                                 StatLine(
                                     tr("模型范围", "Scoped Models"),
                                     tr("${state.meta.scopedModelCount} 个已选模型", "${state.meta.scopedModelCount} scoped models"),
                                 )
                             }
-                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                            HorizontalDivider(thickness = 0.5.dp, color = PiTheme.palette.borderMuted.copy(alpha = 0.45f))
                             StatLine(
                                 tr("消息统计", "Messages"),
                                 tr(
@@ -244,7 +345,7 @@ fun SessionStatsSheet(
                                     "${stats.userMessages} user · ${stats.assistantMessages} assistant · ${stats.totalMessages} total",
                                 ),
                             )
-                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                            HorizontalDivider(thickness = 0.5.dp, color = PiTheme.palette.borderMuted.copy(alpha = 0.45f))
                             StatLine(
                                 tr("工具调用", "Tool Calls"),
                                 tr(
@@ -276,8 +377,8 @@ private fun ContextBlock(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(PiSpacing.hairlineThin, ringColor.copy(alpha = 0.32f)),
+        color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
+        border = BorderStroke(PiSpacing.hairlineThin, ringColor.copy(alpha = 0.34f)),
     ) {
         Row(
             modifier = Modifier
@@ -347,8 +448,8 @@ private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: Tok
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
+            border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.50f)),
         ) {
             Row(
                 modifier = Modifier
@@ -362,7 +463,7 @@ private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: Tok
                     Modifier
                         .width(0.5.dp)
                         .fillMaxHeight()
-                        .background(MaterialTheme.colorScheme.outlineVariant),
+                        .background(palette.borderMuted.copy(alpha = 0.45f)),
                 )
                 Spacer(Modifier.width(10.dp))
                 UsageColumn(tr("本会话累计", "Session Total"), session, Modifier.weight(1f), cumulative = true)
@@ -371,8 +472,8 @@ private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: Tok
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
+            border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.50f)),
         ) {
             Column(
                 modifier = Modifier
@@ -381,7 +482,7 @@ private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: Tok
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 HitRateRow(tr("缓存命中率（最后一条回复）", "Cache Hit Rate (Last Reply)"), lastMessageHitRate(lastMessage))
-                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                HorizontalDivider(thickness = 0.5.dp, color = palette.borderMuted.copy(alpha = 0.45f))
                 HitRateRow(tr("缓存命中率（本会话累计）", "Cache Hit Rate (Session Total)"), cumulativeHitRate(session))
             }
         }

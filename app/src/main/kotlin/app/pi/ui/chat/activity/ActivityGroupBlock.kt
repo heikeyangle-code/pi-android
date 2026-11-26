@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,8 +38,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
@@ -52,6 +57,7 @@ import app.pi.protocol.TranscriptItem
 import app.pi.ui.blocks.BlockColumn
 import app.pi.ui.blocks.BlockRenderer
 import app.pi.ui.blocks.DiffStatsBadges
+import app.pi.ui.blocks.LocalInActivitySpine
 import app.pi.ui.blocks.ToggleContent
 import app.pi.ui.blocks.ToolImages
 import app.pi.ui.blocks.formatDuration
@@ -59,8 +65,8 @@ import app.pi.ui.blocks.toolBlocked
 import app.pi.ui.theme.PiTheme
 
 private val ACTIVITY_BAR_SHAPE = RoundedCornerShape(10.dp)
-private val SPINE_RAIL_X = 7.dp
-private val SPINE_CONTENT_INDENT = 18.dp
+private val SPINE_RAIL_X = 6.5.dp
+private val SPINE_CONTENT_INDENT = 16.dp
 
 /**
  * Compact Trace row (`app.appearance.toolDisplayMode == "compact"`).
@@ -109,19 +115,22 @@ fun ActivityGroupBlock(
     )
 
     val hasError = summary.failedCount > 0
-    val containerBg = when {
-        summary.isRunning -> palette.toolPendingBg.copy(alpha = 0.65f)
-        else -> palette.userMessageBg.copy(alpha = 0.55f)
+    val containerBg = remember(palette, summary.isRunning, expanded) {
+        when {
+            summary.isRunning -> lerp(palette.cardBg, palette.accent, 0.05f)
+            expanded -> lerp(palette.cardBg, palette.text, 0.028f)
+            else -> lerp(palette.pageBg, palette.cardBg, 0.65f)
+        }
     }
     val borderColor = when {
-        summary.isRunning -> palette.accent.copy(alpha = 0.34f)
+        summary.isRunning -> palette.accent.copy(alpha = 0.36f)
         expanded -> palette.borderMuted.copy(alpha = 0.72f)
-        else -> palette.borderMuted.copy(alpha = 0.50f)
+        else -> palette.borderMuted.copy(alpha = 0.56f)
     }
     val dotColor = when {
         hasError -> palette.error
         summary.isRunning -> palette.accent
-        else -> palette.muted.copy(alpha = 0.65f)
+        else -> palette.muted.copy(alpha = 0.68f)
     }
 
     val headline = remember(summary, PiLocale.isZh) { formatActivityHeadline(summary) }
@@ -189,14 +198,29 @@ fun ActivityGroupBlock(
                         )
                     }
 
-                    // Surface the first failed tool's message cleanly even when collapsed so errors are never hidden.
+                    // Surface the first failed tool's message cleanly even when collapsed so errors are never hidden,
+                    // without tinting the entire trace bar red.
                     if (!expanded && hasError && !summary.firstErrorSnippet.isNullOrEmpty()) {
                         Spacer(Modifier.height(5.dp))
-                        val prefix = summary.firstErrorTitle?.takeIf { it.isNotBlank() }?.let { "$it: " }.orEmpty()
+                        val titlePrefix = summary.firstErrorTitle?.takeIf { it.isNotBlank() }
+                        val errorLine = remember(titlePrefix, summary.firstErrorSnippet, palette) {
+                            buildAnnotatedString {
+                                if (titlePrefix != null) {
+                                    withStyle(SpanStyle(color = palette.muted, fontWeight = FontWeight.Medium)) {
+                                        append(titlePrefix)
+                                    }
+                                    withStyle(SpanStyle(color = palette.dim)) {
+                                        append(" · ")
+                                    }
+                                }
+                                withStyle(SpanStyle(color = palette.error.copy(alpha = 0.90f))) {
+                                    append(summary.firstErrorSnippet)
+                                }
+                            }
+                        }
                         Text(
-                            text = prefix + summary.firstErrorSnippet,
+                            text = errorLine,
                             style = PiTheme.text.monoSmall,
-                            color = palette.error.copy(alpha = 0.90f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(start = 15.dp),
@@ -216,72 +240,75 @@ fun ActivityGroupBlock(
             // a node and never extends past the last dot even when the last step card is expanded.
             if (expanded) {
                 Spacer(Modifier.height(5.dp))
-                val railColor = palette.borderMuted.copy(alpha = 0.60f)
+                val railColor = palette.borderMuted.copy(alpha = 0.62f)
                 val lastIdx = group.items.lastIndex
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    group.items.forEachIndexed { idx, child ->
-                        val nodeColor = stepNodeColor(child)
-                        val hasAbove = idx > 0
-                        val hasBelow = idx < lastIdx
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .drawBehind {
-                                    if (!hasAbove && !hasBelow) return@drawBehind
-                                    val x = SPINE_RAIL_X.toPx()
-                                    val stroke = 1.dp.toPx()
-                                    val dotTop = 13.dp.toPx()
-                                    val dotBottom = 18.dp.toPx()
-                                    val halo = 2.dp.toPx()
-                                    if (hasAbove) {
-                                        drawLine(
-                                            color = railColor,
-                                            start = Offset(x, -4.dp.toPx()),
-                                            end = Offset(x, (dotTop - halo).coerceAtLeast(0f)),
-                                            strokeWidth = stroke,
-                                        )
-                                    }
-                                    if (hasBelow) {
-                                        val startY = dotBottom + halo
-                                        if (size.height > startY) {
-                                            drawLine(
-                                                color = railColor,
-                                                start = Offset(x, startY),
-                                                end = Offset(x, size.height),
-                                                strokeWidth = stroke,
-                                            )
-                                        }
-                                    }
-                                },
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .padding(start = 4.5.dp, top = 13.dp)
-                                    .size(5.dp)
-                                    .clip(CircleShape)
-                                    .background(nodeColor),
-                            )
+                CompositionLocalProvider(LocalInActivitySpine provides true) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        group.items.forEachIndexed { idx, child ->
+                            val nodeColor = stepNodeColor(child)
+                            val dotTopDp = if (child is ThinkingBlock) 10.dp else 13.dp
+                            val hasAbove = idx > 0
+                            val hasBelow = idx < lastIdx
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(start = SPINE_CONTENT_INDENT),
+                                    .drawBehind {
+                                        if (!hasAbove && !hasBelow) return@drawBehind
+                                        val x = SPINE_RAIL_X.toPx()
+                                        val stroke = 1.dp.toPx()
+                                        val dotTop = dotTopDp.toPx()
+                                        val dotBottom = (dotTopDp + 5.dp).toPx()
+                                        val halo = 2.dp.toPx()
+                                        if (hasAbove) {
+                                            drawLine(
+                                                color = railColor,
+                                                start = Offset(x, -4.dp.toPx()),
+                                                end = Offset(x, (dotTop - halo).coerceAtLeast(0f)),
+                                                strokeWidth = stroke,
+                                            )
+                                        }
+                                        if (hasBelow) {
+                                            val startY = dotBottom + halo
+                                            if (size.height > startY) {
+                                                drawLine(
+                                                    color = railColor,
+                                                    start = Offset(x, startY),
+                                                    end = Offset(x, size.height),
+                                                    strokeWidth = stroke,
+                                                )
+                                            }
+                                        }
+                                    },
                             ) {
-                                BlockRenderer(
-                                    item = child,
-                                    hideThinking = hideThinking,
-                                    thinkingDefaultExpanded = false,
-                                    toolsDefaultExpanded = false,
-                                    showBilledCost = showBilledCost,
-                                    showTimestamps = showTimestamps,
-                                    onBranchClick = onBranchClick,
-                                    onForkFromMessage = onForkFromMessage,
-                                    onImageClick = onImageClick,
-                                    nowMs = if (child is ToolCall && child.status == ToolStatus.Pending) nowMs else null,
-                                    pairedDiff = (child as? ToolCall)?.let { pairedDiffByCallId[it.toolCallId] },
+                                Box(
+                                    modifier = Modifier
+                                        .padding(start = 4.dp, top = dotTopDp)
+                                        .size(5.dp)
+                                        .clip(CircleShape)
+                                        .background(nodeColor),
                                 )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = SPINE_CONTENT_INDENT),
+                                ) {
+                                    BlockRenderer(
+                                        item = child,
+                                        hideThinking = hideThinking,
+                                        thinkingDefaultExpanded = false,
+                                        toolsDefaultExpanded = false,
+                                        showBilledCost = showBilledCost,
+                                        showTimestamps = showTimestamps,
+                                        onBranchClick = onBranchClick,
+                                        onForkFromMessage = onForkFromMessage,
+                                        onImageClick = onImageClick,
+                                        nowMs = if (child is ToolCall && child.status == ToolStatus.Pending) nowMs else null,
+                                        pairedDiff = (child as? ToolCall)?.let { pairedDiffByCallId[it.toolCallId] },
+                                    )
+                                }
                             }
                         }
                     }
@@ -293,7 +320,9 @@ fun ActivityGroupBlock(
 
 @Composable
 private fun stepNodeColor(item: TranscriptItem) = when (item) {
-    is ThinkingBlock -> if (item.streaming) PiTheme.palette.accent else PiTheme.palette.muted.copy(alpha = 0.65f)
+    is ThinkingBlock -> PiTheme.palette.thinking(item.level ?: "medium").copy(
+        alpha = if (item.streaming) 0.95f else 0.68f,
+    )
     is ToolCall -> when (item.status) {
         ToolStatus.Pending -> PiTheme.palette.accent
         ToolStatus.Error -> if (toolBlocked(item.output)) PiTheme.palette.muted else PiTheme.palette.error

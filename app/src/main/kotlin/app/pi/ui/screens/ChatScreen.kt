@@ -2001,6 +2001,15 @@ internal fun ChatBody(
             )
 
             val showDown = !following && (canScrollForward || unseenRows > 0)
+            var scrollButtonsDimmed by remember { mutableStateOf(false) }
+            LaunchedEffect(listState.isScrollInProgress, unseenRows, showUp, showDown) {
+                if (listState.isScrollInProgress || unseenRows > 0 || (!showUp && !showDown)) {
+                    scrollButtonsDimmed = false
+                } else {
+                    kotlinx.coroutines.delay(2200)
+                    scrollButtonsDimmed = true
+                }
+            }
             androidx.compose.animation.AnimatedVisibility(
                 visible = showUp || showDown,
                 enter = fadeIn() + scaleIn(initialScale = 0.85f),
@@ -2017,6 +2026,7 @@ internal fun ChatBody(
                         ScrollArrowButton(
                             icon = Icons.Filled.KeyboardArrowUp,
                             label = tr("回到顶部", "Scroll to top"),
+                            dimmed = scrollButtonsDimmed,
                             onClick = {
                                 pauseTail()
                                 windowOpen = true
@@ -2029,6 +2039,7 @@ internal fun ChatBody(
                             icon = Icons.Filled.KeyboardArrowDown,
                             label = tr("回到最新", "Jump to latest"),
                             unreadCount = unseenRows,
+                            dimmed = scrollButtonsDimmed,
                             onClick = {
                                 windowOpen = false
                                 reArmTail()

@@ -58,6 +58,7 @@ import app.pi.ui.chat.earlierRowHeightPx
 import app.pi.ui.render.LocalPiMarkdownImmediate
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.contrastOn
 import kotlinx.coroutines.delay
 
 /** `Icon`'s default box, which is what the 「加载更早」 row's glyph measures at. */
@@ -304,6 +305,7 @@ internal fun ScrollArrowButton(
     label: String,
     onClick: () -> Unit,
     unreadCount: Int = 0,
+    dimmed: Boolean = false,
 ) {
     val palette = PiTheme.palette
     val haptic = LocalHapticFeedback.current
@@ -315,26 +317,37 @@ internal fun ScrollArrowButton(
         label = "scrollBtnScale",
     )
     val hasUnread = unreadCount > 0
+    val targetAlpha = when {
+        pressed || hasUnread -> 1f
+        dimmed -> 0.36f
+        else -> 0.92f
+    }
+    val smoothAlpha by animateFloatAsState(
+        targetValue = targetAlpha,
+        animationSpec = androidx.compose.animation.core.tween(240),
+        label = "scrollBtnAlpha",
+    )
     val shape = RoundedCornerShape(999.dp)
+    val containerBg = if (hasUnread) palette.accent else palette.cardBg.copy(alpha = 0.94f)
+    val borderColor = if (hasUnread) palette.accent else palette.borderMuted.copy(alpha = 0.72f)
+    val fg = if (hasUnread) palette.contrastOn(palette.accent) else palette.text.copy(alpha = 0.85f)
     Row(
         modifier = Modifier
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
-                alpha = if (pressed || hasUnread) 1f else 0.92f
+                alpha = smoothAlpha
             }
             .clip(shape)
-            .background(
-                if (hasUnread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerHigh,
-            )
+            .background(containerBg)
             .border(
                 width = PiSpacing.hairlineThin,
-                color = if (hasUnread) MaterialTheme.colorScheme.onSurface else palette.borderMuted.copy(alpha = 0.65f),
+                color = borderColor,
                 shape = shape,
             )
             .clickable(
                 interactionSource = interaction,
-                indication = ripple(color = MaterialTheme.colorScheme.onSurface),
+                indication = ripple(color = palette.accent),
                 onClickLabel = label,
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -342,17 +355,16 @@ internal fun ScrollArrowButton(
                 },
             )
             .padding(
-                horizontal = if (hasUnread) 12.dp else 10.dp,
-                vertical = 8.dp,
+                horizontal = if (hasUnread) 11.dp else 8.dp,
+                vertical = 7.dp,
             ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        val fg = if (hasUnread) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface
         Icon(
             imageVector = icon,
             contentDescription = label,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(16.dp),
             tint = fg,
         )
         if (hasUnread) {

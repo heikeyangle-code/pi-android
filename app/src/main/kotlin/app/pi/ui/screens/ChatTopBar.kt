@@ -342,7 +342,8 @@ private fun ChatCommandCenterSheet(
                     text = engineLabel,
                     modifier = Modifier
                         .clip(RoundedCornerShape(999.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                        .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
+                        .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
                         .padding(horizontal = 9.dp, vertical = 3.dp),
                     style = PiTheme.text.meta,
                     color = stateToneColor(engineStateTone(engineLabel), palette),
@@ -644,7 +645,8 @@ private fun SheetActionRow(
                 text = trailingBadge,
                 modifier = Modifier
                     .clip(RoundedCornerShape(999.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                    .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
+                    .border(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.42f), RoundedCornerShape(999.dp))
                     .padding(horizontal = 8.dp, vertical = 2.dp),
                 style = PiTheme.text.meta,
                 color = PiTheme.palette.muted,

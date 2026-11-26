@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -189,6 +190,7 @@ internal fun PiRichCodeBlock(
             PiCardDivider(palette)
 
             val codeColor = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock
+            val bodyVerticalPad = if (lineCount <= 1) 10.dp else 12.dp
             val codeScrollState = rememberScrollState()
             Box(modifier = Modifier.fillMaxWidth()) {
                 if (wrap) {
@@ -197,13 +199,13 @@ internal fun PiRichCodeBlock(
                         style = style.copy(color = codeColor),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                            .padding(horizontal = 14.dp, vertical = bodyVerticalPad),
                     )
                 } else {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                            .padding(horizontal = 14.dp, vertical = bodyVerticalPad),
                     ) {
                         if (showLineNumbers) {
                             val gutterColor = palette.borderMuted.copy(alpha = 0.35f)
@@ -441,7 +443,7 @@ internal fun PiCardHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 36.dp)
+            .heightIn(min = 32.dp)
             .background(headerBg)
             .padding(start = 14.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -451,6 +453,13 @@ internal fun PiCardHeader(
                 text = language,
                 style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
                 color = palette.muted,
+                maxLines = 1,
+            )
+        } else if (title.isNullOrEmpty()) {
+            Text(
+                text = "text",
+                style = PiTheme.text.monoSmall,
+                color = palette.dim.copy(alpha = 0.72f),
                 maxLines = 1,
             )
         }
@@ -489,14 +498,15 @@ internal fun PiCardHeader(
 }
 
 /**
- * 所有卡片共用的复制按钮：16 dp 精致图标（复制后 1.2 s 变成对勾），触控区 36 dp。
+ * 所有卡片共用的复制按钮：15 dp 精致图标（复制后 1.2 s 变成对勾），圆角触控区 32 dp。
  */
 @Composable
 internal fun PiCopyIcon(palette: PiPalette, copied: Boolean, onCopy: () -> Unit) {
     val copyDesc = if (copied) tr("已复制", "Copied") else tr("复制", "Copy")
     Box(
         modifier = Modifier
-            .size(36.dp)
+            .size(32.dp)
+            .clip(RoundedCornerShape(8.dp))
             .clickable(role = Role.Button, onClickLabel = tr("复制源码", "Copy source"), onClick = onCopy)
             .semantics { contentDescription = copyDesc },
         contentAlignment = Alignment.Center,
@@ -505,7 +515,7 @@ internal fun PiCopyIcon(palette: PiPalette, copied: Boolean, onCopy: () -> Unit)
             imageVector = if (copied) Icons.Rounded.Check else Icons.Outlined.ContentCopy,
             contentDescription = null,
             tint = if (copied) palette.success else palette.muted,
-            modifier = Modifier.size(16.dp),
+            modifier = Modifier.size(15.dp),
         )
     }
 }
@@ -548,7 +558,8 @@ internal fun PiCardMenu(palette: PiPalette, items: List<PiCardMenuItem>) {
         val moreLabel = tr("更多选项", "More options")
         Box(
             modifier = Modifier
-                .size(36.dp)
+                .size(32.dp)
+                .clip(RoundedCornerShape(8.dp))
                 .clickable(role = Role.Button, onClickLabel = moreLabel) { open = true }
                 .semantics { contentDescription = moreLabel },
             contentAlignment = Alignment.Center,
@@ -557,7 +568,7 @@ internal fun PiCardMenu(palette: PiPalette, items: List<PiCardMenuItem>) {
                 imageVector = Icons.Rounded.MoreVert,
                 contentDescription = null,
                 tint = palette.muted,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(17.dp),
             )
         }
         PiMenu(

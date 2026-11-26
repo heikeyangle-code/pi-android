@@ -86,6 +86,7 @@ fun SessionToolsSheet(
     onAutoRetry: (Boolean) -> Unit,
     onAbortRetry: () -> Unit,
     onCompact: () -> Unit,
+    onOpenSettings: ((String) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val palette = PiTheme.palette
@@ -165,6 +166,41 @@ fun SessionToolsSheet(
                         onClick = onAbortRetry,
                         modifier = Modifier.weight(1f),
                     )
+                }
+            }
+
+            // 3. 直达新版细粒度设置页（与设置中「对话与消息 / 压缩与窗口 / 网络与重试」互通）
+            if (onOpenSettings != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    val links = listOf(
+                        "steeringMode" to tr("对话与队列设置 →", "Chat & Queue →"),
+                        "compaction.enabled" to tr("压缩与窗口设置 →", "Compaction →"),
+                        "retry.enabled" to tr("网络与重试设置 →", "Network & Retry →"),
+                    )
+                    links.forEach { (key, label) ->
+                        Surface(
+                            onClick = {
+                                onDismiss()
+                                onOpenSettings(key)
+                            },
+                            shape = RoundedCornerShape(9.dp),
+                            color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
+                            border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f)),
+                        ) {
+                            Text(
+                                text = label,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                color = palette.muted,
+                                maxLines = 1,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -263,8 +299,8 @@ fun ForkPickerSheet(
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
+                    border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f)),
                 ) {
                     Text(
                         tr(
@@ -456,7 +492,10 @@ private fun parseSystemPromptSections(raw: String): List<PromptSectionSlice> {
             "rules" -> tr("规则", "Rules")
             "docs" -> tr("文档", "Docs")
             "addendum" -> tr("追加指令", "Addendum")
-            "project_context" -> tr("项目上下文", "Context")
+            "project_context" -> {
+                val count = PROJECT_INSTRUCTIONS_REGEX.findAll(body).count()
+                if (count > 0) tr("项目上下文 ($count)", "Context ($count)") else tr("项目上下文", "Context")
+            }
             "skills" -> tr("技能", "Skills")
             "cwd" -> "CWD"
             else -> tag
@@ -465,6 +504,8 @@ private fun parseSystemPromptSections(raw: String): List<PromptSectionSlice> {
     }
     return sections
 }
+
+private val PROJECT_INSTRUCTIONS_REGEX = Regex("""<project_instructions\s+path="[^"]+">""")
 
 /**
  * 对话页右上角命令中心直达的「当前生效系统提示词」查阅弹层：
@@ -610,8 +651,8 @@ internal fun ActiveSystemPromptSheet(
                     .fillMaxWidth()
                     .weight(1f),
                 shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                color = palette.cardBg,
+                border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.65f)),
             ) {
                 when {
                     loading -> Box(

@@ -945,12 +945,104 @@ internal fun lsSubject(args: JsonObject?): List<ToolCallPart> = buildList {
  */
 internal fun toolParamSummary(args: JsonObject?): String? {
     if (args == null || args.isEmpty()) return null
-    val pairs = args.entries.joinToString(" ") { (key, value) -> "$key=${value}" }
-    return if (pairs.length > COLLAPSED_ARG_CHARS) {
-        pairs.take(COLLAPSED_ARG_CHARS - 3) + "..."
-    } else {
-        pairs
+    val prioritized = args.entries.sortedWith(
+        compareBy<Map.Entry<String, JsonElement>> { (k, _) ->
+            val idx = TOOL_PARAM_PRIORITY_KEYS.indexOf(k)
+            if (idx >= 0) idx else Int.MAX_VALUE
+        },
+    )
+    val pairs = prioritized.joinToString(" ") { (key, value) ->
+        "$key=${formatToolParamPreviewValue(value)}"
     }
+    return truncatePreviewCleanly(pairs, COLLAPSED_ARG_CHARS)
+}
+
+private val TOOL_PARAM_PRIORITY_KEYS = listOf(
+    "action", "agent", "command", "cmd", "path", "file_path", "filePath",
+    "pattern", "query", "url", "task", "name", "id", "mode",
+)
+
+private val LEADING_MD_FENCE = Regex("""^(`{3,}|~{3,})[A-Za-z0-9_+-]*\s*""")
+private val WHITESPACE_RUN = Regex("""\s+""")
+private val ANSI_CSI_SIMPLE = Regex("""\u001B\[[0-9;?]*[ -/]*[@-~]""")
+private val SHELL_SET_OPTION_LINE = Regex("""^set\s+[-+][A-Za-z0-9\s-]+$""")
+private val SHELL_CD_PREFIX = Regex("""^cd\s+("([^"]+)"|'([^']+)'|(\S+))\s*(&&|;)\s*(.+)$""")
+private val PURE_FENCE_OR_RULE_LINE = Regex("""^(`{3,}|~{3,})[A-Za-z0-9_+-]*$|^[-=*_]{3,}$""")
+
+private fun formatToolParamPreviewValue(value: JsonElement): String {
+    val raw = if (value is JsonPrimitive && value.isString) {
+        value.content
+            .replace(ANSI_CSI_SIMPLE, "")
+            .lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() && !PURE_FENCE_OR_RULE_LINE.matches(it) }
+            .orEmpty()
+            .replace(LEADING_MD_FENCE, "")
+            .replace(WHITESPACE_RUN, " ")
+            .trim()
+    } else {
+        value.toString().replace(WHITESPACE_RUN, " ").trim()
+    }
+    return truncatePreviewCleanly(raw, maxChars = 42)
+}
+
+/**
+ * Formats a shell command for single-line card / trace preview without changing the raw command
+ * copied by the user:
+ *  - skips leading blank lines, pure `#` comments, and pure `set -euo pipefail` boilerplate when
+ *    an actual command follows;
+ *  - shortens long `cd /very/long/path && real-cmd` prefixes via [shortenToolPathForPhone] so the
+ *    actual command after `&&` stays visible on narrow phone screens;
+ *  - collapses redundant whitespace and trims cleanly to [maxChars].
+ */
+internal fun formatShellCommandPreview(command: String, maxChars: Int = 120): String {
+    if (command.isBlank()) return ""
+    val lines = command.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+    if (lines.isEmpty()) return ""
+    val primary = lines.firstOrNull { line ->
+        !line.startsWith("#") && !SHELL_SET_OPTION_LINE.matches(line)
+    } ?: lines.first()
+    val collapsed = primary.replace(WHITESPACE_RUN, " ").trim()
+    val formatted = SHELL_CD_PREFIX.matchEntire(collapsed)?.let { m ->
+        val rawPath = m.groupValues[2].ifEmpty { m.groupValues[3].ifEmpty { m.groupValues[4] } }
+        val sep = m.groupValues[5]
+        val rest = m.groupValues[6].trim()
+        if (rawPath.length > 18 && rest.isNotEmpty()) {
+            "cd ${shortenToolPathForPhone(rawPath, maxChars = 18)} $sep $rest"
+        } else {
+            collapsed
+        }
+    } ?: collapsed
+    return truncatePreviewCleanly(formatted, maxChars)
+}
+
+/**
+ * Extracts a clean 1-line error snippet from tool output for collapsed trace previews:
+ * strips ANSI escapes, skips empty lines, markdown code fences (```` ```js ````), and divider
+ * rules so rendered snippets never leak raw markdown fence syntax.
+ */
+internal fun extractCleanErrorSnippet(output: String, maxChars: Int = 110): String? {
+    if (output.isBlank()) return null
+    val cleaned = output.replace(ANSI_CSI_SIMPLE, "")
+    val lines = cleaned.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+    if (lines.isEmpty()) return null
+    val candidate = lines.firstOrNull { line ->
+        !PURE_FENCE_OR_RULE_LINE.matches(line)
+    } ?: lines.first()
+    val normalized = candidate
+        .replace(LEADING_MD_FENCE, "")
+        .replace(WHITESPACE_RUN, " ")
+        .trim()
+        .ifEmpty { candidate }
+    return truncatePreviewCleanly(normalized, maxChars)
+}
+
+internal fun truncatePreviewCleanly(text: String, maxChars: Int): String {
+    if (maxChars <= 1 || text.length <= maxChars) return text
+    val cut = text.substring(0, maxChars - 1)
+    val lastSpace = cut.lastIndexOf(' ')
+    val safe = if (lastSpace >= (maxChars * 2) / 3) cut.substring(0, lastSpace).trimEnd() else cut.trimEnd()
+    return "$safe…"
 }
 
 /**

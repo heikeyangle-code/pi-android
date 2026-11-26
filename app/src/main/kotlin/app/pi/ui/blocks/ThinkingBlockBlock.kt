@@ -43,6 +43,9 @@ import app.pi.ui.theme.PiThinkingLevel
 /** 扩展给折叠思考块定的标题（已去掉颜色码）；null = 用 App 自己的措辞。 */
 val LocalThinkingLabel = staticCompositionLocalOf<String?> { null }
 
+/** 是否正渲染在「专注折叠」展开的时间轴内（外层节点已绘制状态圆点，避免思考行出现双圆点）。 */
+internal val LocalInActivitySpine = staticCompositionLocalOf { false }
+
 /**
  * 思考块：一行低调的灰色元信息，不是卡片。
  *
@@ -60,6 +63,7 @@ fun ThinkingBlockBlock(
     defaultExpanded: Boolean = false,
 ) {
     val palette = PiTheme.palette
+    val inActivitySpine = LocalInActivitySpine.current
     var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(defaultExpanded) }
     val pen = palette.thinking(item.level ?: "medium")
     val levelLabel = item.level?.takeIf { it.isNotBlank() }?.let { PiThinkingLevel.fromWire(it).label }
@@ -71,7 +75,7 @@ fun ThinkingBlockBlock(
         else -> tr("已思考", "Thought")
     }
 
-    val pulse: State<Float>? = if (item.streaming && android.animation.ValueAnimator.areAnimatorsEnabled()) {
+    val pulse: State<Float>? = if (!inActivitySpine && item.streaming && android.animation.ValueAnimator.areAnimatorsEnabled()) {
         rememberInfiniteTransition(label = "think-pulse").animateFloat(
             initialValue = 0.25f,
             targetValue = 0.9f,
@@ -94,13 +98,15 @@ fun ThinkingBlockBlock(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(5.dp)
-                            .graphicsLayer { alpha = pulse?.value ?: 0.6f }
-                            .clip(CircleShape)
-                            .background(pen),
-                    )
+                    if (!inActivitySpine) {
+                        Box(
+                            modifier = Modifier
+                                .size(5.dp)
+                                .graphicsLayer { alpha = pulse?.value ?: 0.6f }
+                                .clip(CircleShape)
+                                .background(pen),
+                        )
+                    }
                     Text(
                         text = headline,
                         style = PiTheme.text.meta,

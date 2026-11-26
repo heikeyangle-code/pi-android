@@ -230,15 +230,12 @@ object ActivityGroupProjector {
                             } else {
                                 failedCount++
                                 if (firstErrorSnippet == null) {
+                                    val target = extractTarget(item, paired)?.takeIf { it.isNotBlank() }
                                     firstErrorTitle = listOfNotNull(
                                         item.toolName.takeIf { it.isNotBlank() },
-                                        extractTarget(item, paired)?.takeIf { it.isNotBlank() },
+                                        target,
                                     ).joinToString(" ")
-                                    firstErrorSnippet = item.output
-                                        .lineSequence()
-                                        .map { it.trim() }
-                                        .firstOrNull { it.isNotEmpty() }
-                                        ?.take(120)
+                                    firstErrorSnippet = app.pi.ui.blocks.extractCleanErrorSnippet(item.output, maxChars = 110)
                                 }
                             }
                         }
@@ -317,11 +314,11 @@ object ActivityGroupProjector {
             "grep", "find" -> str("pattern")?.take(24) ?: str("path")?.let { shortTail(it) }
             "ls" -> str("path")?.let { shortTail(it) }
             "bash", "powershell" -> str("command", "cmd")
-                ?.lineSequence()
-                ?.map { it.trim() }
-                ?.firstOrNull { it.isNotEmpty() }
-                ?.take(28)
-            else -> call.argsSummary.takeIf { it.isNotBlank() }?.take(28)
+                ?.let { app.pi.ui.blocks.formatShellCommandPreview(it, maxChars = 34) }
+                ?.takeIf { it.isNotEmpty() }
+            else -> app.pi.ui.blocks.toolParamSummary(args)
+                ?.let { app.pi.ui.blocks.truncatePreviewCleanly(it, 34) }
+                ?: call.argsSummary.takeIf { it.isNotBlank() }?.let { app.pi.ui.blocks.truncatePreviewCleanly(it, 34) }
         }
     }
 

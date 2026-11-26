@@ -1539,6 +1539,7 @@ private fun findCounterpartTheme(
         "flexoki-dark" to "flexoki-light",
         "kanagawa-wave" to "kanagawa-lotus",
         "nord-dark" to "nord-light",
+        "solarized-dark" to "solarized-light",
         "ayu-dark" to "ayu-light",
         "rose-pine" to "rose-pine-dawn",
         "catppuccin-mocha" to "catppuccin-latte",

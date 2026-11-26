@@ -266,16 +266,24 @@ internal fun PiThemeStudioSheet(
                                 Row(
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    Box(
+                                    Row(
                                         modifier = Modifier
-                                            .size(18.dp)
-                                            .clip(CircleShape)
+                                            .height(18.dp)
+                                            .clip(RoundedCornerShape(6.dp))
                                             .background(pCanvas.pageBg)
-                                            .border(1.dp, pCanvas.borderMuted, CircleShape),
-                                        contentAlignment = Alignment.Center,
+                                            .border(0.75.dp, pCanvas.borderMuted, RoundedCornerShape(6.dp))
+                                            .padding(horizontal = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(2.5.dp),
                                     ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(pCanvas.userMessageBg),
+                                        )
                                         Box(
                                             modifier = Modifier
                                                 .size(7.dp)

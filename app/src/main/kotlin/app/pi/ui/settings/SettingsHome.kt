@@ -334,8 +334,8 @@ private fun buildCustomSearchEntries(): List<CustomSearchEntry> = listOf(
     CustomSearchEntry(
         routeKey = "theme",
         title = tr("主题工坊与大师预设", "Theme Studio & Master Presets"),
-        subtitle = tr("12 套顶级深/浅配色（Claude / Vesper / Flexoki / Nord 等）与 OKHSL 自由调色", "12 iconic dark/light master presets (Claude, Vesper, Flexoki, Nord, etc.) & OKHSL tuner"),
-        keywords = "theme studio palette color preset claude vesper flexoki kanagawa nord ayu rose pine catppuccin tokyo night gruvbox everforest okhsl 主题 工坊 调色 配色 预设",
+        subtitle = tr("12 套差异化大师深/浅配色（Claude / Solarized / Vesper / Kanagawa 等）与 OKHSL 调色", "12 distinct dark/light master presets (Claude, Solarized, Vesper, Kanagawa, etc.) & OKHSL tuner"),
+        keywords = "theme studio palette color preset claude solarized vesper flexoki kanagawa nord rose pine catppuccin tokyo night gruvbox everforest okhsl 主题 工坊 调色 配色 预设",
     ),
     CustomSearchEntry(
         routeKey = "hub:tools",

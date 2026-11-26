@@ -81,8 +81,8 @@ class PiSettingsFormattingTest {
         assertTrue(
             ids.containsAll(
                 listOf(
-                    "claude", "vesper", "flexoki", "kanagawa", "nord", "ayu",
-                    "rose-pine", "catppuccin", "tokyo-night", "gruvbox", "everforest", "mono",
+                    "claude", "solarized", "vesper", "kanagawa", "everforest", "rose-pine",
+                    "catppuccin", "tokyo-night", "nord", "gruvbox", "flexoki", "mono",
                 ),
             ),
         )

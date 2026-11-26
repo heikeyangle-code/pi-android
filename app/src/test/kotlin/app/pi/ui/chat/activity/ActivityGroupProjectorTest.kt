@@ -178,4 +178,23 @@ class ActivityGroupProjectorTest {
         assertFalse(ActivityDisplayMode.isCompact("cards"))
         assertTrue(ActivityDisplayMode.isCompact("compact"))
     }
+
+    @Test
+    fun `shell command preview and error snippet avoid blank lines, long cd prefixes, and markdown fences`() {
+        assertEquals(
+            "cd …/pi-phone && echo \"hello\"",
+            app.pi.ui.blocks.formatShellCommandPreview("\n# setup\nset -euo pipefail\ncd /tmp/cmp/pi-phone && echo \"hello\"\n"),
+        )
+        assertEquals(
+            "workflow stopped unexpectedly",
+            app.pi.ui.blocks.extractCleanErrorSnippet("\n```js\nworkflow stopped unexpectedly\n```"),
+        )
+        val args = buildJsonObject {
+            put("extra", "ignored-tail")
+            put("agent", "worker")
+            put("task", "```md\nInspect build errors\n```")
+        }
+        val summary = app.pi.ui.blocks.toolParamSummary(args)
+        assertEquals("agent=worker task=Inspect build errors extra=ignored-tail", summary)
+    }
 }

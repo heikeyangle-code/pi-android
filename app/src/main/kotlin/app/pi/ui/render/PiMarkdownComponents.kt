@@ -23,7 +23,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Announcement
+import androidx.compose.material.icons.automirrored.outlined.Announcement
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lightbulb
@@ -723,7 +723,7 @@ private fun PiGfmAlertCard(
         }
         PiAlertKind.Important -> {
             accent = colors.alertImportant
-            icon = Icons.Outlined.Announcement
+            icon = Icons.AutoMirrored.Outlined.Announcement
             title = tr("重要", "Important")
         }
         PiAlertKind.Warning -> {
@@ -1005,18 +1005,42 @@ private fun PiListItemRow(
                     .padding(end = 6.dp),
             )
         } else {
-            val glyph = when (depth % 3) {
-                0 -> "•"
-                1 -> "◦"
-                else -> "▪"
-            }
-            Text(
-                text = glyph,
-                style = typography.bullet,
+            val density = LocalDensity.current
+            val lineHeightSp = typography.list.lineHeight.value
+                .takeIf { it.isFinite() && it > 0f }
+                ?: ((typography.list.fontSize.value.takeIf { it.isFinite() && it > 0f } ?: 15f) * 1.48f)
+            val markerHeightDp = with(density) { lineHeightSp.sp.toDp() }
+            val bulletColor = typography.bullet.color
+            Canvas(
                 modifier = Modifier
-                    .widthIn(min = 16.dp)
-                    .padding(end = 4.dp),
-            )
+                    .width(18.dp)
+                    .height(markerHeightDp),
+            ) {
+                val cx = 6.dp.toPx()
+                val cy = size.height * 0.5f
+                when (depth % 3) {
+                    0 -> drawCircle(
+                        color = bulletColor,
+                        radius = 2.35.dp.toPx(),
+                        center = Offset(cx, cy),
+                    )
+                    1 -> drawCircle(
+                        color = bulletColor,
+                        radius = 2.35.dp.toPx(),
+                        center = Offset(cx, cy),
+                        style = Stroke(width = 1.2.dp.toPx()),
+                    )
+                    else -> {
+                        val side = 4.2.dp.toPx()
+                        drawRoundRect(
+                            color = bulletColor,
+                            topLeft = Offset(cx - side / 2f, cy - side / 2f),
+                            size = Size(side, side),
+                            cornerRadius = CornerRadius(1.dp.toPx(), 1.dp.toPx()),
+                        )
+                    }
+                }
+            }
         }
 
         Column(modifier = Modifier.weight(1f)) {
