@@ -627,15 +627,15 @@ fun ExtensionWorkingStrip(
     }
 
     val palette = PiTheme.palette
-    val pillShape = RoundedCornerShape(10.dp)
+    val pillShape = RoundedCornerShape(11.dp)
     Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp)
             .clip(pillShape)
-            .background(palette.infoBg)
-            .border(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.28f), pillShape)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .background(palette.cardBg)
+            .border(0.5.dp, palette.borderMuted.copy(alpha = 0.55f), pillShape)
+            .padding(horizontal = 11.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

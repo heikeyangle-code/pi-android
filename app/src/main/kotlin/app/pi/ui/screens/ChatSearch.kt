@@ -236,18 +236,19 @@ internal fun SearchBar(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = palette.cardBg.copy(alpha = 0.96f),
         border = androidx.compose.foundation.BorderStroke(
-            width = 1.dp,
-            color = if (query.isNotEmpty()) palette.borderAccent.copy(alpha = 0.65f) else MaterialTheme.colorScheme.outlineVariant,
+            width = if (query.isNotEmpty()) 1.dp else 0.5.dp,
+            color = if (query.isNotEmpty()) palette.border else palette.borderMuted.copy(alpha = 0.60f),
         ),
+        shadowElevation = 1.dp,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(44.dp)
+                .height(42.dp)
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -256,7 +257,7 @@ internal fun SearchBar(
                 imageVector = Icons.Filled.Search,
                 contentDescription = null,
                 modifier = Modifier.size(18.dp),
-                tint = if (query.isNotEmpty()) palette.accent else palette.muted,
+                tint = palette.muted,
             )
             BasicTextField(
                 value = query,

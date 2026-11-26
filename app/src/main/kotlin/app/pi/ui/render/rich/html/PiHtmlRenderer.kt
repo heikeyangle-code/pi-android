@@ -741,7 +741,11 @@ private fun piHtmlBodyStyle(): TextStyle {
         fontFamily = profile.proseFontFamily(),
         fontWeight = FontWeight.Normal,
         fontFeatureSettings = profile.proseFontFeatures(),
-        lineBreak = androidx.compose.ui.text.style.LineBreak.Paragraph,
+        lineBreak = androidx.compose.ui.text.style.LineBreak(
+            strategy = androidx.compose.ui.text.style.LineBreak.Strategy.HighQuality,
+            strictness = androidx.compose.ui.text.style.LineBreak.Strictness.Strict,
+            wordBreak = androidx.compose.ui.text.style.LineBreak.WordBreak.Default,
+        ),
         color = palette.text,
     )
 }

@@ -136,6 +136,8 @@ fun PiContextRing(
     // composable call in a default argument works, but this project has no other
     // instance of it and the two sizes want two different styles anyway.
     placeholderStyle: TextStyle,
+    /** 中性模式（输入框仪表用）：<=70% 用克制中性墨色，仅 >70% / >90% 亮预警/红警，避免低占用时到处染主题色。 */
+    neutral: Boolean = false,
 ) {
     val palette = PiTheme.palette
     // The caller's box is the touch target; the arc is drawn *inside* it, centred.
@@ -146,7 +148,7 @@ fun PiContextRing(
             val box = Size(size.width - pen, size.height - pen)
             val arc = Offset(inset, inset)
             drawArc(
-                color = palette.muted,
+                color = palette.borderMuted.copy(alpha = 0.72f),
                 startAngle = RING_START_ANGLE,
                 sweepAngle = 360f,
                 useCenter = false,
@@ -155,14 +157,19 @@ fun PiContextRing(
                 style = Stroke(width = pen),
             )
             if (percent != null) {
+                val fillColor = if (neutral && percent <= 70.0) {
+                    palette.text.copy(alpha = 0.72f)
+                } else {
+                    contextProgressColor(percent, palette)
+                }
                 drawArc(
-                    color = contextProgressColor(percent, palette),
+                    color = fillColor,
                     startAngle = RING_START_ANGLE,
                     sweepAngle = (percent * 3.6).toFloat().coerceIn(0f, 360f),
                     useCenter = false,
                     topLeft = arc,
                     size = box,
-                    style = Stroke(width = pen),
+                    style = Stroke(width = pen, cap = androidx.compose.ui.graphics.StrokeCap.Round),
                 )
             }
         }
@@ -174,7 +181,7 @@ fun PiContextRing(
                 Text(
                     text = "?",
                     style = placeholderStyle,
-                    color = palette.bodyOnTool,
+                    color = palette.muted,
                     maxLines = 1,
                 )
             }

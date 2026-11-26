@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -1166,6 +1167,21 @@ private fun PiBlockImage(
     )
 }
 
+private val BLOCK_IMAGE_MAX_HEIGHT = 420.dp
+
+private fun meaningfulImageCaption(alt: String?): String? {
+    val trimmed = alt?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val lower = trimmed.lowercase()
+    if (lower == "image" || lower == "img" || lower == "photo" || lower == "screenshot") return null
+    if (lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("data:")) return null
+    if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
+        lower.endsWith(".webp") || lower.endsWith(".gif") || lower.endsWith(".svg")
+    ) {
+        return null
+    }
+    return trimmed
+}
+
 @Composable
 private fun PiBlockImageSurface(
     link: String?,
@@ -1173,25 +1189,45 @@ private fun PiBlockImageSurface(
     loadState: PiImageLoadState,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(12.dp)
+    val caption = remember(alt) { meaningfulImageCaption(alt) }
     when (loadState) {
         is PiImageLoadState.Ready -> {
             val decoded = loadState.data
-            PiImageViewerTap(link) {
-                val ratioModifier = decoded.widthOverHeight
-                    ?.takeIf { it.isFinite() && it in 0.1f..10f }
-                    ?.let { Modifier.aspectRatio(it) }
-                    ?: Modifier
-                Image(
-                    painter = decoded.painter,
-                    contentDescription = alt ?: decoded.contentDescription,
-                    contentScale = decoded.contentScale,
-                    modifier = decoded.modifier
-                        .padding(vertical = 4.dp)
-                        .then(ratioModifier)
-                        .clip(shape)
-                        .border(0.5.dp, palette.borderMuted.copy(alpha = 0.35f), shape),
-                )
+            val ratio = decoded.widthOverHeight?.takeIf { it.isFinite() && it in 0.1f..10f }
+            val frameModifier = when {
+                ratio != null && ratio < 0.78f -> Modifier
+                    .heightIn(max = BLOCK_IMAGE_MAX_HEIGHT)
+                    .aspectRatio(ratio, matchHeightConstraintsFirst = true)
+                ratio != null -> decoded.modifier.aspectRatio(ratio)
+                else -> decoded.modifier.heightIn(max = BLOCK_IMAGE_MAX_HEIGHT)
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+            ) {
+                PiImageViewerTap(link) {
+                    Image(
+                        painter = decoded.painter,
+                        contentDescription = alt ?: decoded.contentDescription,
+                        contentScale = decoded.contentScale,
+                        modifier = frameModifier
+                            .clip(shape)
+                            .background(palette.cardBg)
+                            .border(0.5.dp, palette.borderMuted.copy(alpha = 0.42f), shape),
+                    )
+                }
+                if (caption != null) {
+                    Text(
+                        text = caption,
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 5.dp, start = 2.dp, end = 2.dp),
+                    )
+                }
             }
         }
         is PiImageLoadState.Loading -> {
@@ -1199,14 +1235,22 @@ private fun PiBlockImageSurface(
                 ?.takeIf { it.isFinite() && it in 0.1f..10f }
                 ?.let { (1f / it).coerceIn(0.4f, 4f) }
                 ?: 1.6f
-            Box(
-                modifier = Modifier
+            val placeholderModifier = if (aspectWOverH < 0.78f) {
+                Modifier
+                    .padding(vertical = 4.dp)
+                    .heightIn(max = BLOCK_IMAGE_MAX_HEIGHT)
+                    .aspectRatio(aspectWOverH, matchHeightConstraintsFirst = true)
+            } else {
+                Modifier
                     .fillMaxWidth()
                     .padding(vertical = 4.dp)
                     .aspectRatio(aspectWOverH)
+            }
+            Box(
+                modifier = placeholderModifier
                     .clip(shape)
                     .background(palette.cardBg)
-                    .border(0.5.dp, palette.borderMuted.copy(alpha = 0.25f), shape),
+                    .border(0.5.dp, palette.borderMuted.copy(alpha = 0.28f), shape),
             )
         }
         PiImageLoadState.Failed -> Unit

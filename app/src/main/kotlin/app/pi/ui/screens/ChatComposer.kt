@@ -22,8 +22,10 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -34,6 +36,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -46,15 +49,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -82,8 +79,12 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
@@ -99,7 +100,6 @@ import app.pi.protocol.PiResponses
 import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.components.PiContextRing
 import app.pi.ui.components.PiType
-import app.pi.ui.components.contextProgressColor
 import app.pi.ui.theme.PiProseFamily
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -113,13 +113,13 @@ private const val COMPOSER_PULSE_MIN = 0.42f
 private const val COMPOSER_MAX_LINES = 7
 
 /**
- * 全新两层现代输入工作台：
- *  - 顶部配置胶囊行：模型芯片（点选/长按轮换）、思考等级彩色指示胶囊（始终可见！点轮换/长按选档）、
- *    上下文环 + 实时百分比胶囊（点开用量与压缩面板）；
- *  - Bash 模式横幅：输入 `!` / `!!` 时自动亮起清晰模式指示，支持一键在「进上下文 / 仅本地」间切换或取消；
+ * 两层克制输入工作台：
+ *  - 顶部精工控制条：左侧「模型 ▾ │ ● 思考深度」一体胶囊（非推理模型自动折叠右半）+ 可选扩展快捷胶囊，
+ *    右侧固定无边框极简上下文仪表（○ 19%，常规占用保持冷静中性色，仅 >70%/90% 亮警报色）；
+ *  - Bash 模式横幅：输入 `!` / `!!` 时平滑滑出，支持一键在「进上下文 / 仅本地」间切换；
  *  - 中间输入区：1–7 行平滑伸缩，草稿非空时右侧给一键清空；
- *  - 底部操作行：左侧 `/` 命令 · `@` 文件 · `!` 终端（长按 `!!`）· 📎 附件，
- *    右侧：空闲时主发送圆钮（空草稿置淡态，Bash 模式切换终端绿箭头）；流式时「⇢ 引导」「⇣ 后续」清晰胶囊 + 醒目红色停止钮。
+ *  - 底部操作行：左侧 `/` 命令 · `@` 文件 · `!` 终端（长按 `!!`）· 📎 附件 · 历史召回，
+ *    右侧：空闲时高对比墨色发送圆钮（Bash 模式切终端绿）；流式时「引导」「后续」克制胶囊 + 红色停止钮。
  */
 internal data class ComposerExtensionChipState(
     val label: String,
@@ -154,6 +154,7 @@ internal fun Composer(
     onFollowUp: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    thinkingSupported: Boolean = true,
     extensionChip: ComposerExtensionChipState? = null,
     onOpenExtensions: (() -> Unit)? = null,
     onQuickInteractExtension: (() -> Unit)? = null,
@@ -185,10 +186,11 @@ internal fun Composer(
     val fieldMaxHeight = lineHeightDp * COMPOSER_MAX_LINES
 
     var focused by remember { mutableStateOf(false) }
-    val activeChrome = focused || isBash || streaming
+    // 克制的边框层级：Bash 模式亮语义绿、聚焦保持利落中性描边、仅流式输出时以柔和思考色呼吸提示
     val targetBorderColor = when {
         isBash -> palette.bashMode
-        activeChrome -> palette.thinking(thinkingLevel)
+        focused -> palette.border
+        streaming -> palette.thinking(thinkingLevel)
         else -> palette.borderMuted
     }
     val borderColor by animateColorAsState(
@@ -197,7 +199,11 @@ internal fun Composer(
         label = "composerBorderColor",
     )
     val borderWidth by animateDpAsState(
-        targetValue = if (focused || isBash) 1.5.dp else 0.75.dp,
+        targetValue = when {
+            isBash -> 1.25.dp
+            focused || streaming -> 1.dp
+            else -> 0.5.dp
+        },
         animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
         label = "composerBorderWidth",
     )
@@ -217,13 +223,18 @@ internal fun Composer(
     } else {
         null
     }
-    val idleAlpha = if (activeChrome) 0.85f else 0.52f
+    val idleAlpha = when {
+        isBash -> 0.85f
+        focused -> 0.88f
+        streaming -> 0.72f
+        else -> 0.62f
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(inputShape)
-            .background(MaterialTheme.colorScheme.surfaceContainer, inputShape)
+            .background(palette.cardBg, inputShape)
             .drawWithContent {
                 drawContent()
                 val factor = pulseState?.value ?: 1f
@@ -288,36 +299,42 @@ internal fun Composer(
             }
         }
 
-        // 2) 顶部模型 / 思考等级 / 上下文胶囊条（始终完整展示，窄屏平滑横滑不隐藏任何项）
+        // 2) 顶部精工控制条：左侧模型/思考一体胶囊 + 可选扩展快捷，右侧固定无边框上下文仪表
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
                 .padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            ComposerModelPill(
-                label = modelLabel,
-                onClick = onOpenModel,
-                onLongClick = onCycleModel,
-            )
-            ThinkingLevelPill(
-                level = thinkingLevel,
-                onClick = onCycleThinking,
-                onLongClick = onPickThinking,
-            )
-            ContextUsagePill(
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                UnifiedModelThinkingCapsule(
+                    modelLabel = modelLabel,
+                    thinkingLevel = thinkingLevel,
+                    thinkingSupported = thinkingSupported,
+                    onOpenModel = onOpenModel,
+                    onCycleModel = onCycleModel,
+                    onCycleThinking = onCycleThinking,
+                    onPickThinking = onPickThinking,
+                )
+                if (extensionChip != null && onOpenExtensions != null) {
+                    ComposerExtensionChip(
+                        chip = extensionChip,
+                        onClick = onOpenExtensions,
+                        onLongClick = onQuickInteractExtension,
+                    )
+                }
+            }
+            ContextUsageMeter(
                 usage = contextUsage,
                 onClick = onOpenContext,
             )
-            if (extensionChip != null && onOpenExtensions != null) {
-                ComposerExtensionChip(
-                    chip = extensionChip,
-                    onClick = onOpenExtensions,
-                    onLongClick = onQuickInteractExtension,
-                )
-            }
         }
 
         // 3) 文本输入区 + 右侧快捷清空
@@ -476,7 +493,8 @@ internal fun Composer(
                         .padding(start = 4.dp)
                         .size(26.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.8f))
+                        .background(lerp(palette.pageBg, palette.cardBg, 0.35f))
+                        .border(0.5.dp, palette.borderMuted.copy(alpha = 0.5f), CircleShape)
                         .clickable(onClickLabel = tr("清空草稿", "Clear draft"), onClick = onClear),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -577,73 +595,63 @@ internal fun Composer(
 
             if (streaming) {
                 if (showDeliveryPills) {
-                    DeliveryActionPill(
-                        icon = Icons.AutoMirrored.Filled.ArrowForward,
-                        label = tr("引导", "Steer"),
-                        tint = palette.warning,
-                        enabled = canSteer,
-                        onClick = {
+                    UnifiedDeliveryCapsule(
+                        canSteer = canSteer,
+                        canFollowUp = canFollowUp,
+                        onSteer = {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onSteer()
                         },
-                    )
-                    DeliveryActionPill(
-                        icon = Icons.Filled.ArrowDownward,
-                        label = tr("后续", "Follow-up"),
-                        tint = palette.accent,
-                        enabled = canFollowUp,
-                        onClick = {
+                        onFollowUp = {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onFollowUp()
                         },
                     )
+                    Spacer(Modifier.width(4.dp))
                 }
-                // 流式停止按钮：高对比紧凑停止钮，带触觉确认反馈
-                val showStopLabel = !showDeliveryPills
+                // 同位 36dp 高对比墨色停止圆钮（与空闲发送钮零跳跃）+ 外围极细流式旋转微环
                 val stopInteraction = remember { MutableInteractionSource() }
                 val stopPressed by stopInteraction.collectIsPressedAsState()
                 val stopScale by animateFloatAsState(
-                    targetValue = if (stopPressed) 0.93f else 1f,
+                    targetValue = if (stopPressed) 0.91f else 1f,
                     animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh),
                     label = "stopScale",
                 )
-                Row(
+                val stopCoreBg = palette.text
+                val stopCoreFg = palette.pageBg
+                Box(
                     modifier = Modifier
-                        .height(36.dp)
+                        .size(36.dp)
                         .graphicsLayer {
                             scaleX = stopScale
                             scaleY = stopScale
                         }
                         .clip(CircleShape)
-                        .background(palette.error)
                         .clickable(
                             interactionSource = stopInteraction,
-                            indication = ripple(color = palette.contrastOn(palette.error)),
+                            indication = ripple(color = stopCoreFg),
                             role = Role.Button,
                             onClickLabel = tr("停止生成", "Stop generating"),
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 onStop()
                             },
-                        )
-                        .padding(horizontal = if (showStopLabel) 13.dp else 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        ),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    val stopFg = palette.contrastOn(palette.error)
-                    Icon(
-                        imageVector = Icons.Filled.Stop,
-                        contentDescription = tr("停止", "Stop"),
-                        modifier = Modifier.size(16.dp),
-                        tint = stopFg,
+                    app.pi.ui.components.PiSpinner(
+                        size = 36.dp,
+                        strokeWidth = 1.5.dp,
+                        color = palette.thinking(thinkingLevel).copy(alpha = 0.72f),
                     )
-                    if (showStopLabel) {
-                        Text(
-                            text = tr("停止", "Stop"),
-                            style = PiType.chipLabel.copy(fontWeight = FontWeight.SemiBold),
-                            color = stopFg,
-                            maxLines = 1,
-                        )
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(stopCoreBg),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        PiStopSquareGlyph(color = stopCoreFg)
                     }
                 }
             } else {
@@ -668,15 +676,15 @@ internal fun Composer(
                 val sendBg by animateColorAsState(
                     targetValue = when {
                         isBashReady -> palette.bashMode
-                        hasPayload -> MaterialTheme.colorScheme.onSurface
-                        else -> MaterialTheme.colorScheme.surfaceContainerHighest
+                        hasPayload -> palette.text
+                        else -> lerp(palette.pageBg, palette.cardBg, 0.35f)
                     },
                     animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
                     label = "sendBtnBg",
                 )
                 val sendFg = when {
                     isBashReady -> palette.contrastOn(palette.bashMode)
-                    hasPayload -> MaterialTheme.colorScheme.surface
+                    hasPayload -> palette.pageBg
                     else -> palette.dim
                 }
                 Box(
@@ -701,153 +709,185 @@ internal fun Composer(
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        imageVector = if (isBash) Icons.Filled.PlayArrow else Icons.Filled.ArrowUpward,
-                        contentDescription = if (isBash) tr("运行", "Run") else tr("发送", "Send"),
-                        modifier = Modifier.size(if (isBash) 20.dp else 19.dp),
-                        tint = sendFg,
-                    )
+                    if (isBash) {
+                        PiPlayTriangleGlyph(color = sendFg)
+                    } else {
+                        PiSendArrowGlyph(color = sendFg)
+                    }
                 }
             }
         }
     }
 }
 
+/**
+ * 模型与思考深度二合一精工胶囊：
+ * - 左半：当前模型名 + 自绘极细下箭头（轻点选模型、长按在官方 scopedModels 间轮换）；
+ * - 右半（仅当官方 SDK `supportsThinking()` 为 true 时展开）：0.5dp 细线分隔 + 自绘状态圆点（off 为空心环，其余为语义色实心圆点）+ 等宽档位名，
+ *   去掉了原先扎眼的彩色背景块，仅让 6dp 圆点承载思考深度语义色；轻点轮换档位、长按打开档位面板。
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ComposerModelPill(
-    label: String?,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
+private fun UnifiedModelThinkingCapsule(
+    modelLabel: String?,
+    thinkingLevel: String,
+    thinkingSupported: Boolean,
+    onOpenModel: () -> Unit,
+    onCycleModel: () -> Unit,
+    onCycleThinking: () -> Unit,
+    onPickThinking: () -> Unit,
 ) {
     val palette = PiTheme.palette
     val haptic = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(8.dp)
-    Row(
-        modifier = Modifier
-            .height(28.dp)
-            .widthIn(max = 176.dp)
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.65f))
-            .combinedClickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = ripple(color = MaterialTheme.colorScheme.onSurface),
-                onClickLabel = tr("选择模型", "Select model"),
-                onClick = onClick,
-                onLongClickLabel = tr("切换到下一个模型", "Cycle to next model"),
-                onLongClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onLongClick()
-                },
-            )
-            .padding(start = 8.dp, end = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        Text(
-            text = label ?: tr("选择模型", "Select model"),
-            modifier = Modifier.weight(1f, fill = false),
-            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-            color = if (label != null) palette.text else palette.accent,
-            maxLines = 1,
-            overflow = TextOverflow.MiddleEllipsis,
-        )
-        Icon(
-            imageVector = Icons.Filled.KeyboardArrowDown,
-            contentDescription = null,
-            modifier = Modifier.size(14.dp),
-            tint = palette.muted,
-        )
-    }
-}
+    val shape = RoundedCornerShape(9.dp)
+    val capsuleBg = lerp(palette.pageBg, palette.cardBg, 0.35f)
+    val hairline = palette.borderMuted.copy(alpha = 0.58f)
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun ThinkingLevelPill(
-    level: String,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-) {
-    val palette = PiTheme.palette
-    val haptic = LocalHapticFeedback.current
-    val dotColor = palette.thinking(level)
-    val active = !level.equals("off", ignoreCase = true)
-    val shape = RoundedCornerShape(8.dp)
     Row(
         modifier = Modifier
             .height(28.dp)
             .clip(shape)
-            .background(
-                if (active) dotColor.copy(alpha = 0.12f)
-                else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.55f),
-            )
-            .combinedClickable(
-                onClickLabel = tr("切换思考等级：${thinkingLabelOf(level)}", "Cycle thinking level: ${thinkingLabelOf(level)}"),
-                onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onClick()
-                },
-                onLongClickLabel = tr("选择思考等级", "Select thinking level"),
-                onLongClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onLongClick()
-                },
-            )
-            .padding(horizontal = 8.dp),
+            .background(capsuleBg)
+            .border(0.5.dp, hairline, shape),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .size(6.dp)
-                .clip(CircleShape)
-                .background(dotColor),
-        )
-        Text(
-            text = thinkingLabelOf(level),
-            style = PiTheme.text.monoSmall.copy(fontWeight = if (active) FontWeight.Medium else FontWeight.Normal),
-            color = if (active) palette.text else palette.muted,
-            maxLines = 1,
-        )
+                .fillMaxHeight()
+                .widthIn(max = 176.dp)
+                .combinedClickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = ripple(color = palette.text),
+                    onClickLabel = tr("选择模型", "Select model"),
+                    onClick = onOpenModel,
+                    onLongClickLabel = tr("切换到下一个模型", "Cycle to next model"),
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onCycleModel()
+                    },
+                )
+                .padding(start = 9.dp, end = if (thinkingSupported) 7.dp else 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Text(
+                text = modelLabel ?: tr("选择模型", "Select model"),
+                modifier = Modifier.weight(1f, fill = false),
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = if (modelLabel != null) palette.text else palette.accent,
+                maxLines = 1,
+                overflow = TextOverflow.MiddleEllipsis,
+            )
+            PiSmallChevronDown(color = palette.muted.copy(alpha = 0.85f))
+        }
+
+        if (thinkingSupported) {
+            val active = !thinkingLevel.equals("off", ignoreCase = true)
+            val dotColor = palette.thinking(thinkingLevel)
+            Box(
+                modifier = Modifier
+                    .width(0.5.dp)
+                    .height(13.dp)
+                    .background(palette.borderMuted.copy(alpha = 0.65f)),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .combinedClickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = ripple(color = palette.text),
+                        onClickLabel = tr(
+                            "切换思考等级：${thinkingLabelOf(thinkingLevel)}",
+                            "Cycle thinking level: ${thinkingLabelOf(thinkingLevel)}",
+                        ),
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onCycleThinking()
+                        },
+                        onLongClickLabel = tr("选择思考等级", "Select thinking level"),
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onPickThinking()
+                        },
+                    )
+                    .padding(start = 8.dp, end = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                PiThinkingDot(
+                    active = active,
+                    color = dotColor,
+                    mutedColor = palette.muted,
+                )
+                Text(
+                    text = thinkingLabelOf(thinkingLevel),
+                    style = PiTheme.text.monoSmall.copy(
+                        fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+                    ),
+                    color = if (active) palette.text else palette.muted,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
 
+/**
+ * 右上角无边框极简上下文仪表：
+ * 去掉冗余灰色贴片底盒，直接用 15dp 自绘圆环 + 等宽数字呈现；
+ * 健康占用（<=70%）保持克制中性墨色，仅在 >70% 亮预警黄、>90% 亮预警红。
+ */
 @Composable
-private fun ContextUsagePill(
+private fun ContextUsageMeter(
     usage: PiResponses.ContextUsage?,
     onClick: () -> Unit,
 ) {
     val palette = PiTheme.palette
     val percent = usage?.percent
-    val tone = percent?.let { contextProgressColor(it, palette) } ?: palette.muted
-    val shape = RoundedCornerShape(8.dp)
+    val labelColor = when {
+        percent == null -> palette.muted
+        percent > 90.0 -> palette.error
+        percent > 70.0 -> palette.warning
+        else -> palette.muted
+    }
     Row(
         modifier = Modifier
             .height(28.dp)
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.55f))
-            .clickable(onClickLabel = tr("查看上下文与用量", "View context and usage"), onClick = onClick)
-            .padding(horizontal = 7.dp),
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(
+                onClickLabel = tr("查看上下文与用量", "View context and usage"),
+                onClick = onClick,
+            )
+            .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         PiContextRing(
             percent = percent,
-            diameter = 16.dp,
-            stroke = 1.8.dp,
+            diameter = 15.dp,
+            stroke = 1.65.dp,
             placeholderStyle = PiTheme.text.monoSmall,
+            neutral = true,
         )
         if (percent != null) {
             Text(
                 text = String.format(Locale.US, "%.0f%%", percent),
-                style = PiTheme.text.monoSmall.copy(fontFeatureSettings = "tnum"),
-                color = tone,
+                style = PiTheme.text.monoSmall.copy(
+                    fontFeatureSettings = "tnum",
+                    fontWeight = if (percent > 70.0) FontWeight.SemiBold else FontWeight.Normal,
+                ),
+                color = labelColor,
                 maxLines = 1,
             )
         }
     }
 }
 
+/**
+ * 扩展注册的快捷入口胶囊（100% 保留官方扩展快捷与长按操控行为）：
+ * 去掉与思考圆点撞色的实心主题色圆点，改用自绘 2×2 几何指令格图标与克制中性胶囊底，
+ * 仅在存在可交互扩展面板（`hasInteractive`）时给予极轻的主题色提示。
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ComposerExtensionChip(
@@ -856,19 +896,24 @@ private fun ComposerExtensionChip(
     onLongClick: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(9.dp)
+    val capsuleBg = lerp(palette.pageBg, palette.cardBg, 0.35f)
+    val borderColor = if (chip.hasInteractive) {
+        palette.accent.copy(alpha = 0.42f)
+    } else {
+        palette.borderMuted.copy(alpha = 0.58f)
+    }
+    val glyphColor = if (chip.hasInteractive) palette.accent else palette.muted
     Row(
         modifier = Modifier
             .height(28.dp)
-            .widthIn(max = 152.dp)
+            .widthIn(max = 148.dp)
             .clip(shape)
-            .background(
-                if (chip.hasInteractive) palette.accent.copy(alpha = 0.14f)
-                else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.65f),
-            )
+            .background(capsuleBg)
+            .border(0.5.dp, borderColor, shape)
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = ripple(color = palette.accent),
+                indication = ripple(color = palette.text),
                 onClickLabel = tr("打开扩展中心", "Open extensions"),
                 onClick = onClick,
                 onLongClickLabel = if (onLongClick != null) tr("直接操控扩展面板", "Interact with extension panel") else null,
@@ -878,12 +923,7 @@ private fun ComposerExtensionChip(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(6.dp)
-                .clip(CircleShape)
-                .background(palette.accent),
-        )
+        PiShortcutGlyph(color = glyphColor)
         Text(
             text = chip.label,
             modifier = Modifier.weight(1f, fill = false),
@@ -895,18 +935,86 @@ private fun ComposerExtensionChip(
         if (chip.count > 1) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(palette.accent.copy(alpha = 0.22f))
-                    .padding(horizontal = 5.dp, vertical = 1.dp),
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(palette.cardBg.copy(alpha = 0.85f))
+                    .border(
+                        width = 0.5.dp,
+                        color = if (chip.hasInteractive) palette.accent.copy(alpha = 0.35f) else palette.borderMuted.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(6.dp),
+                    )
+                    .padding(horizontal = 4.5.dp, vertical = 0.5.dp),
             ) {
                 Text(
                     text = chip.count.toString(),
-                    style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = palette.accent,
+                    style = PiTheme.text.monoSmall.copy(
+                        fontFeatureSettings = "tnum",
+                        fontWeight = FontWeight.Medium,
+                    ),
+                    color = if (chip.hasInteractive) palette.accent else palette.muted,
                     maxLines = 1,
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun PiSmallChevronDown(color: Color) {
+    Canvas(modifier = Modifier.size(width = 8.dp, height = 5.dp)) {
+        val strokePx = 1.3.dp.toPx()
+        val insetX = strokePx * 0.7f
+        val topY = strokePx * 0.65f
+        val bottomY = size.height - strokePx * 0.65f
+        val path = Path().apply {
+            moveTo(insetX, topY)
+            lineTo(size.width * 0.5f, bottomY)
+            lineTo(size.width - insetX, topY)
+        }
+        drawPath(
+            path = path,
+            color = color,
+            style = Stroke(width = strokePx, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+    }
+}
+
+@Composable
+private fun PiThinkingDot(
+    active: Boolean,
+    color: Color,
+    mutedColor: Color,
+) {
+    Canvas(modifier = Modifier.size(6.dp)) {
+        val center = Offset(size.width * 0.5f, size.height * 0.5f)
+        if (active) {
+            drawCircle(
+                color = color,
+                radius = size.minDimension * 0.45f,
+                center = center,
+            )
+        } else {
+            val strokePx = 1.2.dp.toPx()
+            drawCircle(
+                color = mutedColor.copy(alpha = 0.72f),
+                radius = (size.minDimension - strokePx) * 0.46f,
+                center = center,
+                style = Stroke(width = strokePx),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PiShortcutGlyph(color: Color) {
+    Canvas(modifier = Modifier.size(10.dp)) {
+        val gap = 1.8.dp.toPx()
+        val cell = (size.minDimension - gap) * 0.5f
+        val radius = CornerRadius(1.1.dp.toPx(), 1.1.dp.toPx())
+        val cellSize = Size(cell, cell)
+        drawRoundRect(color = color, topLeft = Offset(0f, 0f), size = cellSize, cornerRadius = radius)
+        drawRoundRect(color = color.copy(alpha = 0.72f), topLeft = Offset(cell + gap, 0f), size = cellSize, cornerRadius = radius)
+        drawRoundRect(color = color.copy(alpha = 0.72f), topLeft = Offset(0f, cell + gap), size = cellSize, cornerRadius = radius)
+        drawRoundRect(color = color, topLeft = Offset(cell + gap, cell + gap), size = cellSize, cornerRadius = radius)
     }
 }
 
@@ -978,12 +1086,16 @@ private fun ComposerQuickKey(
     onLongClick: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(9.dp)
     Box(
         modifier = Modifier
             .size(34.dp)
             .clip(shape)
-            .background(if (active) activeColor.copy(alpha = 0.16f) else Color.Transparent)
+            .background(if (active) activeColor.copy(alpha = 0.11f) else Color.Transparent)
+            .then(
+                if (active) Modifier.border(0.5.dp, activeColor.copy(alpha = 0.35f), shape)
+                else Modifier,
+            )
             .combinedClickable(
                 onClickLabel = contentDescription,
                 onClick = onClick,
@@ -1000,38 +1112,173 @@ private fun ComposerQuickKey(
     }
 }
 
+/**
+ * 流式打字时的「引导 │ 后续」一体双段胶囊：
+ * 与顶部「模型 ▾ │ ● 思考」胶囊共享完全一致的材质、圆角与发丝分隔，形成上下对称的精密仪表感。
+ */
 @Composable
-private fun DeliveryActionPill(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    tint: Color,
-    enabled: Boolean,
-    onClick: () -> Unit,
+private fun UnifiedDeliveryCapsule(
+    canSteer: Boolean,
+    canFollowUp: Boolean,
+    onSteer: () -> Unit,
+    onFollowUp: () -> Unit,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(9.dp)
+    val capsuleBg = lerp(palette.pageBg, palette.cardBg, 0.35f)
+    val hairline = palette.borderMuted.copy(alpha = 0.62f)
     Row(
         modifier = Modifier
             .height(34.dp)
             .clip(shape)
-            .background(if (enabled) tint.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceContainerHigh)
-            .clickable(enabled = enabled, role = Role.Button, onClickLabel = label, onClick = onClick)
-            .padding(horizontal = 10.dp),
+            .background(capsuleBg)
+            .border(0.5.dp, hairline, shape),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(14.dp),
-            tint = if (enabled) tint else palette.muted,
+        Row(
+            modifier = Modifier
+                .fillMaxHeight()
+                .clickable(
+                    enabled = canSteer,
+                    role = Role.Button,
+                    onClickLabel = tr("引导", "Steer"),
+                    onClick = onSteer,
+                )
+                .padding(start = 10.dp, end = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            PiSteerArrowGlyph(color = if (canSteer) palette.warning else palette.muted)
+            Text(
+                text = tr("引导", "Steer"),
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = if (canSteer) palette.text else palette.muted,
+                maxLines = 1,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .width(0.5.dp)
+                .height(14.dp)
+                .background(palette.borderMuted.copy(alpha = 0.65f)),
         )
-        Text(
-            text = label,
-            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-            color = if (enabled) palette.text else palette.muted,
-            maxLines = 1,
+        Row(
+            modifier = Modifier
+                .fillMaxHeight()
+                .clickable(
+                    enabled = canFollowUp,
+                    role = Role.Button,
+                    onClickLabel = tr("后续", "Follow-up"),
+                    onClick = onFollowUp,
+                )
+                .padding(start = 9.dp, end = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            PiFollowUpArrowGlyph(color = if (canFollowUp) palette.muted else palette.dim)
+            Text(
+                text = tr("后续", "Follow-up"),
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = if (canFollowUp) palette.text else palette.muted,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PiSendArrowGlyph(color: Color) {
+    Canvas(modifier = Modifier.size(16.dp)) {
+        val stroke = 1.9.dp.toPx()
+        val cx = size.width * 0.5f
+        val top = 2.6.dp.toPx()
+        val bottom = size.height - 2.6.dp.toPx()
+        val wing = 4.2.dp.toPx()
+        drawLine(
+            color = color,
+            start = Offset(cx, bottom),
+            end = Offset(cx, top),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
         )
+        val head = Path().apply {
+            moveTo(cx - wing, top + wing)
+            lineTo(cx, top)
+            lineTo(cx + wing, top + wing)
+        }
+        drawPath(head, color, style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+@Composable
+private fun PiPlayTriangleGlyph(color: Color) {
+    Canvas(modifier = Modifier.size(14.dp)) {
+        val path = Path().apply {
+            moveTo(size.width * 0.28f, size.height * 0.16f)
+            lineTo(size.width * 0.86f, size.height * 0.50f)
+            lineTo(size.width * 0.28f, size.height * 0.84f)
+            close()
+        }
+        drawPath(path, color)
+    }
+}
+
+@Composable
+private fun PiStopSquareGlyph(color: Color) {
+    Canvas(modifier = Modifier.size(10.dp)) {
+        val r = 2.dp.toPx()
+        drawRoundRect(
+            color = color,
+            topLeft = Offset.Zero,
+            size = size,
+            cornerRadius = CornerRadius(r, r),
+        )
+    }
+}
+
+@Composable
+private fun PiSteerArrowGlyph(color: Color) {
+    Canvas(modifier = Modifier.size(11.dp)) {
+        val stroke = 1.4.dp.toPx()
+        val pad = 1.4.dp.toPx()
+        val midY = size.height * 0.5f
+        val head = 3.dp.toPx()
+        drawLine(
+            color = color,
+            start = Offset(pad, midY),
+            end = Offset(size.width - pad, midY),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        val path = Path().apply {
+            moveTo(size.width - pad - head, midY - head)
+            lineTo(size.width - pad, midY)
+            lineTo(size.width - pad - head, midY + head)
+        }
+        drawPath(path, color, style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+@Composable
+private fun PiFollowUpArrowGlyph(color: Color) {
+    Canvas(modifier = Modifier.size(11.dp)) {
+        val stroke = 1.4.dp.toPx()
+        val pad = 1.4.dp.toPx()
+        val midX = size.width * 0.5f
+        val head = 3.dp.toPx()
+        drawLine(
+            color = color,
+            start = Offset(midX, pad),
+            end = Offset(midX, size.height - pad),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        val path = Path().apply {
+            moveTo(midX - head, size.height - pad - head)
+            lineTo(midX, size.height - pad)
+            lineTo(midX + head, size.height - pad - head)
+        }
+        drawPath(path, color, style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 

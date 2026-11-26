@@ -56,6 +56,7 @@ internal fun ChatDockStatusAndWidgets(
     onHideWidget: (String) -> Unit,
     onInteractWidget: (ExtPanel) -> Unit,
     onPreviewAttachment: (PiImage) -> Unit = {},
+    onOpenQueuePolicy: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val exportScope = rememberCoroutineScope()
@@ -100,6 +101,9 @@ internal fun ChatDockStatusAndWidgets(
                 onRestore = {
                     session.restoreQueue { restored -> onDraft(mergeRestoredQueue(restored, draft)) }
                 },
+                steeringMode = state.meta.steeringMode,
+                followUpMode = state.meta.followUpMode,
+                onOpenQueuePolicy = onOpenQueuePolicy,
             )
         }
 

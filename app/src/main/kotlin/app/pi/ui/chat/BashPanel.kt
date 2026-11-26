@@ -50,33 +50,34 @@ fun BashPanel(
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
-    val accent = if (run.excludeFromContext) palette.dim else palette.bashMode
+    val accent = if (run.excludeFromContext) palette.muted else palette.bashMode
     val scopeLabel = if (run.excludeFromContext) tr("仅本地", "Local only") else tr("进上下文", "In context")
     val status = statusText(run)
+    val recessedBg = androidx.compose.ui.graphics.lerp(palette.pageBg, palette.cardBg, 0.35f)
+    val cardBorder = if (run.running) accent.copy(alpha = 0.45f) else palette.borderMuted.copy(alpha = 0.60f)
 
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.45f)),
+        color = palette.cardBg,
+        shape = RoundedCornerShape(13.dp),
+        border = BorderStroke(0.5.dp, cardBorder),
     ) {
         Column(Modifier.fillMaxWidth()) {
-            // 顶部命令头
+            // 顶部命令头：干净底色 + 语义色 `$` 前缀 + 运行转环 + 细框操作钮
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(accent.copy(alpha = 0.10f))
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                    .padding(horizontal = 11.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(accent.copy(alpha = 0.16f)),
-                    contentAlignment = Alignment.Center,
-                ) {
+                if (run.running) {
+                    app.pi.ui.components.PiSpinner(
+                        size = 14.dp,
+                        strokeWidth = 1.6.dp,
+                        color = accent,
+                    )
+                } else {
                     Icon(
                         imageVector = Icons.Filled.Terminal,
                         contentDescription = null,
@@ -87,41 +88,43 @@ fun BashPanel(
                 Text(
                     text = "$ ${run.command}",
                     modifier = Modifier.weight(1f),
-                    style = PiTheme.text.mono.copy(fontWeight = FontWeight.SemiBold),
-                    color = accent,
+                    style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = palette.text,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = accent.copy(alpha = 0.16f),
+                    shape = RoundedCornerShape(6.dp),
+                    color = recessedBg,
+                    border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.50f)),
                 ) {
                     Text(
                         text = scopeLabel,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                        color = accent,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        style = PiTheme.text.monoSmall,
+                        color = if (run.excludeFromContext) palette.muted else accent,
                         maxLines = 1,
                     )
                 }
                 if (run.output.isNotEmpty()) {
-                    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                    val context = androidx.compose.ui.platform.LocalContext.current
                     val copyLabel = tr("复制输出", "Copy output")
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(28.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .background(recessedBg)
                             .clickable(onClickLabel = copyLabel) {
-                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(run.output))
+                                val cm = context.getSystemService(android.content.ClipboardManager::class.java)
+                                cm?.setPrimaryClip(android.content.ClipData.newPlainText("bash", run.output))
                             },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            androidx.compose.material.icons.Icons.Filled.ContentCopy,
+                            Icons.Filled.ContentCopy,
                             contentDescription = copyLabel,
                             tint = palette.muted,
-                            modifier = Modifier.size(14.dp),
+                            modifier = Modifier.size(13.dp),
                         )
                     }
                 }
@@ -129,9 +132,9 @@ fun BashPanel(
                     val stopLabel = tr("停止命令", "Stop command")
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(28.dp)
                             .clip(CircleShape)
-                            .background(palette.error.copy(alpha = 0.16f))
+                            .background(palette.error.copy(alpha = 0.14f))
                             .clickable(onClickLabel = stopLabel, onClick = onAbort),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -139,16 +142,16 @@ fun BashPanel(
                             Icons.Filled.Stop,
                             contentDescription = stopLabel,
                             tint = palette.error,
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(15.dp),
                         )
                     }
                 } else {
                     val closeLabel = tr("关闭输出", "Close output")
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(28.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .background(recessedBg)
                             .clickable(onClickLabel = closeLabel, onClick = onDismiss),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -156,7 +159,7 @@ fun BashPanel(
                             Icons.Filled.Close,
                             contentDescription = closeLabel,
                             tint = palette.muted,
-                            modifier = Modifier.size(15.dp),
+                            modifier = Modifier.size(14.dp),
                         )
                     }
                 }
@@ -168,14 +171,14 @@ fun BashPanel(
                 androidx.compose.runtime.LaunchedEffect(run.output.length) {
                     outputScroll.scrollTo(outputScroll.maxValue)
                 }
-                HorizontalDivider(thickness = 0.5.dp, color = accent.copy(alpha = 0.22f))
+                HorizontalDivider(thickness = 0.5.dp, color = palette.borderMuted.copy(alpha = 0.42f))
                 Text(
                     text = run.output,
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 220.dp)
                         .verticalScroll(outputScroll)
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     style = PiTheme.text.monoSmall,
                     color = palette.muted,
                 )
@@ -184,7 +187,7 @@ fun BashPanel(
             // 状态尾注（运行中 / 取消 / 报错 / 截断时展示）
             if (status != null) {
                 val tone = statusTone(run, palette)
-                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                HorizontalDivider(thickness = 0.5.dp, color = palette.borderMuted.copy(alpha = 0.42f))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -194,14 +197,14 @@ fun BashPanel(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(6.dp)
+                            .size(5.5.dp)
                             .clip(CircleShape)
                             .background(tone),
                     )
                     Text(
                         text = status,
                         style = PiTheme.text.meta,
-                        color = tone,
+                        color = palette.muted,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )

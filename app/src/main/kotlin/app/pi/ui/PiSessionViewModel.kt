@@ -238,6 +238,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val scopedModelCount: Int = 0,
         /** 自动路由命中的实际模型（`provider/id`），未触发路由或与主模型一致时为空。 */
         val routedModel: String? = null,
+        /** 当前模型是否支持思考深度（直连官方 SDK `session.supportsThinking()`）。 */
+        val supportsThinking: Boolean = false,
     )
 
     data class UiState(
@@ -3274,11 +3276,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { s ->
             val current = s.meta
             val level = remote.thinkingLevel?.takeIf { it.isNotBlank() } ?: current.thinkingLevel
+            val resolvedLevels = levels ?: current.thinkingLevels
+            val resolvedSupportsThinking = hostState?.supportsThinking
+                ?: remote.model?.reasoning
+                ?: (if (resolvedLevels.isNotEmpty()) resolvedLevels.size > 1 else current.supportsThinking)
             s.copy(
                 meta = current.copy(
                     model = remote.model,
                     thinkingLevel = level,
-                    thinkingLevels = levels ?: current.thinkingLevels,
+                    thinkingLevels = resolvedLevels,
                     steeringMode = queueModeOf(remote.steeringMode) ?: current.steeringMode,
                     followUpMode = queueModeOf(remote.followUpMode) ?: current.followUpMode,
                     autoCompaction = remote.autoCompactionEnabled,
@@ -3293,6 +3299,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     bashRunning = hostState?.isBashRunning ?: current.bashRunning,
                     scopedModelCount = hostState?.scopedModelCount ?: current.scopedModelCount,
                     routedModel = if (hostState != null) routed else current.routedModel,
+                    supportsThinking = resolvedSupportsThinking,
                 ),
             )
         }
@@ -3316,7 +3323,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         call(tr("读取思考等级", "Load thinking levels")) { api ->
             val levels = api.getAvailableThinkingLevels()
             _state.update { s -> s.copy(
-                meta = s.meta.copy(thinkingLevels = levels),
+                meta = s.meta.copy(
+                    thinkingLevels = levels,
+                    supportsThinking = (s.meta.model?.reasoning == true) || levels.size > 1,
+                ),
             ) }
         }
     }
@@ -4253,7 +4263,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (parkUntilAttached { sendFollowUp(text, images) }) return
         val engine = session ?: return
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
+        if (trimmed.isEmpty() && images.isEmpty()) return
         // Compacting: [send] documents the window — pi's `prompt` throws
         // (`core/agent-session.js:1619`) and the bare `follow_up` command queues the
         // text instead (`_queueUserInput`, `:1722-1740`, no compaction check). Same

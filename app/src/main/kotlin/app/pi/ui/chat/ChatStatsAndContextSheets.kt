@@ -46,7 +46,6 @@ import app.pi.ui.PiSessionViewModel
 import app.pi.ui.components.PiContextRing
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
-import app.pi.ui.components.contextProgressColor
 import app.pi.ui.components.piFormatTokens
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -166,12 +165,13 @@ fun ContextSheet(
                                                 onClick = { showInstructionsInput = true },
                                                 shape = RoundedCornerShape(8.dp),
                                                 color = app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg,
+                                                border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.5f)),
                                             ) {
                                                 Text(
                                                     text = tr("填写", "Add"),
                                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                                                     style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                                                    color = palette.accent,
+                                                    color = palette.text,
                                                 )
                                             }
                                         }
@@ -245,7 +245,7 @@ fun ContextSheet(
                                     Text(
                                         text = "→",
                                         style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                                        color = palette.accent,
+                                        color = palette.muted,
                                     )
                                 }
                             }
@@ -372,13 +372,20 @@ private fun ContextBlock(
     val palette = PiTheme.palette
     val usage = stats.contextUsage
     val percent = usage?.percent
-    val ringColor = percent?.let { contextProgressColor(it, palette) } ?: palette.muted
+    val elevatedTone = when {
+        percent == null -> null
+        percent > 90.0 -> palette.error
+        percent > 70.0 -> palette.warning
+        else -> null
+    }
+    val borderColor = elevatedTone?.copy(alpha = 0.48f) ?: palette.borderMuted.copy(alpha = 0.55f)
+    val headlineColor = elevatedTone ?: palette.text
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
-        border = BorderStroke(PiSpacing.hairlineThin, ringColor.copy(alpha = 0.34f)),
+        border = BorderStroke(if (elevatedTone != null) 0.75.dp else 0.5.dp, borderColor),
     ) {
         Row(
             modifier = Modifier
@@ -392,12 +399,13 @@ private fun ContextBlock(
                 diameter = SHEET_RING_DIAMETER,
                 stroke = SHEET_RING_STROKE,
                 placeholderStyle = PiTheme.text.monoSmall,
+                neutral = true,
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text(
                     text = percent?.let { String.format(Locale.US, "%.1f", it) + "%" } ?: "—",
                     style = PiTheme.text.mono.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold),
-                    color = ringColor,
+                    color = headlineColor,
                 )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -410,14 +418,14 @@ private fun ContextBlock(
                     if (autoRetry != null) {
                         MiniBadge(
                             text = if (autoRetry) tr("自动重试开", "Auto-retry ON") else tr("自动重试关", "Auto-retry OFF"),
-                            tone = if (autoRetry) palette.accent else palette.muted,
+                            tone = if (autoRetry) palette.muted else palette.dim,
                         )
                     }
                 }
                 Text(
                     text = contextWindowLine(usage, modelContextWindow),
                     style = PiTheme.text.monoSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = palette.muted,
                 )
             }
         }

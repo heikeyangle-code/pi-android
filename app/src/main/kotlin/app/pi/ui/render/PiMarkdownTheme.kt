@@ -100,6 +100,18 @@ internal fun piMarkdownColors(
     darkTheme = darkTheme,
 )
 
+private val StrictProseLineBreak = LineBreak(
+    strategy = LineBreak.Strategy.HighQuality,
+    strictness = LineBreak.Strictness.Strict,
+    wordBreak = LineBreak.WordBreak.Default,
+)
+
+private val StrictHeadingLineBreak = LineBreak(
+    strategy = LineBreak.Strategy.Balanced,
+    strictness = LineBreak.Strictness.Strict,
+    wordBreak = LineBreak.WordBreak.Phrase,
+)
+
 internal fun piMarkdownTypography(
     palette: PiPalette,
     profile: PiTypographyProfile,
@@ -111,7 +123,7 @@ internal fun piMarkdownTypography(
         fontWeight = FontWeight.Normal,
         letterSpacing = 0.sp,
         fontFeatureSettings = profile.proseFontFeatures(),
-        lineBreak = LineBreak.Paragraph,
+        lineBreak = StrictProseLineBreak,
     )
     val mono = profile.styles.mono
     val code = profile.styles.code.copy(
@@ -121,7 +133,7 @@ internal fun piMarkdownTypography(
     val heading = base.copy(
         color = palette.mdHeading,
         fontWeight = FontWeight.SemiBold,
-        lineBreak = LineBreak.Heading,
+        lineBreak = StrictHeadingLineBreak,
     )
     val body = textColor ?: palette.text
     val tableFeatures = listOfNotNull(profile.proseFontFeatures(), PiFontFeatures.TABULAR).joinToString(", ")
@@ -201,5 +213,5 @@ private fun TextStyle.headingSlot(
     lineHeight = slot.lineHeightSp.sp,
     fontWeight = weight,
     letterSpacing = letterSpacingSp.sp,
-    lineBreak = LineBreak.Heading,
+    lineBreak = StrictHeadingLineBreak,
 )

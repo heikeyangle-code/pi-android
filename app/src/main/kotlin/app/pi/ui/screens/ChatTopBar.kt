@@ -1,13 +1,11 @@
 package app.pi.ui.screens
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,7 +35,6 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -50,7 +47,9 @@ import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,17 +58,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.pi.i18n.tr
 import app.pi.ui.PiEngineStatusDot
-import app.pi.ui.PiTopBarIcon
 import app.pi.ui.chat.ChatAction
 import app.pi.ui.chat.activity.ActivityDisplayMode
 import app.pi.ui.components.PiSheet
@@ -80,9 +83,11 @@ import app.pi.ui.theme.engineStateTone
 import app.pi.ui.theme.stateToneColor
 
 /**
- * 统一官方 Pi 移动端对话顶栏 + 分类命令中心底部面板：
- *  - 左侧：标准 44dp 会话侧栏图标（与会话页返回键同位对齐）+ 引擎呼吸状态点 + 会话标题 + 项目副标；
- *  - 右侧：+ 新建会话、搜索、项目与文件、⋯ 更多（44dp/22dp，与全 App [PiTopBarIcon] 统一规格）。
+ * 悬浮双胶囊对话顶栏（与底部悬浮工作台上下镜像呼应，彻底释放无界阅读画布）：
+ *  - 左侧合并胶囊：消除原先「☰ 按钮 + 会话标题」双入口重复，合并为一枚自撑宽精工药丸
+ *    （极简自绘侧栏微标 + 引擎呼吸状态点 + 会话名/工作区 + 极细下箭头），一键拉出会话抽屉；
+ *  - 右侧工具胶囊：把新建会话 `+`、终端 `>_`（含运行绿点）、项目文件 `📁`、（宽屏/查找态 `🔍`）
+ *    与 `⋯` 命令中心收进一枚同高发丝描边胶囊，彻底杜绝零散悬浮球噪点。
  */
 @Composable
 internal fun ChatTopBar(
@@ -114,90 +119,106 @@ internal fun ChatTopBar(
         keyboardController?.hide()
     }
 
-    val hairlineColor = palette.borderMuted.copy(alpha = 0.55f)
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
-            .drawBehind {
-                if (scrolled) {
-                    val strokePx = PiSpacing.hairlineThin.toPx()
-                    drawLine(
-                        color = hairlineColor,
-                        start = androidx.compose.ui.geometry.Offset(0f, size.height - strokePx / 2f),
-                        end = androidx.compose.ui.geometry.Offset(size.width, size.height - strokePx / 2f),
-                        strokeWidth = strokePx,
-                    )
-                }
-            },
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(PiSpacing.chatTopBarHeight)
-                .padding(start = 6.dp, end = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            PiTopBarIcon(
-                onClick = {
-                    hideIme()
-                    onOpenSessions()
-                },
-                contentDescription = tr("打开会话列表", "Open sessions"),
-                icon = Icons.Filled.Menu,
-            )
+    val capsuleShape = RoundedCornerShape(20.dp)
+    val capsuleBg = palette.cardBg.copy(alpha = 0.94f)
+    val capsuleBorder = palette.borderMuted.copy(alpha = if (scrolled) 0.72f else 0.56f)
+    val capsuleElevation = if (scrolled) 1.5.dp else 0.dp
 
-            // 标题区：呼吸状态点 + 会话名 + 项目名/扩展标题（点击同样平滑滑入会话抽屉）
-            val subtitleText = remember(workspaceName, extensionTitle, sessionTitle) {
-                val ws = workspaceName?.trim()?.takeIf { it.isNotEmpty() }
-                val ext = extensionTitle?.trim()?.takeIf { it.isNotEmpty() && it != sessionTitle && it != ws }
-                when {
-                    ws != null && ext != null -> "$ws · $ext"
-                    ext != null -> ext
-                    else -> ws
-                }
-            }
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(onClickLabel = tr("打开会话列表", "Open sessions")) {
-                        hideIme()
-                        onOpenSessions()
-                    }
-                    .padding(horizontal = 4.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+    val subtitleText = remember(workspaceName, extensionTitle, sessionTitle) {
+        val ws = workspaceName?.trim()?.takeIf { it.isNotEmpty() }
+        val ext = extensionTitle?.trim()?.takeIf { it.isNotEmpty() && it != sessionTitle && it != ws }
+        when {
+            ws != null && ext != null -> "$ws · $ext"
+            ext != null -> ext
+            else -> ws
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        // 左侧合并会话胶囊：内容紧凑时自动留出中间呼吸画布，长标题时平滑扩展至可用宽度
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Surface(
+                shape = capsuleShape,
+                color = capsuleBg,
+                border = BorderStroke(0.5.dp, capsuleBorder),
+                shadowElevation = capsuleElevation,
             ) {
-                PiEngineStatusDot(statusLabel = engineLabel)
-                Spacer(Modifier.width(8.dp))
-                Column(modifier = Modifier.weight(1f, fill = false)) {
-                    Text(
-                        text = sessionTitle ?: tr("新对话", "New Chat"),
-                        style = PiType.topBarTitle,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (!subtitleText.isNullOrBlank()) {
+                Row(
+                    modifier = Modifier
+                        .height(40.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(color = palette.text),
+                            role = Role.Button,
+                            onClickLabel = tr("打开会话列表", "Open sessions"),
+                        ) {
+                            hideIme()
+                            onOpenSessions()
+                        }
+                        .padding(start = 11.dp, end = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    PiSidebarBarsGlyph(color = palette.muted.copy(alpha = 0.85f))
+                    PiEngineStatusDot(statusLabel = engineLabel)
+                    Column(
+                        modifier = Modifier.weight(1f, fill = false),
+                        verticalArrangement = Arrangement.Center,
+                    ) {
                         Text(
-                            text = subtitleText,
-                            style = PiTheme.text.monoSmall,
-                            color = palette.muted,
+                            text = sessionTitle ?: tr("新对话", "New Chat"),
+                            style = PiTheme.text.meta.copy(
+                                fontSize = 13.5.sp,
+                                lineHeight = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            ),
+                            color = palette.text,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        if (!subtitleText.isNullOrBlank()) {
+                            Text(
+                                text = subtitleText,
+                                style = PiTheme.text.monoSmall.copy(
+                                    fontSize = 10.5.sp,
+                                    lineHeight = 12.sp,
+                                ),
+                                color = palette.muted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
+                    PiFloatingChevronDown(color = palette.muted.copy(alpha = 0.78f))
                 }
             }
+        }
 
-            // 右侧高频直达图标：新建对话 + 终端（带后台存活状态点）+ 项目与文件 +（查找态/宽屏搜索）+ 更多
+        // 右侧聚合精工工具胶囊：新建 + 终端 + 项目文件 +（查找态/宽屏搜索）│ 更多
+        Surface(
+            shape = capsuleShape,
+            color = capsuleBg,
+            border = BorderStroke(0.5.dp, capsuleBorder),
+            shadowElevation = capsuleElevation,
+        ) {
             Row(
+                modifier = Modifier
+                    .height(40.dp)
+                    .padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(1.dp),
             ) {
-                PiTopBarIcon(
+                FloatingCapsuleIcon(
                     onClick = {
                         hideIme()
                         onAction(ChatAction.NewSession)
@@ -206,7 +227,7 @@ internal fun ChatTopBar(
                     icon = Icons.Filled.Add,
                 )
                 Box {
-                    PiTopBarIcon(
+                    FloatingCapsuleIcon(
                         onClick = {
                             hideIme()
                             onOpenTerminal()
@@ -224,13 +245,13 @@ internal fun ChatTopBar(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(top = 6.dp, end = 6.dp)
-                                .size(6.dp)
+                                .size(5.5.dp)
                                 .clip(CircleShape)
                                 .background(palette.success),
                         )
                     }
                 }
-                PiTopBarIcon(
+                FloatingCapsuleIcon(
                     onClick = {
                         hideIme()
                         onOpenWorkspace()
@@ -239,14 +260,21 @@ internal fun ChatTopBar(
                     icon = Icons.Filled.FolderOpen,
                 )
                 if (wideScreen || searchOpen) {
-                    PiTopBarIcon(
+                    FloatingCapsuleIcon(
                         onClick = { onToggleSearch(false) },
                         contentDescription = if (searchOpen) tr("关闭对话内查找", "Close search") else tr("在对话里查找", "Search in chat"),
                         icon = Icons.Filled.Search,
                         highlighted = searchOpen,
                     )
                 }
-                PiTopBarIcon(
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 2.dp)
+                        .width(0.5.dp)
+                        .height(14.dp)
+                        .background(palette.borderMuted.copy(alpha = 0.55f)),
+                )
+                FloatingCapsuleIcon(
                     onClick = {
                         hideIme()
                         commandCenterOpen = true
@@ -285,6 +313,66 @@ internal fun ChatTopBar(
                 onAction(action)
             },
         )
+    }
+}
+
+@Composable
+private fun FloatingCapsuleIcon(
+    onClick: () -> Unit,
+    contentDescription: String,
+    icon: ImageVector,
+    highlighted: Boolean = false,
+) {
+    val palette = PiTheme.palette
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true, color = palette.text),
+                role = Role.Button,
+                onClickLabel = contentDescription,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(18.5.dp),
+            tint = if (highlighted) palette.accent else palette.text.copy(alpha = 0.80f),
+        )
+    }
+}
+
+@Composable
+private fun PiSidebarBarsGlyph(color: Color) {
+    Canvas(modifier = Modifier.size(width = 12.dp, height = 10.dp)) {
+        val stroke = 1.35.dp.toPx()
+        val inset = stroke * 0.5f
+        val topY = inset + 0.5.dp.toPx()
+        val midY = size.height * 0.5f
+        val botY = size.height - inset - 0.5.dp.toPx()
+        drawLine(color, Offset(inset, topY), Offset(size.width - inset, topY), stroke, StrokeCap.Round)
+        drawLine(color, Offset(inset, midY), Offset(size.width * 0.78f, midY), stroke, StrokeCap.Round)
+        drawLine(color, Offset(inset, botY), Offset(size.width * 0.56f, botY), stroke, StrokeCap.Round)
+    }
+}
+
+@Composable
+private fun PiFloatingChevronDown(color: Color) {
+    Canvas(modifier = Modifier.size(width = 7.5.dp, height = 4.5.dp)) {
+        val stroke = 1.25.dp.toPx()
+        val insetX = stroke * 0.65f
+        val topY = stroke * 0.6f
+        val botY = size.height - stroke * 0.6f
+        val path = Path().apply {
+            moveTo(insetX, topY)
+            lineTo(size.width * 0.5f, botY)
+            lineTo(size.width - insetX, topY)
+        }
+        drawPath(path, color, style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 

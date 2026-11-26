@@ -252,7 +252,7 @@ fun PiTopBar(
     Column(
         modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
+            .background(palette.pageBg)
             .drawBehind {
                 if (scrolled) {
                     val strokePx = PiSpacing.hairlineThin.toPx()

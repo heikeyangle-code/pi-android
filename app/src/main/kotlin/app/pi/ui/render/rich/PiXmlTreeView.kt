@@ -132,7 +132,7 @@ fun PiXmlTreeBody(
     onCopy: (text: String, label: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+    Column(modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 8.dp)) {
         XmlNodeRow(node = root, onCopy = onCopy)
     }
 }

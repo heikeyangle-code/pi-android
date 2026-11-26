@@ -48,6 +48,8 @@ internal fun ChatSheetHost(
             },
             onRefresh = { session.refreshModelsCatalog() },
             onManageProviders = { session.requestNav(NavRequest.SettingsFocus("hub:models")) },
+            scopedModelCount = state.meta.scopedModelCount,
+            onManageScopedModels = { session.requestNav(NavRequest.SettingsFocus("hub:scoped-models")) },
             onDismiss = { onSheet(null) },
         )
 

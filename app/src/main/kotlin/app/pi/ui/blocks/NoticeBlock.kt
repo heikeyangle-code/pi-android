@@ -31,20 +31,24 @@ fun NoticeBlock(
     showTimestamps: Boolean = false,
 ) {
     val palette = PiTheme.palette
-    val color = when (item.tone) {
-        Notice.Tone.Info -> palette.dim
+    val iconColor = when (item.tone) {
+        Notice.Tone.Info -> palette.muted
         Notice.Tone.Warning -> palette.warning
         Notice.Tone.Error -> palette.error
     }
+    val textColor = when (item.tone) {
+        Notice.Tone.Info -> palette.muted
+        Notice.Tone.Warning, Notice.Tone.Error -> palette.text
+    }
     val bg = when (item.tone) {
         Notice.Tone.Info -> Color.Transparent
-        Notice.Tone.Warning -> palette.warning.copy(alpha = 0.08f)
-        Notice.Tone.Error -> palette.error.copy(alpha = 0.09f)
+        Notice.Tone.Warning -> androidx.compose.ui.graphics.lerp(palette.cardBg, palette.warning, 0.045f)
+        Notice.Tone.Error -> androidx.compose.ui.graphics.lerp(palette.cardBg, palette.error, 0.045f)
     }
     val border = when (item.tone) {
         Notice.Tone.Info -> null
         Notice.Tone.Warning -> BorderStroke(0.5.dp, palette.warning.copy(alpha = 0.28f))
-        Notice.Tone.Error -> BorderStroke(0.5.dp, palette.error.copy(alpha = 0.32f))
+        Notice.Tone.Error -> BorderStroke(0.5.dp, palette.error.copy(alpha = 0.28f))
     }
 
     BlockColumn(modifier) {
@@ -68,26 +72,26 @@ fun NoticeBlock(
                     modifier = Modifier
                         .size(18.dp)
                         .clip(CircleShape)
-                        .background(color.copy(alpha = 0.14f)),
+                        .background(iconColor.copy(alpha = if (item.tone == Notice.Tone.Info) 0.12f else 0.14f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     androidx.compose.foundation.Canvas(modifier = Modifier.size(10.dp)) {
                         val stroke = 1.5.dp.toPx()
                         when (item.tone) {
                             Notice.Tone.Info -> {
-                                drawCircle(color = color, radius = 2.dp.toPx())
+                                drawCircle(color = iconColor, radius = 2.dp.toPx())
                             }
                             Notice.Tone.Warning -> {
                                 val cx = size.width / 2f
                                 drawLine(
-                                    color = color,
+                                    color = iconColor,
                                     start = androidx.compose.ui.geometry.Offset(cx, size.height * 0.14f),
                                     end = androidx.compose.ui.geometry.Offset(cx, size.height * 0.62f),
                                     strokeWidth = stroke,
                                     cap = androidx.compose.ui.graphics.StrokeCap.Round,
                                 )
                                 drawCircle(
-                                    color = color,
+                                    color = iconColor,
                                     radius = stroke * 0.58f,
                                     center = androidx.compose.ui.geometry.Offset(cx, size.height * 0.84f),
                                 )
@@ -95,14 +99,14 @@ fun NoticeBlock(
                             Notice.Tone.Error -> {
                                 val pad = size.width * 0.22f
                                 drawLine(
-                                    color = color,
+                                    color = iconColor,
                                     start = androidx.compose.ui.geometry.Offset(pad, pad),
                                     end = androidx.compose.ui.geometry.Offset(size.width - pad, size.height - pad),
                                     strokeWidth = stroke,
                                     cap = androidx.compose.ui.graphics.StrokeCap.Round,
                                 )
                                 drawLine(
-                                    color = color,
+                                    color = iconColor,
                                     start = androidx.compose.ui.geometry.Offset(size.width - pad, pad),
                                     end = androidx.compose.ui.geometry.Offset(pad, size.height - pad),
                                     strokeWidth = stroke,
@@ -116,7 +120,7 @@ fun NoticeBlock(
                     text = item.text.ifEmpty { tr("（无内容）", "(Empty)") },
                     modifier = Modifier.weight(1f),
                     style = PiTheme.text.meta,
-                    color = color,
+                    color = textColor,
                 )
                 if (showTimestamps) {
                     Text(

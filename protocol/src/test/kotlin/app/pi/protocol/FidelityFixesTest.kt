@@ -490,6 +490,7 @@ class FidelityFixesTest {
         )
         val error = r.transcript.single() as ErrorText
         assertEquals("Stopped by user", error.message)
+        assertEquals(ErrorText.Kind.Aborted, error.kind)
     }
 
     @Test
@@ -504,6 +505,7 @@ class FidelityFixesTest {
         )
         val error = r.transcript.single() as ErrorText
         assertEquals("回合已中止", error.message)
+        assertEquals(ErrorText.Kind.Aborted, error.kind)
     }
 
     @Test
@@ -516,6 +518,7 @@ class FidelityFixesTest {
         )
         val error = r.transcript.single() as ErrorText
         assertEquals("529 overloaded", error.message)
+        assertEquals(ErrorText.Kind.Error, error.kind)
     }
 
     @Test

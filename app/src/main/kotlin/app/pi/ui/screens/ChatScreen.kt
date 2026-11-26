@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
@@ -295,6 +296,10 @@ internal fun ChatBody(
     val density = LocalDensity.current
     val navOnlyInsets = WindowInsets.navigationBars.only(WindowInsetsSides.Bottom).exclude(WindowInsets.ime)
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val statusTopPx = WindowInsets.statusBars.getTop(density)
+    val defaultTopChromePx = statusTopPx + with(density) { 52.dp.roundToPx() }
+    var topChromeHeightPx by remember { mutableIntStateOf(defaultTopChromePx) }
+    val topChromeHeightDp = with(density) { topChromeHeightPx.toDp() }
     val defaultDockHeightPx = with(density) { 128.dp.roundToPx() }
     var dockHeightPx by remember { mutableIntStateOf(defaultDockHeightPx) }
     val dockHeightDp = with(density) { dockHeightPx.toDp() }
@@ -1604,151 +1609,24 @@ internal fun ChatBody(
     /** 命令面板点了一行 / 手敲了 `/name args`。 */
     fun pick(command: PiSlashCommand, args: String) = perform(command.action, command, args)
 
-    Column(Modifier.fillMaxSize().imePadding()) {
-        // ---------------------------------------------------------------- 顶栏
-        //
-        // 用户 2026-10-26 的裁决（截图里的五个问题）：56 高、页面同色不透明、默认没有
-        // 分隔线（滚动后才出现 0.5dp 发丝线）；左侧是「状态点 + 会话标题 + ▾」一行，
-        // 不再有第二行「✓ 就绪」；右侧是搜索 + 工作区 + ⋮（24dp 字形、48dp 热区）。
-        // 模型 chip 已经移到输入框工具行，标题因此拿得到完整会话名的宽度；标题拿不到
-        // 名字时才退回 18sp 的「会话」。
-        //
-        // 仍然手画而不是 `material3.TopAppBar`：M3 的高度/容器色/自带行为都不是这里要的，
-        // 而这个标题槽不是普通字符串 —— 它是打开会话列表的入口（`03-navigation-decision.md`）。
-        ChatTopBar(
-            engineLabel = session.engineLabel(state),
-            sessionTitle = state.meta.sessionName?.takeIf { it.isNotBlank() },
-            workspaceName = state.workspace.displayName.takeIf { it.isNotBlank() },
-            extensionTitle = state.ext.title,
-            searchOpen = searchOpen,
-            scrolled = topBarScrolled,
-            toolsExpanded = toolsExpanded,
-            toolDisplayMode = prefs.toolDisplayMode,
-            terminalRunningCount = app.pi.ui.terminal.PiTerminalManager.runningCount,
-            onOpenSessions = onOpenSessions,
-            onOpenWorkspace = onOpenWorkspace,
-            onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
-            onToggleSearch = { clearOnClose ->
-                searchOpen = !searchOpen
-                if (clearOnClose && !searchOpen) searchQuery = ""
-            },
-            onJumpQuestion = { forward ->
-                val firstFull = listState.firstVisibleItemIndex + hiddenCount
-                val target = if (forward) {
-                    userRowIndices().firstOrNull { it > firstFull }
-                } else {
-                    userRowIndices().lastOrNull { it < firstFull }
-                }
-                target?.let { row ->
-                    pauseTail()
-                    reveal(row)
-                }
-            },
-            onToggleTools = {
-                val next = !toolsExpanded
-                toolsExpanded = next
-                RowHeightCache.shared.clear()
-                session.setToolsExpandedRemote(next)
-            },
-            onSelectToolDisplayMode = { mode ->
-                RowHeightCache.shared.clear()
-                session.settingsStore.write(
-                    ActivityDisplayMode.SETTING_KEY,
-                    kotlinx.serialization.json.JsonPrimitive(mode),
-                )
-                session.onSettingWritten(ActivityDisplayMode.SETTING_KEY)
-            },
-            onAction = { perform(it) },
-        )
-
-        // v2's `ChatShell` puts the search strip **between the TopBar and the status
-        // row** (`direction-b-v2.html:1366-1367`: `{p.searchBar}` then `{StateLine}`),
-        // because it is chrome for the bar above it rather than a row of the
-        // transcript's header — the app used to draw it under the extension status row.
-        val jumpPrompt: (Boolean) -> Unit = { forward ->
-            val firstFull = listState.firstVisibleItemIndex + hiddenCount
-            val target = if (forward) {
-                userRowIndices().firstOrNull { it > firstFull }
-            } else {
-                userRowIndices().lastOrNull { it < firstFull }
-            }
-            target?.let { row ->
-                pauseTail()
-                reveal(row)
-            }
+    val jumpPrompt: (Boolean) -> Unit = { forward ->
+        val firstFull = listState.firstVisibleItemIndex + hiddenCount
+        val target = if (forward) {
+            userRowIndices().firstOrNull { it > firstFull }
+        } else {
+            userRowIndices().lastOrNull { it < firstFull }
         }
-        androidx.compose.animation.AnimatedVisibility(
-            visible = searchOpen,
-            enter = androidx.compose.animation.expandVertically(tween(170)) + fadeIn(tween(150)),
-            exit = androidx.compose.animation.shrinkVertically(tween(140)) + fadeOut(tween(120)),
-        ) {
-            SearchBar(
-                query = searchQuery,
-                onQueryChange = { searchQuery = it },
-                matchCount = searchMatches.value.ordered.size,
-                cursor = searchCursor,
-                hasPrompts = recentPrompts.isNotEmpty(),
-                onPrevious = {
-                    if (searchQuery.isBlank()) {
-                        jumpPrompt(false)
-                    } else {
-                        val count = searchMatches.value.ordered.size
-                        if (count > 0) {
-                            searchCursor = (searchCursor - 1 + count) % count
-                        }
-                    }
-                },
-                onNext = {
-                    if (searchQuery.isBlank()) {
-                        jumpPrompt(true)
-                    } else {
-                        val count = searchMatches.value.ordered.size
-                        if (count > 0) {
-                            searchCursor = (searchCursor + 1) % count
-                        }
-                    }
-                },
-                onClose = {
-                    searchOpen = false
-                    searchQuery = ""
-                },
-            )
+        target?.let { row ->
+            pauseTail()
+            reveal(row)
         }
+    }
+    val visibleHeader = state.ext.header?.takeIf { app.pi.ui.extension.HIDE_KEY_HEADER !in hiddenWidgetSet }
+    val emptyTranscript = state.transcript.isEmpty() && state.busy == null
 
-        // 官方 headerContainer（`ctx.ui.setHeader`）：默认直接显示在对话最顶部（顶栏下方），支持一键收进扩展芯片，软键盘弹出时平滑让位。
-        val visibleHeader = state.ext.header?.takeIf { app.pi.ui.extension.HIDE_KEY_HEADER !in hiddenWidgetSet }
-        androidx.compose.animation.AnimatedVisibility(
-            visible = !imeVisible && visibleHeader != null,
-            enter = androidx.compose.animation.expandVertically(tween(150)) + fadeIn(tween(130)),
-            exit = androidx.compose.animation.shrinkVertically(tween(130)) + fadeOut(tween(110)),
-        ) {
-            visibleHeader?.let { hdr ->
-                ExtensionWidgetStack(
-                    widgets = listOf(hdr),
-                    onInteract = { panel -> interactingWidgetKey = panel.key },
-                    onHide = {
-                        if (app.pi.ui.extension.HIDE_KEY_HEADER !in hiddenWidgetKeys) {
-                            hiddenWidgetKeys = hiddenWidgetKeys + app.pi.ui.extension.HIDE_KEY_HEADER
-                        }
-                    },
-                    maxStackHeight = 96.dp,
-                )
-            }
-        }
-
-        // The transcript's **status row is gone** (user ruling, decision D23): a
-        // permanent 32 dp band of figures above the stream spends display area the
-        // transcript wants, and the same numbers now live one tap away in the
-        // composer's context ring (a small used / window bubble; the full sheet is
-        // still in the ⋮ menu as 「上下文与用量」).
-        //
-        // The row component went with it: `PiStatusLine` had no caller left, so it is
-        // deleted; the detail sheet draws the same figures in its own layout.
-        val emptyTranscript = state.transcript.isEmpty() && state.busy == null
-
-
-        // 全高聊天视口：一路铺到屏幕最底端（含底部手势条区域），悬浮工作台叠于柔和渐隐羽化层之上。
-        Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
+    // 全高无界聊天画布：从屏幕最顶端（状态栏下方）一路铺到最底端（手势条区域），
+    // 顶部双悬浮胶囊与底部悬浮工作台上下对称叠在柔和渐隐羽化层之上。
+    Box(Modifier.fillMaxSize().imePadding().clipToBounds()) {
             if (emptyTranscript) {
                 ChatEmptyWelcome(
                     workspaceName = state.workspace.displayName,
@@ -1757,7 +1635,7 @@ internal fun ChatBody(
                     onOpenModel = { perform(ChatAction.PickModel) },
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(bottom = dockHeightDp),
+                        .padding(top = topChromeHeightDp, bottom = dockHeightDp),
                 )
             } else {
             val blockSpacing = prefs.typographyProfile.blockSpacing
@@ -1795,7 +1673,7 @@ internal fun ChatBody(
                 contentPadding = PaddingValues(
                     start = PiSpacing.pageHorizontal,
                     end = PiSpacing.pageHorizontal,
-                    top = 10.dp + earlierBand,
+                    top = topChromeHeightDp + 8.dp + earlierBand,
                     bottom = listBottomPad,
                 ),
                 verticalArrangement = Arrangement.spacedBy(blockSpacing),
@@ -1933,8 +1811,9 @@ internal fun ChatBody(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .offset {
-                            val first = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }
-                            IntOffset(0, if (first == null) -bandPx else first.offset - bandPx)
+                            val info = listState.layoutInfo
+                            val first = info.visibleItemsInfo.firstOrNull { it.index == 0 }
+                            IntOffset(0, if (first == null) -bandPx else info.beforeContentPadding + first.offset - bandPx)
                         }
                         .padding(horizontal = PiSpacing.pageHorizontal),
                 )
@@ -2050,23 +1929,127 @@ internal fun ChatBody(
             }
             }
 
-            if (topBarScrolled) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                        .height(PiSpacing.chatTopBarFade)
-                        .drawBehind {
-                            drawRect(
-                                brush = Brush.verticalGradient(
-                                    colors = listOf(
-                                        pageBackground,
-                                        pageBackground.copy(alpha = 0f),
-                                    ),
-                                ),
-                            )
-                        },
+            // 顶部柔和渐隐羽化层：与底部羽化层镜像对称，文字滑过双悬浮胶囊下方时丝滑融进画布，绝不硬切也不糊成一团。
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(topChromeHeightDp + 18.dp)
+                    .drawBehind {
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0f to pageBackground.copy(alpha = 0.96f),
+                                0.56f to pageBackground.copy(alpha = 0.84f),
+                                0.82f to pageBackground.copy(alpha = 0.34f),
+                                1f to pageBackground.copy(alpha = 0f),
+                            ),
+                        )
+                    },
+            )
+
+            // 悬浮顶部双胶囊 + 可选查找浮条 + 扩展 header（高度实时回写给列表顶部留白，首条消息永远零遮挡）
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .onSizeChanged { size ->
+                        if (size.height > 0 && size.height != topChromeHeightPx) {
+                            topChromeHeightPx = size.height
+                        }
+                    },
+            ) {
+                ChatTopBar(
+                    engineLabel = session.engineLabel(state),
+                    sessionTitle = state.meta.sessionName?.takeIf { it.isNotBlank() },
+                    workspaceName = state.workspace.displayName.takeIf { it.isNotBlank() },
+                    extensionTitle = state.ext.title,
+                    searchOpen = searchOpen,
+                    scrolled = topBarScrolled,
+                    toolsExpanded = toolsExpanded,
+                    toolDisplayMode = prefs.toolDisplayMode,
+                    terminalRunningCount = app.pi.ui.terminal.PiTerminalManager.runningCount,
+                    onOpenSessions = onOpenSessions,
+                    onOpenWorkspace = onOpenWorkspace,
+                    onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
+                    onToggleSearch = { clearOnClose ->
+                        searchOpen = !searchOpen
+                        if (clearOnClose && !searchOpen) searchQuery = ""
+                    },
+                    onJumpQuestion = jumpPrompt,
+                    onToggleTools = {
+                        val next = !toolsExpanded
+                        toolsExpanded = next
+                        RowHeightCache.shared.clear()
+                        session.setToolsExpandedRemote(next)
+                    },
+                    onSelectToolDisplayMode = { mode ->
+                        RowHeightCache.shared.clear()
+                        session.settingsStore.write(
+                            ActivityDisplayMode.SETTING_KEY,
+                            kotlinx.serialization.json.JsonPrimitive(mode),
+                        )
+                        session.onSettingWritten(ActivityDisplayMode.SETTING_KEY)
+                    },
+                    onAction = { perform(it) },
                 )
+
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = searchOpen,
+                    enter = androidx.compose.animation.expandVertically(tween(170)) + fadeIn(tween(150)),
+                    exit = androidx.compose.animation.shrinkVertically(tween(140)) + fadeOut(tween(120)),
+                ) {
+                    SearchBar(
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        matchCount = searchMatches.value.ordered.size,
+                        cursor = searchCursor,
+                        hasPrompts = recentPrompts.isNotEmpty(),
+                        onPrevious = {
+                            if (searchQuery.isBlank()) {
+                                jumpPrompt(false)
+                            } else {
+                                val count = searchMatches.value.ordered.size
+                                if (count > 0) {
+                                    searchCursor = (searchCursor - 1 + count) % count
+                                }
+                            }
+                        },
+                        onNext = {
+                            if (searchQuery.isBlank()) {
+                                jumpPrompt(true)
+                            } else {
+                                val count = searchMatches.value.ordered.size
+                                if (count > 0) {
+                                    searchCursor = (searchCursor + 1) % count
+                                }
+                            }
+                        },
+                        onClose = {
+                            searchOpen = false
+                            searchQuery = ""
+                        },
+                    )
+                }
+
+                // 官方 headerContainer（`ctx.ui.setHeader`）：悬于顶栏胶囊下方，软键盘弹出时平滑让位。
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !imeVisible && visibleHeader != null,
+                    enter = androidx.compose.animation.expandVertically(tween(150)) + fadeIn(tween(130)),
+                    exit = androidx.compose.animation.shrinkVertically(tween(130)) + fadeOut(tween(110)),
+                ) {
+                    visibleHeader?.let { hdr ->
+                        ExtensionWidgetStack(
+                            widgets = listOf(hdr),
+                            onInteract = { panel -> interactingWidgetKey = panel.key },
+                            onHide = {
+                                if (app.pi.ui.extension.HIDE_KEY_HEADER !in hiddenWidgetKeys) {
+                                    hiddenWidgetKeys = hiddenWidgetKeys + app.pi.ui.extension.HIDE_KEY_HEADER
+                                }
+                            },
+                            maxStackHeight = 96.dp,
+                        )
+                    }
+                }
             }
 
             // 瞬时自动补全浮层（`/` 命令、`@` 文件、参数、扩展补全）：悬浮在底部工作台正上方，不挤动列表滚动位置
@@ -2183,6 +2166,7 @@ internal fun ChatBody(
                     },
                     onInteractWidget = { panel -> interactingWidgetKey = panel.key },
                     onPreviewAttachment = { image -> viewedImage = image },
+                    onOpenQueuePolicy = { perform(ChatAction.ToolsSheet) },
                 )
 
                 Box(
@@ -2220,6 +2204,7 @@ internal fun ChatBody(
                         selectionRevision = selectionRev,
                         onSelectionChange = { draftSelection = it },
                         thinkingLevel = state.meta.thinkingLevel,
+                        thinkingSupported = state.meta.supportsThinking,
                         streaming = state.streaming,
                         canFollowUp = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
                         canSteer = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
@@ -2430,7 +2415,6 @@ internal fun ChatBody(
                     )
                 }
             }
-        }
     }
 
     ChatSheetHost(sheet = sheet, onSheet = { sheet = it }, state = state, session = session)

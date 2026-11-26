@@ -273,7 +273,10 @@ data class ErrorText(
     override val ts: Long,
     val message: String = "",
     val detail: String? = null,
-) : TranscriptItem
+    val kind: Kind = Kind.Error,
+) : TranscriptItem {
+    enum class Kind { Error, Aborted, Truncated }
+}
 
 /** The `date-separator` block: a day boundary in the stream. */
 data class DateSeparator(
@@ -2237,8 +2240,13 @@ class TranscriptReducer(
             else -> errorMessage?.takeIf { it.isNotBlank() } ?: "Unknown error"
         }
 
+        val kind = when {
+            truncated -> ErrorText.Kind.Truncated
+            reason == "aborted" -> ErrorText.Kind.Aborted
+            else -> ErrorText.Kind.Error
+        }
         var change: TranscriptChange = if (shouldAppend) {
-            append(ErrorText(key = key ?: nextKey("turn-failed"), ts = ts, message = message))
+            append(ErrorText(key = key ?: nextKey("turn-failed"), ts = ts, message = message, kind = kind))
         } else {
             TranscriptChange.None
         }

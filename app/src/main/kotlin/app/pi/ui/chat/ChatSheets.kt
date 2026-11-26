@@ -1,6 +1,7 @@
 package app.pi.ui.chat
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,20 +41,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
 import app.pi.protocol.PiResponses
 import app.pi.ui.components.PiSheet
+import app.pi.ui.components.PiSheetChromeMetrics
+import app.pi.ui.components.PiSpinner
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.contrastOn
 
-/** 模型选择器：带搜索胶囊、默认开关胶囊、供应商分组计数、能力/价格标签卡。 */
+/** 模型选择器：带搜索胶囊、默认开关胶囊、供应商分组计数、克制中性能力/价格标签卡与官方轮换范围入口。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelPickerSheet(
@@ -65,8 +73,11 @@ fun ModelPickerSheet(
     onDismiss: () -> Unit,
     initialFilter: String = "",
     onManageProviders: (() -> Unit)? = null,
+    scopedModelCount: Int = 0,
+    onManageScopedModels: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
+    val haptic = LocalHapticFeedback.current
     var filter by remember(initialFilter) { mutableStateOf(initialFilter) }
     var persistAsDefault by remember { mutableStateOf(false) }
     val tokens = remember(filter) {
@@ -99,27 +110,38 @@ fun ModelPickerSheet(
                     tr("选择模型", "Select Model"),
                     modifier = Modifier.weight(1f),
                     style = PiType.title,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = palette.text,
                 )
                 Box(
                     modifier = Modifier
                         .size(32.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(palette.cardBg)
-                        .border(PiSpacing.hairlineThin, palette.borderMuted, RoundedCornerShape(8.dp))
+                        .background(PiSheetChromeMetrics.sheetControlBg)
+                        .border(0.5.dp, palette.borderMuted.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
                         .clickable(enabled = !busy, onClickLabel = tr("刷新模型目录", "Refresh models"), onClick = onRefresh),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.Refresh,
-                        contentDescription = tr("刷新模型目录", "Refresh models"),
-                        tint = if (busy) palette.accent else palette.muted,
-                        modifier = Modifier.size(16.dp),
-                    )
+                    if (busy) {
+                        PiSpinner(
+                            size = 15.dp,
+                            strokeWidth = 1.6.dp,
+                            color = palette.accent,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = tr("刷新模型目录", "Refresh models"),
+                            tint = palette.muted,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
                 PersistTogglePill(
                     persistAsDefault = persistAsDefault,
-                    onToggle = { persistAsDefault = !persistAsDefault },
+                    onToggle = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        persistAsDefault = !persistAsDefault
+                    },
                 )
             }
 
@@ -129,10 +151,10 @@ fun ModelPickerSheet(
                     .fillMaxWidth()
                     .height(42.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(palette.cardBg)
+                    .background(PiSheetChromeMetrics.sheetCardBg)
                     .border(
-                        width = if (filter.isNotEmpty()) 1.dp else PiSpacing.hairlineThin,
-                        color = if (filter.isNotEmpty()) palette.accent.copy(alpha = 0.55f) else palette.borderMuted,
+                        width = if (filter.isNotEmpty()) 1.dp else 0.5.dp,
+                        color = if (filter.isNotEmpty()) palette.border else palette.borderMuted.copy(alpha = 0.55f),
                         shape = RoundedCornerShape(10.dp),
                     )
                     .padding(horizontal = 12.dp),
@@ -142,7 +164,7 @@ fun ModelPickerSheet(
                 Icon(
                     imageVector = Icons.Filled.Search,
                     contentDescription = null,
-                    tint = if (filter.isNotEmpty()) palette.accent else palette.muted,
+                    tint = palette.muted,
                     modifier = Modifier.size(18.dp),
                 )
                 BasicTextField(
@@ -150,7 +172,7 @@ fun ModelPickerSheet(
                     onValueChange = { filter = it },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    textStyle = PiTheme.text.prose.copy(color = MaterialTheme.colorScheme.onSurface),
+                    textStyle = PiTheme.text.prose.copy(color = palette.text),
                     cursorBrush = SolidColor(palette.accent),
                     decorationBox = { inner ->
                         Box {
@@ -172,7 +194,7 @@ fun ModelPickerSheet(
                         modifier = Modifier
                             .size(22.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .background(PiSheetChromeMetrics.sheetControlBg)
                             .clickable { filter = "" },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -190,8 +212,8 @@ fun ModelPickerSheet(
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    color = palette.cardBg,
-                    border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
+                    color = PiSheetChromeMetrics.sheetCardBg,
+                    border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.55f)),
                 ) {
                     Column(
                         modifier = Modifier.padding(14.dp),
@@ -209,7 +231,7 @@ fun ModelPickerSheet(
                                 )
                             },
                             style = PiTheme.text.prose,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = palette.muted,
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             if (onManageProviders != null) {
@@ -253,8 +275,8 @@ fun ModelPickerSheet(
                                         "${inGroup.size}",
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(6.dp))
-                                            .background(palette.cardBg)
-                                            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                                            .background(PiSheetChromeMetrics.sheetControlBg)
+                                            .border(0.5.dp, palette.borderMuted.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
                                             .padding(horizontal = 6.dp, vertical = 1.dp),
                                         style = PiTheme.text.monoSmall,
                                         color = palette.dim,
@@ -267,39 +289,63 @@ fun ModelPickerSheet(
                             ModelRow(
                                 model = model,
                                 selected = model.id == current?.id && model.provider == current.provider,
-                                onClick = { onPick(model, persistAsDefault) },
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onPick(model, persistAsDefault)
+                                },
                             )
                         }
                     }
                 }
             }
 
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
                     if (persistAsDefault) {
                         tr("选中后同步设为新会话默认模型", "Will also be saved as the default for new sessions")
                     } else {
-                        tr("仅切换当前会话；可点右上角设为默认", "Current session only; tap top-right to save as default")
+                        tr("仅切换当前会话；点右上角可设为默认", "Current session only; tap top-right to save as default")
                     },
-                    modifier = Modifier.weight(1f),
                     style = PiTheme.text.meta,
                     color = palette.muted,
                 )
-                if (onManageProviders != null && shown.isNotEmpty()) {
-                    SheetActionPill(
-                        text = tr("管理供应商", "Providers"),
-                        primary = false,
-                        onClick = {
-                            onDismiss()
-                            onManageProviders()
-                        },
-                    )
+                if (shown.isNotEmpty() && (onManageProviders != null || onManageScopedModels != null)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (onManageScopedModels != null) {
+                            SheetActionPill(
+                                text = if (scopedModelCount > 0) {
+                                    tr("轮换范围 ($scopedModelCount)", "Scoped ($scopedModelCount)")
+                                } else {
+                                    tr("轮换范围", "Scoped Models")
+                                },
+                                primary = false,
+                                modifier = Modifier.weight(1f),
+                                onClick = {
+                                    onDismiss()
+                                    onManageScopedModels()
+                                },
+                            )
+                        }
+                        if (onManageProviders != null) {
+                            SheetActionPill(
+                                text = tr("管理供应商", "Providers"),
+                                primary = false,
+                                modifier = Modifier.weight(1f),
+                                onClick = {
+                                    onDismiss()
+                                    onManageProviders()
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -309,14 +355,15 @@ fun ModelPickerSheet(
 @Composable
 private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: () -> Unit) {
     val palette = PiTheme.palette
+    val baseBg = PiSheetChromeMetrics.sheetCardBg
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(11.dp),
-        color = if (selected) palette.accent.copy(alpha = 0.10f) else palette.cardBg,
+        color = if (selected) lerp(baseBg, palette.accent, 0.055f) else baseBg,
         border = BorderStroke(
-            width = if (selected) 1.dp else PiSpacing.hairlineThin,
-            color = if (selected) palette.accent.copy(alpha = 0.55f) else palette.borderMuted,
+            width = if (selected) 1.dp else 0.5.dp,
+            color = if (selected) palette.accent.copy(alpha = 0.45f) else palette.borderMuted.copy(alpha = 0.55f),
         ),
     ) {
         Row(
@@ -327,22 +374,13 @@ private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: (
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        model.name,
-                        modifier = Modifier.weight(1f, fill = false),
-                        style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
-                        color = if (selected) palette.accent else MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (selected) {
-                        MiniBadge(text = tr("当前", "Active"), tone = palette.accent)
-                    }
-                }
+                Text(
+                    model.name,
+                    style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+                    color = palette.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 Text(
                     buildString {
                         model.provider?.let { append(it).append("/") }
@@ -358,19 +396,19 @@ private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: (
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    model.contextWindow?.let { MiniBadge(text = formatTokens(it), tone = palette.muted) }
-                    if (model.reasoning) MiniBadge(text = tr("推理", "Reasoning"), tone = palette.accent)
-                    if (model.acceptsImages) MiniBadge(text = tr("视觉", "Vision"), tone = palette.success)
+                    model.contextWindow?.let { NeutralMetaBadge(text = formatTokens(it)) }
+                    if (model.reasoning) NeutralMetaBadge(text = tr("推理", "Reasoning"))
+                    if (model.acceptsImages) NeutralMetaBadge(text = tr("视觉", "Vision"))
                     model.inputCost?.let { cost ->
                         val price = "$${trimCost(cost)}" + (model.outputCost?.let { "/$${trimCost(it)}" } ?: "")
-                        MiniBadge(text = "$price/M", tone = palette.muted)
+                        NeutralMetaBadge(text = "$price/M")
                     }
                 }
             }
             if (selected) {
                 Box(
                     modifier = Modifier
-                        .size(24.dp)
+                        .size(22.dp)
                         .clip(CircleShape)
                         .background(palette.accent),
                     contentAlignment = Alignment.Center,
@@ -379,7 +417,7 @@ private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: (
                         imageVector = Icons.Filled.Check,
                         contentDescription = null,
                         tint = palette.contrastOn(palette.accent),
-                        modifier = Modifier.size(14.dp),
+                        modifier = Modifier.size(13.dp),
                     )
                 }
             }
@@ -387,7 +425,24 @@ private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: (
     }
 }
 
-/** 思考等级选择器：按当前模型真实支持的档位渲染彩色触感卡片。 */
+@Composable
+private fun NeutralMetaBadge(text: String) {
+    val palette = PiTheme.palette
+    val shape = RoundedCornerShape(6.dp)
+    Text(
+        text = text,
+        modifier = Modifier
+            .clip(shape)
+            .background(palette.borderMuted.copy(alpha = 0.16f))
+            .border(0.5.dp, palette.borderMuted.copy(alpha = 0.35f), shape)
+            .padding(horizontal = 6.dp, vertical = 1.5.dp),
+        style = PiTheme.text.monoSmall,
+        color = palette.muted,
+        maxLines = 1,
+    )
+}
+
+/** 思考等级选择器：按当前模型真实支持的档位渲染克制触感卡片，保持正文高可读性。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ThinkingPickerSheet(
@@ -397,6 +452,7 @@ fun ThinkingPickerSheet(
     onDismiss: () -> Unit,
 ) {
     val palette = PiTheme.palette
+    val haptic = LocalHapticFeedback.current
     var persistAsDefault by remember { mutableStateOf(false) }
     PiSheet(onDismiss = onDismiss) {
         Column(
@@ -410,7 +466,7 @@ fun ThinkingPickerSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(tr("思考深度", "Thinking Level"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
+                    Text(tr("思考深度", "Thinking Level"), style = PiType.title, color = palette.text)
                     Text(
                         tr("可选档位由当前模型决定", "Available levels depend on the active model"),
                         style = PiTheme.text.meta,
@@ -419,7 +475,10 @@ fun ThinkingPickerSheet(
                 }
                 PersistTogglePill(
                     persistAsDefault = persistAsDefault,
-                    onToggle = { persistAsDefault = !persistAsDefault },
+                    onToggle = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        persistAsDefault = !persistAsDefault
+                    },
                 )
             }
             Column(
@@ -433,11 +492,13 @@ fun ThinkingPickerSheet(
                     Text(
                         tr("当前模型不支持切换思考等级。", "The current model does not support thinking levels."),
                         style = PiTheme.text.prose,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = palette.muted,
                     )
                 }
+                val baseBg = PiSheetChromeMetrics.sheetCardBg
                 levels.forEach { level ->
                     val selected = level == current
+                    val isOff = level.equals("off", ignoreCase = true)
                     val levelColor = palette.thinking(level)
                     val desc = when (level.lowercase()) {
                         "off" -> tr("关闭推理，最快响应", "No reasoning, fastest response")
@@ -451,15 +512,16 @@ fun ThinkingPickerSheet(
                     }
                     Surface(
                         onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onPick(level, persistAsDefault)
                             onDismiss()
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(11.dp),
-                        color = if (selected) levelColor.copy(alpha = 0.11f) else palette.cardBg,
+                        color = if (selected) lerp(baseBg, levelColor, 0.06f) else baseBg,
                         border = BorderStroke(
-                            width = if (selected) 1.dp else PiSpacing.hairlineThin,
-                            color = if (selected) levelColor.copy(alpha = 0.65f) else palette.borderMuted,
+                            width = if (selected) 1.dp else 0.5.dp,
+                            color = if (selected) levelColor.copy(alpha = 0.50f) else palette.borderMuted.copy(alpha = 0.55f),
                         ),
                     ) {
                         Row(
@@ -469,38 +531,51 @@ fun ThinkingPickerSheet(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .clip(CircleShape)
-                                    .background(levelColor),
-                            )
+                            Canvas(modifier = Modifier.size(10.dp)) {
+                                val center = Offset(size.width * 0.5f, size.height * 0.5f)
+                                if (isOff) {
+                                    val strokePx = 1.5.dp.toPx()
+                                    drawCircle(
+                                        color = palette.muted.copy(alpha = 0.72f),
+                                        radius = (size.minDimension - strokePx) * 0.46f,
+                                        center = center,
+                                        style = Stroke(width = strokePx),
+                                    )
+                                } else {
+                                    drawCircle(
+                                        color = levelColor,
+                                        radius = size.minDimension * 0.46f,
+                                        center = center,
+                                    )
+                                }
+                            }
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
                                     thinkingLabelOf(level),
                                     style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
-                                    color = if (selected) levelColor else MaterialTheme.colorScheme.onSurface,
+                                    color = palette.text,
                                 )
                                 if (desc != null) {
                                     Text(
                                         desc,
                                         style = PiTheme.text.meta,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        color = palette.muted,
                                     )
                                 }
                             }
                             if (selected) {
+                                val checkBg = if (isOff) palette.text else levelColor
                                 Box(
                                     modifier = Modifier
                                         .size(22.dp)
                                         .clip(CircleShape)
-                                        .background(levelColor),
+                                        .background(checkBg),
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.Check,
                                         contentDescription = null,
-                                        tint = palette.contrastOn(levelColor),
+                                        tint = palette.contrastOn(checkBg),
                                         modifier = Modifier.size(13.dp),
                                     )
                                 }
@@ -519,13 +594,14 @@ fun ThinkingPickerSheet(
 @Composable
 private fun PersistTogglePill(persistAsDefault: Boolean, onToggle: () -> Unit) {
     val palette = PiTheme.palette
+    val baseBg = PiSheetChromeMetrics.sheetControlBg
     Surface(
         onClick = onToggle,
         shape = RoundedCornerShape(8.dp),
-        color = if (persistAsDefault) palette.accent.copy(alpha = 0.14f) else palette.cardBg,
+        color = if (persistAsDefault) lerp(baseBg, palette.accent, 0.10f) else baseBg,
         border = BorderStroke(
-            width = if (persistAsDefault) 1.dp else PiSpacing.hairlineThin,
-            color = if (persistAsDefault) palette.accent.copy(alpha = 0.50f) else palette.borderMuted,
+            width = if (persistAsDefault) 0.75.dp else 0.5.dp,
+            color = if (persistAsDefault) palette.accent.copy(alpha = 0.45f) else palette.borderMuted.copy(alpha = 0.55f),
         ),
     ) {
         Row(
@@ -544,7 +620,7 @@ private fun PersistTogglePill(persistAsDefault: Boolean, onToggle: () -> Unit) {
             Text(
                 if (persistAsDefault) tr("设为默认", "Set Default") else tr("仅本次会话", "This Session"),
                 style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                color = if (persistAsDefault) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (persistAsDefault) palette.text else palette.muted,
             )
         }
     }
@@ -562,8 +638,8 @@ internal fun SheetCardSection(title: String, content: @Composable () -> Unit) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            color = PiTheme.palette.cardBg,
-            border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted),
+            color = PiSheetChromeMetrics.sheetCardBg,
+            border = BorderStroke(0.5.dp, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
         ) {
             Column(Modifier.fillMaxWidth()) { content() }
         }
@@ -582,8 +658,8 @@ internal fun SheetActionPill(
         onClick = onClick,
         modifier = modifier,
         shape = RoundedCornerShape(9.dp),
-        color = if (primary) palette.accent else palette.cardBg,
-        border = if (primary) null else BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
+        color = if (primary) palette.accent else PiSheetChromeMetrics.sheetControlBg,
+        border = if (primary) null else BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.55f)),
     ) {
         Box(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -592,7 +668,7 @@ internal fun SheetActionPill(
             Text(
                 text = text,
                 style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                color = if (primary) palette.contrastOn(palette.accent) else MaterialTheme.colorScheme.onSurface,
+                color = if (primary) palette.contrastOn(palette.accent) else palette.text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
