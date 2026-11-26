@@ -621,6 +621,7 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
             section = t("工具", "Tools"),
             effective = EffectiveKind.Reload,
             presets = listOf("read", "bash", "edit", "write", "grep", "find", "ls"),
+            presetBaseline = PiQuickAdd.builtinToolDefaults,
             emptyListLabel = emptyDefault,
         ),
         PiSetting(

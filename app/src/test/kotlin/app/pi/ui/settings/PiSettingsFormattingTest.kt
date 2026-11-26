@@ -91,4 +91,17 @@ class PiSettingsFormattingTest {
             assertTrue("Counterpart of ${canvas.id} should invert dark mode", counterpart.dark != canvas.dark)
         }
     }
+
+    @Test
+    fun `defaultTools setting declares builtinToolDefaults baseline so quick-add preserves core tools`() {
+        val setting = PiSettingsCatalog.byKey["defaultTools"]
+        assertNotNull("defaultTools must be registered for settings search", setting)
+        assertEquals(PiQuickAdd.builtinToolDefaults, setting!!.presetBaseline)
+
+        val afterAdd = PiQuickAdd.add(emptyList(), "grep", setting.presetBaseline, setting.presets)
+        assertEquals(listOf("read", "bash", "edit", "write", "grep"), afterAdd)
+
+        val persistedDefault = PiQuickAdd.persist(PiQuickAdd.builtinToolDefaults, setting.presetBaseline)
+        assertEquals(emptyList<String>(), persistedDefault)
+    }
 }

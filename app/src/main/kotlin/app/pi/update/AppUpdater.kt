@@ -22,7 +22,7 @@ import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
 /**
- * 原生应用内检查与覆盖安装更新（对接 GitHub Releases `heikeyangle-code/pi-android`）：
+ * 原生应用内检查与覆盖安装更新（对接 GitHub Releases `heikeyangle-code/pi-mobile-agent`）：
  *  - 冷启动 0 开销：仅在进入设置页或用户手动点击「检查更新」时在 `Dispatchers.IO` 查询；
  *  - 自动匹配当前安装包的 `targetSdkVersion` 变体（`sideload28` vs `modern36`），避免系统因
  *    `INSTALL_FAILED_TARGET_SDK_VERSION_DOWNGRADE` 拒绝覆盖安装，并保留 `sideload28` 原生容器能力；
@@ -31,7 +31,7 @@ import kotlin.coroutines.coroutineContext
  */
 object AppUpdater {
 
-    const val REPO_SLUG = "heikeyangle-code/pi-android"
+    const val REPO_SLUG = "heikeyangle-code/pi-mobile-agent"
     const val RELEASES_PAGE_URL = "https://github.com/$REPO_SLUG/releases"
     private const val LATEST_API_URL = "https://api.github.com/repos/$REPO_SLUG/releases/latest"
     private const val LIST_API_URL = "https://api.github.com/repos/$REPO_SLUG/releases?per_page=5"
