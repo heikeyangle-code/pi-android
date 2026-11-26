@@ -938,7 +938,7 @@ object PiThemeStudio {
             warning = warning,
             muted = canvas.muted,
             dim = canvas.dim,
-            text = canvas.text,
+            text = PiContrast.ensure(canvas.text, canvas.pageBg, 10.2),
             thinkingText = canvas.muted,
             selectedBg = selectedBg,
             scrollbarTrack = lerp(canvas.pageBg, canvas.borderMuted, 0.65f),
