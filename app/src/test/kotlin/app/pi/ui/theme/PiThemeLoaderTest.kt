@@ -279,7 +279,7 @@ class PiThemeLoaderTest {
 
     @Test
     fun `chinese theme names and dual pairs produce distinct files and reject reserved built-ins case-insensitively`() {
-        val dir = Files.createTempDirectory("pi-theme-cjk").toFile()
+        val dir = createTempDirectory("pi-theme-cjk").toFile()
         try {
             val ink = PiThemeLoader.saveCustomTheme("水墨", dark = true, palette = PiPalette.Dark, agentDir = dir).getOrThrow()
             val celadon = PiThemeLoader.saveCustomTheme("青瓷", dark = true, palette = PiPalette.Dark, agentDir = dir).getOrThrow()
