@@ -61,12 +61,12 @@ class AppUpdaterTest {
               "draft": false,
               "prerelease": false,
               "published_at": "2026-11-24T10:00:00Z",
-              "html_url": "https://github.com/heikeyangle-code/pi-mobile-agent/releases/tag/v0.3.0",
+              "html_url": "https://github.com/heikeyangle-code/pi-android/releases/tag/v0.3.0",
               "body": "## Highlights\n- Unified models screen\n- In-app updater",
               "assets": [
                 {
                   "name": "pi-android-0.3.0-sideload28-arm64.apk",
-                  "browser_download_url": "https://github.com/heikeyangle-code/pi-mobile-agent/releases/download/v0.3.0/pi-android-0.3.0-sideload28-arm64.apk",
+                  "browser_download_url": "https://github.com/heikeyangle-code/pi-android/releases/download/v0.3.0/pi-android-0.3.0-sideload28-arm64.apk",
                   "size": 67108864,
                   "digest": "sha256:$sha"
                 }

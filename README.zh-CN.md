@@ -5,14 +5,14 @@
 <p>手机上的 AI Agent：聊天好看，动手也行</p>
 <p><sub>基于官方 Pi SDK（<code>@earendil-works/pi-coding-agent</code>）构建的第三方 Android 客户端，非官方出品。</sub></p>
 <p>
-<a href="https://github.com/heikeyangle-code/pi-mobile-agent/releases/latest"><img src="https://img.shields.io/github/v/release/heikeyangle-code/pi-mobile-agent?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&style=flat-square" alt="最新版本" /></a>
-<a href="https://github.com/heikeyangle-code/pi-mobile-agent/releases"><img src="https://img.shields.io/github/downloads/heikeyangle-code/pi-mobile-agent/total?label=%E4%B8%8B%E8%BD%BD%E9%87%8F&style=flat-square" alt="总下载量" /></a>
-<a href="https://github.com/heikeyangle-code/pi-mobile-agent/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/heikeyangle-code/pi-mobile-agent/ci.yml?branch=main&label=CI&style=flat-square" alt="CI 状态" /></a>
-<a href="https://github.com/heikeyangle-code/pi-mobile-agent/stargazers"><img src="https://img.shields.io/github/stars/heikeyangle-code/pi-mobile-agent?label=Stars&style=flat-square" alt="GitHub Stars" /></a>
-<a href="LICENSE"><img src="https://img.shields.io/github/license/heikeyangle-code/pi-mobile-agent?label=%E8%AE%B8%E5%8F%AF%E8%AF%81&style=flat-square" alt="MIT 许可证" /></a>
+<a href="https://github.com/heikeyangle-code/pi-android/releases/latest"><img src="https://img.shields.io/github/v/release/heikeyangle-code/pi-android?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&style=flat-square" alt="最新版本" /></a>
+<a href="https://github.com/heikeyangle-code/pi-android/releases"><img src="https://img.shields.io/github/downloads/heikeyangle-code/pi-android/total?label=%E4%B8%8B%E8%BD%BD%E9%87%8F&style=flat-square" alt="总下载量" /></a>
+<a href="https://github.com/heikeyangle-code/pi-android/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/heikeyangle-code/pi-android/ci.yml?branch=main&label=CI&style=flat-square" alt="CI 状态" /></a>
+<a href="https://github.com/heikeyangle-code/pi-android/stargazers"><img src="https://img.shields.io/github/stars/heikeyangle-code/pi-android?label=Stars&style=flat-square" alt="GitHub Stars" /></a>
+<a href="LICENSE"><img src="https://img.shields.io/github/license/heikeyangle-code/pi-android?label=%E8%AE%B8%E5%8F%AF%E8%AF%81&style=flat-square" alt="MIT 许可证" /></a>
 <img src="https://img.shields.io/badge/Android-8.0%2B%20%7C%20arm64-4B5563?style=flat-square" alt="支持 Android 8.0 及以上 arm64 设备" />
 </p>
-<p><a href="https://github.com/heikeyangle-code/pi-mobile-agent/releases/latest"><strong>下载最新 APK</strong></a> · <a href="#安装">安装步骤</a> · <a href="#常见问题">常见问题</a></p>
+<p><a href="https://github.com/heikeyangle-code/pi-android/releases/latest"><strong>下载最新 APK</strong></a> · <a href="#安装">安装步骤</a> · <a href="#常见问题">常见问题</a></p>
 </div>
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-zh-dark.webp" /><source media="(prefers-color-scheme: light)" srcset="docs/assets/hero-zh-light.webp" /><img src="docs/assets/hero-zh-light.webp" alt="Pi for Android 聊天主界面展示，包含 Markdown 表格、MathJax 数学公式、Mermaid 图表与代码高亮" width="100%" /></picture>
@@ -77,7 +77,7 @@
 
 系统要求：Android 8.0（API 26）及以上、64 位 ARM（`arm64-v8a`）设备，不需要 Root，也不需要先装 Termux。
 
-1. 前往 [GitHub Releases](https://github.com/heikeyangle-code/pi-mobile-agent/releases/latest) 下载 `pi-android-*-sideload28-arm64.apk` 并安装。
+1. 前往 [GitHub Releases](https://github.com/heikeyangle-code/pi-android/releases/latest) 下载 `pi-android-*-sideload28-arm64.apk` 并安装。
 2. 打开应用，首次启动会自动解包内置环境，稍等片刻即可进入聊天页。
 3. 打开 **设置 → 模型与供应商**，使用 OAuth 登录或填写 API Key，返回对话页即可开始聊天（需要写代码时，再在顶栏菜单里选择项目文件夹）。
 
@@ -194,8 +194,8 @@ flowchart TB
 ### 从源码构建
 
 ```bash
-git clone https://github.com/heikeyangle-code/pi-mobile-agent.git
-cd pi-mobile-agent
+git clone https://github.com/heikeyangle-code/pi-android.git
+cd pi-android
 
 # 1. 运行 SDK 宿主契约、运行态测试与静态守卫
 node tools/sdk-host/contract.mjs
@@ -223,8 +223,8 @@ python3 tools/readme-assets/render.py
 
 ## 社区与反馈
 
-- 遇到问题或提交功能建议，请前往 [GitHub Issues](https://github.com/heikeyangle-code/pi-mobile-agent/issues)。
-- 获取最新安装包与更新日志，请关注 [GitHub Releases](https://github.com/heikeyangle-code/pi-mobile-agent/releases)。
+- 遇到问题或提交功能建议，请前往 [GitHub Issues](https://github.com/heikeyangle-code/pi-android/issues)。
+- 获取最新安装包与更新日志，请关注 [GitHub Releases](https://github.com/heikeyangle-code/pi-android/releases)。
 
 ## 参与贡献
 
