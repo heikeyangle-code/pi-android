@@ -276,4 +276,32 @@ class PiThemeLoaderTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test
+    fun `chinese theme names and dual pairs produce distinct files and reject reserved built-ins case-insensitively`() {
+        val dir = Files.createTempDirectory("pi-theme-cjk").toFile()
+        try {
+            val ink = PiThemeLoader.saveCustomTheme("水墨", dark = true, palette = PiPalette.Dark, agentDir = dir).getOrThrow()
+            val celadon = PiThemeLoader.saveCustomTheme("青瓷", dark = true, palette = PiPalette.Dark, agentDir = dir).getOrThrow()
+            assertTrue("Distinct Chinese names must not share a file", ink.file.name != celadon.file.name)
+            assertTrue(ink.file.isFile && celadon.file.isFile)
+
+            val inkLight = PiThemeLoader.saveCustomTheme("水墨 Light", dark = false, palette = PiPalette.Light, agentDir = dir).getOrThrow()
+            val celadonLight = PiThemeLoader.saveCustomTheme("青瓷 Light", dark = false, palette = PiPalette.Light, agentDir = dir).getOrThrow()
+            assertTrue("Distinct Chinese Light pairs must not overwrite each other", inkLight.file.name != celadonLight.file.name)
+            assertTrue("Must not collide with built-in light.json", inkLight.file.name != "light.json")
+
+            val discoveredNames = PiThemeLoader.discover(dir, dir, emptyList()).map { it.name }.toSet()
+            assertTrue("水墨" in discoveredNames)
+            assertTrue("青瓷" in discoveredNames)
+            assertTrue("水墨 Light" in discoveredNames)
+            assertTrue("青瓷 Light" in discoveredNames)
+
+            assertTrue(PiThemeLoader.saveCustomTheme("Dark", true, PiPalette.Dark, dir).isFailure)
+            assertTrue(PiThemeLoader.saveCustomTheme("LIGHT", false, PiPalette.Light, dir).isFailure)
+            assertTrue(PiThemeLoader.saveCustomTheme("System", true, PiPalette.Dark, dir).isFailure)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }

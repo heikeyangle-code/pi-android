@@ -60,10 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
@@ -155,7 +152,7 @@ internal fun ChatTopBar(
             ) {
                 Row(
                     modifier = Modifier
-                        .height(40.dp)
+                        .heightIn(min = 40.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = ripple(color = palette.text),
@@ -165,7 +162,7 @@ internal fun ChatTopBar(
                             hideIme()
                             onOpenSessions()
                         }
-                        .padding(start = 11.dp, end = 10.dp),
+                        .padding(start = 11.dp, end = 12.dp, top = 3.dp, bottom = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
@@ -199,7 +196,6 @@ internal fun ChatTopBar(
                             )
                         }
                     }
-                    PiFloatingChevronDown(color = palette.muted.copy(alpha = 0.78f))
                 }
             }
         }
@@ -357,22 +353,6 @@ private fun PiSidebarBarsGlyph(color: Color) {
         drawLine(color, Offset(inset, topY), Offset(size.width - inset, topY), stroke, StrokeCap.Round)
         drawLine(color, Offset(inset, midY), Offset(size.width * 0.78f, midY), stroke, StrokeCap.Round)
         drawLine(color, Offset(inset, botY), Offset(size.width * 0.56f, botY), stroke, StrokeCap.Round)
-    }
-}
-
-@Composable
-private fun PiFloatingChevronDown(color: Color) {
-    Canvas(modifier = Modifier.size(width = 7.5.dp, height = 4.5.dp)) {
-        val stroke = 1.25.dp.toPx()
-        val insetX = stroke * 0.65f
-        val topY = stroke * 0.6f
-        val botY = size.height - stroke * 0.6f
-        val path = Path().apply {
-            moveTo(insetX, topY)
-            lineTo(size.width * 0.5f, botY)
-            lineTo(size.width - insetX, topY)
-        }
-        drawPath(path, color, style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 

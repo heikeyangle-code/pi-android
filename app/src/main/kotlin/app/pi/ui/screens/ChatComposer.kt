@@ -186,11 +186,17 @@ internal fun Composer(
     val fieldMaxHeight = lineHeightDp * COMPOSER_MAX_LINES
 
     var focused by remember { mutableStateOf(false) }
-    // 克制的边框层级：Bash 模式亮语义绿、聚焦保持利落中性描边、仅流式输出时以柔和思考色呼吸提示
+    // 对齐官方 Pi 的 7 档思考色边框，并通过与 borderMuted 柔化混色保持克制不刺眼：
+    // Bash 语义绿 > 流式柔和思考色呼吸 > 聚焦柔和思考色 > 静止淡色温提示；off 或不支持思考时回归中性灰边。
+    val hasThinkingTint = thinkingSupported && !thinkingLevel.equals("off", ignoreCase = true)
+    val thinkingColor = palette.thinking(thinkingLevel)
     val targetBorderColor = when {
         isBash -> palette.bashMode
+        streaming && hasThinkingTint -> lerp(palette.borderMuted, thinkingColor, 0.82f)
+        streaming -> palette.border
+        focused && hasThinkingTint -> lerp(palette.borderMuted, thinkingColor, 0.72f)
         focused -> palette.border
-        streaming -> palette.thinking(thinkingLevel)
+        hasThinkingTint -> lerp(palette.borderMuted, thinkingColor, 0.42f)
         else -> palette.borderMuted
     }
     val borderColor by animateColorAsState(
@@ -202,6 +208,7 @@ internal fun Composer(
         targetValue = when {
             isBash -> 1.25.dp
             focused || streaming -> 1.dp
+            hasThinkingTint -> 0.75.dp
             else -> 0.5.dp
         },
         animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
@@ -225,8 +232,9 @@ internal fun Composer(
     }
     val idleAlpha = when {
         isBash -> 0.85f
-        focused -> 0.88f
-        streaming -> 0.72f
+        streaming -> if (hasThinkingTint) 0.84f else 0.78f
+        focused -> if (hasThinkingTint) 0.88f else 0.85f
+        hasThinkingTint -> 0.72f
         else -> 0.62f
     }
 

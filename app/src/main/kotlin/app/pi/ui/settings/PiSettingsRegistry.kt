@@ -610,6 +610,20 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
         // 6 工具（由 ToolsScreen 承载：实时工具总开关 + 设为默认 + Codemode + Shell + 显示）
         // ------------------------------------------------------------------
         PiSetting(
+            key = "defaultTools",
+            title = t("新会话默认启用工具", "Default Tools for New Sessions"),
+            description = t(
+                "新建会话时默认启用的工具列表；留空则使用官方默认核心工具（read / bash / edit / write）。",
+                "Tools enabled by default for new sessions. Leave empty for official defaults (read / bash / edit / write).",
+            ),
+            kind = PiRowKind.List,
+            group = G_TOOLS,
+            section = t("工具", "Tools"),
+            effective = EffectiveKind.Reload,
+            presets = listOf("read", "bash", "edit", "write", "grep", "find", "ls"),
+            emptyListLabel = emptyDefault,
+        ),
+        PiSetting(
             key = "codemode.mode",
             title = t("Codemode 方式", "Codemode Mode"),
             description = t(

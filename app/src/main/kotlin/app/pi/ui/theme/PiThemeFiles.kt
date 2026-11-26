@@ -388,7 +388,7 @@ object PiThemeLoader {
         agentDir: File,
     ): Result<PiImportedTheme> = runCatching {
         val safeName = sanitizeThemeName(name)
-        if (safeName == SYSTEM_THEME_NAME || safeName == "dark" || safeName == "light") {
+        if (safeName.lowercase() in RESERVED_BUILTIN_THEMES) {
             throw ThemeParseException(
                 tr("主题名不能与内置主题（system / dark / light）重复", "Theme name cannot conflict with built-in themes (system / dark / light)"),
             )
@@ -423,11 +423,31 @@ object PiThemeLoader {
             .trim()
             .ifEmpty { "custom-theme" }
 
+    private val RESERVED_BUILTIN_THEMES = setOf(SYSTEM_THEME_NAME, "dark", "light")
+    private val NON_SLUG_CHARS = Regex("[^a-z0-9._-]+")
+
     private fun slugifyFileName(name: String): String {
-        val cleaned = name.lowercase()
-            .replace(Regex("[^a-z0-9._-]+"), "-")
+        val lowered = name.trim().lowercase()
+        val hasNonAscii = lowered.any { it.code > 0x7F }
+        val cleaned = lowered
+            .replace(NON_SLUG_CHARS, "-")
             .trim('-', '.')
-        return cleaned.ifEmpty { "custom-theme" }
+        if (!hasNonAscii && cleaned.isNotEmpty() && cleaned !in RESERVED_BUILTIN_THEMES) {
+            return cleaned
+        }
+        val hash = shortStableHash(lowered)
+        return when {
+            cleaned.isEmpty() -> "theme-$hash"
+            else -> "$cleaned-$hash"
+        }
+    }
+
+    private fun shortStableHash(input: String): String {
+        var h = 0x811c9dc5u
+        for (byte in input.toByteArray(Charsets.UTF_8)) {
+            h = (h xor (byte.toUInt() and 0xFFu)) * 0x01000193u
+        }
+        return (h and 0xFFFFFFu).toString(16).padStart(6, '0')
     }
 
     private fun Color.toHexRgb(): String {

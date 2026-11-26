@@ -81,6 +81,8 @@ import kotlinx.coroutines.withContext
  * - 支持单套保存或「浅+深双版一键配对」，写出 100% 官方 Pi 1.6.0 Schema 主题文件到
  *   `~/.pi/agent/themes/<slug>.json`，与桌面端 Pi CLI/TUI 完全互通。
  */
+private val PAIR_SUFFIX_REGEX = Regex("\\s*(Dark|Light|Day|Night)$", RegexOption.IGNORE_CASE)
+
 @Composable
 internal fun PiThemeStudioSheet(
     agentDir: File,
@@ -108,7 +110,7 @@ internal fun PiThemeStudioSheet(
         mutableStateOf(PiThemeStudio.masterPresets.first().nameFor(initialDark))
     }
     var userEditedName by remember { mutableStateOf(false) }
-    var saveDualPair by remember { mutableStateOf(onSavedPair != null) }
+    var saveDualPair by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
 
@@ -526,7 +528,7 @@ internal fun PiThemeStudioSheet(
                             preset.lightName to preset.darkName
                         } else {
                             val base = themeName.trim()
-                                .replace(Regex("\\s*(Dark|Light|Day|Night)$", RegexOption.IGNORE_CASE), "")
+                                .replace(PAIR_SUFFIX_REGEX, "")
                                 .ifBlank { "Custom" }
                             "$base Light" to "$base Dark"
                         }
@@ -630,7 +632,7 @@ internal fun PiThemeStudioSheet(
                                     presetSnap.lightName to presetSnap.darkName
                                 } else {
                                     val base = targetName
-                                        .replace(Regex("\\s*(Dark|Light|Day|Night)$", RegexOption.IGNORE_CASE), "")
+                                        .replace(PAIR_SUFFIX_REGEX, "")
                                         .ifBlank { "Custom" }
                                     "$base Light" to "$base Dark"
                                 }
