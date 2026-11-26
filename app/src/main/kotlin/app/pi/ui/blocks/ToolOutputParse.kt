@@ -858,7 +858,7 @@ internal fun grepSubject(args: JsonObject?): List<ToolCallPart> = buildList {
     val pattern = argString(args, "pattern").orEmpty()
     val path = argString(args, "path")?.takeIf { it.isNotEmpty() } ?: "."
     add(ToolCallPart("/$pattern/", ToolCallToken.Accent))
-    add(ToolCallPart(" in $path", ToolCallToken.ToolOutput))
+    add(ToolCallPart(" in ${shortenToolPathForPhone(path, maxChars = 24)}", ToolCallToken.ToolOutput))
     argString(args, "glob")?.let { add(ToolCallPart(" ($it)", ToolCallToken.ToolOutput)) }
     argInt(args, "limit")?.let { add(ToolCallPart(" limit $it", ToolCallToken.ToolOutput)) }
 }
@@ -882,7 +882,7 @@ internal fun findSubject(args: JsonObject?): List<ToolCallPart> = buildList {
     val pattern = argString(args, "pattern").orEmpty()
     val path = argString(args, "path")?.takeIf { it.isNotEmpty() } ?: "."
     add(ToolCallPart(pattern, ToolCallToken.Accent))
-    add(ToolCallPart(" in $path", ToolCallToken.ToolOutput))
+    add(ToolCallPart(" in ${shortenToolPathForPhone(path, maxChars = 24)}", ToolCallToken.ToolOutput))
     argInt(args, "limit")?.let { add(ToolCallPart(" (limit $it)", ToolCallToken.ToolOutput)) }
 }
 
@@ -899,7 +899,7 @@ internal fun findSubject(args: JsonObject?): List<ToolCallPart> = buildList {
  */
 internal fun lsSubject(args: JsonObject?): List<ToolCallPart> = buildList {
     val path = argString(args, "path")?.takeIf { it.isNotEmpty() } ?: "."
-    add(ToolCallPart(path, ToolCallToken.Accent))
+    add(ToolCallPart(shortenToolPathForPhone(path), ToolCallToken.Accent))
     argInt(args, "limit")?.let { add(ToolCallPart(" (limit $it)", ToolCallToken.ToolOutput)) }
 }
 

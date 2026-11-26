@@ -64,10 +64,11 @@ fun ThinkingBlockBlock(
     val pen = palette.thinking(item.level ?: "medium")
     val levelLabel = item.level?.takeIf { it.isNotBlank() }?.let { PiThinkingLevel.fromWire(it).label }
     val custom = LocalThinkingLabel.current
-    val headline = custom ?: if (item.streaming) {
-        tr("思考中…", "Thinking…")
-    } else {
-        tr("已思考", "Thought")
+    val duration = if (item.streaming) null else item.elapsedMs?.let { formatDuration(it) }
+    val headline = custom ?: when {
+        item.streaming -> tr("思考中…", "Thinking…")
+        duration != null -> tr("已思考 $duration", "Thought for $duration")
+        else -> tr("已思考", "Thought")
     }
 
     val pulse: State<Float>? = if (item.streaming && android.animation.ValueAnimator.areAnimatorsEnabled()) {

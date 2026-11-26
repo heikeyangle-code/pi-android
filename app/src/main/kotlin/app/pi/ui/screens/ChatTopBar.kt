@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Refresh
@@ -70,6 +71,7 @@ import app.pi.i18n.tr
 import app.pi.ui.PiEngineStatusDot
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.chat.ChatAction
+import app.pi.ui.chat.activity.ActivityDisplayMode
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
@@ -91,6 +93,7 @@ internal fun ChatTopBar(
     searchOpen: Boolean,
     scrolled: Boolean,
     toolsExpanded: Boolean,
+    toolDisplayMode: String = ActivityDisplayMode.CARDS,
     terminalRunningCount: Int = 0,
     onOpenSessions: () -> Unit,
     onOpenWorkspace: () -> Unit,
@@ -98,6 +101,7 @@ internal fun ChatTopBar(
     onToggleSearch: (clearOnClose: Boolean) -> Unit,
     onJumpQuestion: (forward: Boolean) -> Unit,
     onToggleTools: () -> Unit,
+    onSelectToolDisplayMode: (String) -> Unit = {},
     onAction: (ChatAction) -> Unit,
 ) {
     var commandCenterOpen by remember { mutableStateOf(false) }
@@ -261,6 +265,7 @@ internal fun ChatTopBar(
             workspaceName = workspaceName,
             searchOpen = searchOpen,
             toolsExpanded = toolsExpanded,
+            toolDisplayMode = toolDisplayMode,
             onDismiss = { commandCenterOpen = false },
             onToggleSearch = {
                 commandCenterOpen = false
@@ -270,14 +275,11 @@ internal fun ChatTopBar(
                 // 连续点击上一问/下一问时不强关面板，让用户边看上方画布滚动边连续定位
                 onJumpQuestion(forward)
             },
-            onOpenWorkspace = {
-                commandCenterOpen = false
-                onOpenWorkspace()
-            },
             onToggleTools = {
                 commandCenterOpen = false
                 onToggleTools()
             },
+            onSelectToolDisplayMode = onSelectToolDisplayMode,
             onAction = { action ->
                 commandCenterOpen = false
                 onAction(action)
@@ -293,11 +295,12 @@ private fun ChatCommandCenterSheet(
     workspaceName: String?,
     searchOpen: Boolean,
     toolsExpanded: Boolean,
+    toolDisplayMode: String,
     onDismiss: () -> Unit,
     onToggleSearch: () -> Unit,
     onJumpQuestion: (forward: Boolean) -> Unit,
-    onOpenWorkspace: () -> Unit,
     onToggleTools: () -> Unit,
+    onSelectToolDisplayMode: (String) -> Unit,
     onAction: (ChatAction) -> Unit,
 ) {
     val palette = PiTheme.palette
@@ -403,12 +406,16 @@ private fun ChatCommandCenterSheet(
             }
 
             // 显示与导航组
+            val isCompactMode = ActivityDisplayMode.isCompact(toolDisplayMode)
             ActionGroupCard(title = tr("视图与定位", "View & Navigation")) {
-                SheetActionRow(
-                    icon = Icons.Filled.FolderOpen,
-                    label = tr("项目与文件", "Project & Files"),
-                    subtitle = workspaceName,
-                    onClick = onOpenWorkspace,
+                ToolDisplayModeSwitchRow(
+                    selectedMode = toolDisplayMode,
+                    onSelect = { mode ->
+                        if (ActivityDisplayMode.normalize(toolDisplayMode) != mode) {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            onSelectToolDisplayMode(mode)
+                        }
+                    },
                 )
                 SheetHairline()
                 SheetActionRow(
@@ -462,7 +469,12 @@ private fun ChatCommandCenterSheet(
                 SheetHairline()
                 SheetActionRow(
                     icon = if (toolsExpanded) Icons.Filled.UnfoldLess else Icons.Filled.UnfoldMore,
-                    label = if (toolsExpanded) tr("收起全部工具输出", "Collapse all tool outputs") else tr("展开全部工具输出", "Expand all tool outputs"),
+                    label = when {
+                        isCompactMode && toolsExpanded -> tr("收起全部执行过程", "Collapse all traces")
+                        isCompactMode -> tr("展开全部执行过程", "Expand all traces")
+                        toolsExpanded -> tr("收起全部工具输出", "Collapse all tool outputs")
+                        else -> tr("展开全部工具输出", "Expand all tool outputs")
+                    },
                     trailingBadge = if (toolsExpanded) tr("已展开", "Expanded") else tr("已收起", "Collapsed"),
                     onClick = onToggleTools,
                 )
@@ -638,6 +650,110 @@ private fun SheetActionRow(
                 color = PiTheme.palette.muted,
                 maxLines = 1,
             )
+        }
+    }
+}
+
+@Composable
+private fun ToolDisplayModeSwitchRow(
+    selectedMode: String,
+    onSelect: (String) -> Unit,
+) {
+    val palette = PiTheme.palette
+    val normalized = ActivityDisplayMode.normalize(selectedMode)
+    val isCompact = normalized == ActivityDisplayMode.COMPACT
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Layers,
+                contentDescription = null,
+                modifier = Modifier.size(19.dp),
+                tint = palette.muted,
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = tr("工具与过程展示", "Tool & Process Display"),
+                    style = PiType.rowTitle,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = if (isCompact) {
+                        tr("思考与工具收成单行摘要，正文更突出", "Folds trace into a calm bar so prose stands out")
+                    } else {
+                        tr("逐条展示工具卡片，对齐官方 Pi", "Shows each tool card individually, official Pi")
+                    },
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        val trackShape = RoundedCornerShape(10.dp)
+        val itemShape = RoundedCornerShape(8.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(trackShape)
+                .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            val options = listOf(
+                ActivityDisplayMode.CARDS to tr("Pi 原版", "Pi Original"),
+                ActivityDisplayMode.COMPACT to tr("专注折叠", "Compact"),
+            )
+            for ((value, label) in options) {
+                val selected = normalized == value
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(itemShape)
+                        .then(
+                            if (selected) {
+                                Modifier
+                                    .background(palette.accent.copy(alpha = 0.14f))
+                                    .border(0.5.dp, palette.accent.copy(alpha = 0.42f), itemShape)
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .clickable(role = Role.RadioButton, onClick = { onSelect(value) })
+                        .padding(vertical = 7.dp, horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (selected) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(palette.accent),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(
+                        text = label,
+                        style = PiTheme.text.meta.copy(
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        ),
+                        color = if (selected) palette.accent else palette.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }

@@ -87,7 +87,12 @@ internal fun ReadBlock(
                         add(toolPathPart(body.path, fallback = tr("文件", "file")))
                         if (range.isNotEmpty()) add(ToolCallPart(range, ToolCallToken.Warning))
                     },
-                    right = toolHeaderReading(item, state, count = body.totalLines),
+                    right = toolHeaderReading(
+                        item,
+                        state,
+                        count = if (range.isNotEmpty()) 0 else body.totalLines,
+                        showElapsed = false,
+                    ),
                     expanded = expanded,
                     expandable = hasBody,
                 )

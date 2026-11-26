@@ -24,7 +24,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Icon
@@ -64,9 +64,6 @@ import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
 import app.pi.ui.components.PiDialogBody
 import app.pi.ui.components.PiDialogTitle
-import app.pi.ui.components.PiMenu
-import app.pi.ui.components.PiMenuItem
-import app.pi.ui.components.PiMenuPlacement
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.settingsPageTopInset
 import app.pi.ui.theme.PiSpacing
@@ -366,7 +363,6 @@ fun ProjectScreen(
             false -> tr("未信任", "Untrusted")
         }
     }
-    var overflow by remember { mutableStateOf(false) }
     // ---------------------------------------------------------------- ②③
     val runs = remember(state.transcript, state.bash) { runningCommands(state.transcript, state.bash) }
     // ② 里那几条「已运行 N 秒」用的读数：ViewModel 推来的 1 Hz 粗时钟（`UiState.nowMs`，判据
@@ -743,62 +739,11 @@ fun ProjectScreen(
                         contentDescription = tr("新建文件或文件夹", "New file or folder"),
                         icon = Icons.Filled.Add,
                     )
-                    Box {
-                        PiTopBarIcon(
-                            onClick = { overflow = true },
-                            contentDescription = tr("更多", "More"),
-                            icon = Icons.Filled.MoreVert,
-                        )
-                        if (overflow) PiMenu(
-                            expanded = true,
-                            onDismiss = { overflow = false },
-                            placement = PiMenuPlacement.Below,
-                            items = buildList {
-                                add(
-                                    PiMenuItem(tr("切换或新建项目", "Switch or create project")) {
-                                        overflow = false
-                                        rootSheet = true
-                                    },
-                                )
-                                add(
-                                    PiMenuItem(tr("快速跳转位置…", "Jump to location…")) {
-                                        overflow = false
-                                        locationSheet = true
-                                    },
-                                )
-                                add(
-                                    PiMenuItem(tr("刷新当前目录", "Refresh folder")) {
-                                        overflow = false
-                                        refreshTick++
-                                    },
-                                )
-                                add(
-                                    PiMenuItem(tr("导入手机文件到当前目录", "Import files into this folder")) {
-                                        overflow = false
-                                        importFilesLauncher.launch(arrayOf("*/*"))
-                                    },
-                                )
-                                add(
-                                    PiMenuItem(tr("从设备目录打开项目", "Open device folder as project")) {
-                                        overflow = false
-                                        externalPicker = true
-                                    },
-                                )
-                                add(
-                                    PiMenuItem(tr(".pi 扩展、资源与信任", ".pi extensions, resources & trust")) {
-                                        overflow = false
-                                        session.requestNav(NavRequest.SettingsFocus("hub:resources:project"))
-                                    },
-                                )
-                                add(
-                                    PiMenuItem(tr("系统提示词与上下文", "System Prompt & Context")) {
-                                        overflow = false
-                                        session.requestNav(NavRequest.SettingsFocus("hub:prompts"))
-                                    },
-                                )
-                            },
-                        )
-                    }
+                    PiTopBarIcon(
+                        onClick = { refreshTick++ },
+                        contentDescription = tr("刷新当前目录", "Refresh folder"),
+                        icon = Icons.Filled.Refresh,
+                    )
                 },
             )
             // Sticky full-width Studio path bar pinned directly under PiTopBar (outside LazyColumn).

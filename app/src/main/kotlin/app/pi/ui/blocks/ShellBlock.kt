@@ -220,7 +220,6 @@ internal fun ShellBlock(
                         state,
                         elapsedMs = elapsedMs,
                         exitCode = exitCode,
-                        count = lines,
                     ),
                     expanded = expanded,
                     expandable = bodyText.isNotEmpty() || notice != null,

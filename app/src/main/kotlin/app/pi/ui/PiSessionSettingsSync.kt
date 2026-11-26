@@ -178,6 +178,9 @@ internal fun PiSessionViewModel.readPrefs(): UiPrefs {
         showTimestamps = bool("app.appearance.showTimestamps", false),
         thinkingCollapsedByDefault = bool("app.appearance.thinkingCollapsedByDefault", true),
         expandToolsByDefault = bool("app.tools.expandByDefault", false),
+        toolDisplayMode = app.pi.ui.chat.activity.ActivityDisplayMode.normalize(
+            raw(app.pi.ui.chat.activity.ActivityDisplayMode.SETTING_KEY),
+        ),
         hideThinkingBlock = bool("hideThinkingBlock", false),
         // pi's own key, at the top level of the document, default false
         // (`core/settings-manager.ts:120`, `:965-967`). Gates the

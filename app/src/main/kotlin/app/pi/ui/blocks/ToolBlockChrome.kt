@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -29,12 +30,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -252,11 +252,29 @@ internal fun List<ToolCallPart>.toAnnotatedString(palette: PiPalette): Annotated
  * （「文件」/「未命名文件」）rather than with pi's `...` — the **text** is theirs, the **token**
  * is pi's, which is why only the token is taken from the source here.
  */
+/**
+ * Phone-friendly tail-preserving path shortener for narrow tool headers.
+ * Keeps short paths verbatim; for long paths, preserves the filename and its immediate parent
+ * (`…/blocks/EditBlock.kt`) so the file being touched is never clipped off the right edge.
+ * Full paths are still preserved in `ToolActionMenu` (long-press copy) and syntax highlighters.
+ */
+internal fun shortenToolPathForPhone(path: String, maxChars: Int = 34): String {
+    if (path.length <= maxChars) return path
+    val normalized = path.replace('\\', '/')
+    val trimmed = normalized.trimEnd('/')
+    val parts = trimmed.split('/').filter { it.isNotEmpty() }
+    if (parts.size <= 1) return path
+    val tail2 = "…/${parts[parts.size - 2]}/${parts.last()}"
+    if (tail2.length <= maxChars) return tail2
+    val tail1 = "…/${parts.last()}"
+    return if (tail1.length < path.length) tail1 else path
+}
+
 internal fun toolPathPart(path: String, fallback: String): ToolCallPart =
     if (path.isEmpty()) {
         ToolCallPart(fallback, ToolCallToken.ToolOutput)
     } else {
-        ToolCallPart(path, ToolCallToken.Accent)
+        ToolCallPart(shortenToolPathForPhone(path), ToolCallToken.Accent)
     }
 
 /**
@@ -336,17 +354,18 @@ internal fun ToolHeader(
     expanded: Boolean = false,
     expandable: Boolean = true,
     right: String? = toolHeaderReading(item, state),
+    trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     val subjectText = remember(subject, palette) { subject.toAnnotatedString(palette) }
-    val word = toolStateWord(state)
     val accent = toolAccentColor(state, palette)
+    val titleColor = if (state == ToolState.Failed) palette.error else palette.toolTitle
     // State 留到 graphicsLayer 里读，避免运行中每帧重组整条工具卡标题。
     val runningPulse: androidx.compose.runtime.State<Float>? = if (state == ToolState.Running && android.animation.ValueAnimator.areAnimatorsEnabled()) {
         rememberInfiniteTransition(label = "tool-run").animateFloat(
-            initialValue = 0.35f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+            initialValue = 0.25f,
+            targetValue = 0.95f,
+            animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse),
             label = "tool-run-alpha",
         )
     } else {
@@ -354,28 +373,26 @@ internal fun ToolHeader(
     }
     val chevronAngle = animateFloatAsState(if (expanded) 90f else 0f, tween(160), label = "tool-chevron")
 
-    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(18.dp)
-                .graphicsLayer { alpha = runningPulse?.value ?: 1f }
-                .clip(CircleShape)
-                .background(accent.copy(alpha = 0.16f))
-                .clearAndSetSemantics { contentDescription = toolStateLabel(state) },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = toolStateGlyph(state),
-                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-                color = accent,
-                maxLines = 1,
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = "${toolStateLabel(state)} $title" },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (state == ToolState.Running) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .graphicsLayer { alpha = runningPulse?.value ?: 0.8f }
+                    .clip(CircleShape)
+                    .background(accent),
             )
+            Spacer(Modifier.width(6.dp))
         }
-        Spacer(Modifier.width(TOOL_HEADER_GAP))
         Text(
             text = title,
             style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-            color = palette.toolTitle,
+            color = titleColor,
             maxLines = 1,
         )
         Spacer(Modifier.width(TOOL_HEADER_GAP))
@@ -386,22 +403,16 @@ internal fun ToolHeader(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (word != null) {
+        if (trailing != null) {
             Spacer(Modifier.width(TOOL_HEADER_GAP))
-            Text(
-                modifier = Modifier.clearAndSetSemantics {},
-                text = word,
-                style = PiTheme.text.monoSmall,
-                color = accent,
-                maxLines = 1,
-            )
+            trailing()
         }
         if (right != null) {
             Spacer(Modifier.width(TOOL_HEADER_GAP))
             Text(
                 text = right,
                 style = PiTheme.text.monoSmall,
-                color = palette.muted,
+                color = if (state == ToolState.Failed) palette.error else palette.muted,
                 maxLines = 1,
             )
         }
@@ -467,14 +478,17 @@ internal fun toolHeaderReading(
     count: Int = 0,
     unit: String = tr("行", if (count == 1) "line" else "lines"),
     extra: String? = null,
+    showElapsed: Boolean = true,
 ): String? {
     if (state == ToolState.Rejected) return TOOL_REJECTED_READING
     val parts = mutableListOf<String>()
-    elapsedMs?.let {
-        parts += if (item.toolName == "bash" || item.toolName == "powershell") {
-            ToolOutputParse.formatDuration(it)
-        } else {
-            formatDuration(it)
+    if (showElapsed) {
+        elapsedMs?.let {
+            parts += if (item.toolName == "bash" || item.toolName == "powershell") {
+                ToolOutputParse.formatDuration(it)
+            } else {
+                formatDuration(it)
+            }
         }
     }
     // 退出码只有**调用结束后**才存在；而 `shellExitCode` 是从当前输出尾巴里正则刮出来的，

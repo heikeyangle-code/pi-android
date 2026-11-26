@@ -159,6 +159,14 @@ fun AppearanceScreen(
     val showTimestamps = remember(store, freshness) { readBool("app.appearance.showTimestamps", false) }
     val thinkingCollapsed = remember(store, freshness) { readBool("app.appearance.thinkingCollapsedByDefault", true) }
     val hideThinking = remember(store, freshness) { readBool("hideThinkingBlock", false) }
+    val toolDisplayMode = remember(store, freshness) {
+        app.pi.ui.chat.activity.ActivityDisplayMode.normalize(
+            readStr(
+                app.pi.ui.chat.activity.ActivityDisplayMode.SETTING_KEY,
+                app.pi.ui.chat.activity.ActivityDisplayMode.CARDS,
+            ),
+        )
+    }
     val mermaidMode = remember(store, freshness) { readStr("markdown.mermaid", "streaming") }
     val language = remember(store, freshness) { readStr("app.appearance.language", "system") }
 
@@ -651,6 +659,24 @@ fun AppearanceScreen(
                                         onSettingWritten("app.appearance.thinkingCollapsedByDefault")
                                     }
                                 }
+                            },
+                        )
+                        PiSettingsHairline()
+                        InlineSegmentRow(
+                            title = tr("工具与过程展示", "Tool & Process Display"),
+                            subtitle = if (toolDisplayMode == app.pi.ui.chat.activity.ActivityDisplayMode.COMPACT) {
+                                tr("思考与工具折叠为单行执行摘要，突出正文回复", "Folds thinking & tools into a calm summary so prose stands out")
+                            } else {
+                                tr("每条工具单独展示，对齐官方 Pi", "Shows each tool card individually, matching official Pi")
+                            },
+                            options = listOf(
+                                app.pi.ui.chat.activity.ActivityDisplayMode.CARDS to tr("Pi 原版", "Pi Original"),
+                                app.pi.ui.chat.activity.ActivityDisplayMode.COMPACT to tr("专注折叠", "Compact"),
+                            ),
+                            selected = toolDisplayMode,
+                            onSelect = { mode ->
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                writeStr(app.pi.ui.chat.activity.ActivityDisplayMode.SETTING_KEY, mode)
                             },
                         )
                         PiSettingsHairline()

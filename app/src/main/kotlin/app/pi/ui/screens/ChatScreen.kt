@@ -113,6 +113,12 @@ import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.chat.PiCommandSource
 import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.TailFollow
+import app.pi.ui.chat.activity.ActivityDisplayMode
+import app.pi.ui.chat.activity.ActivityGroupBlock
+import app.pi.ui.chat.activity.ActivityGroupProjector
+import app.pi.ui.chat.activity.ChatRow
+import app.pi.ui.chat.activity.chatRowGap
+import app.pi.ui.chat.activity.pairEditDiffs
 import app.pi.ui.chat.TailSnapshot
 import app.pi.ui.chat.TailViewport
 import app.pi.ui.chat.mayLoadEarlier
@@ -130,7 +136,6 @@ import app.pi.ui.render.RowHeightCache
 import app.pi.ui.render.gapFor
 import app.pi.ui.render.piMarkdownParseBudget
 import app.pi.ui.render.rememberedRowHeight
-import app.pi.ui.render.transcriptGap
 import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.ExtensionWidgetSurfaceSheet
 import app.pi.ui.extension.PLACEMENT_BELOW
@@ -651,13 +656,29 @@ internal fun ChatBody(
 
     // 扩展的 `custom` 条目只在扩展注册了 `registerEntryRenderer` 时可见（pi：没渲染器就不添加任何子组件）。
     val entryRenderable by session.entryRenderable.collectAsStateWithLifecycle()
-    val visibleItems = remember(state.transcript, prefs.showTimestamps, entryRenderable) {
+    val pairedDiffByCallId = remember(state.transcript) {
+        pairEditDiffs(state.transcript)
+    }
+    val visibleItems = remember(state.transcript, pairedDiffByCallId, prefs.showTimestamps, entryRenderable) {
         state.transcript.filter { item ->
             when (item) {
                 is DateSeparator -> prefs.showTimestamps
                 is app.pi.protocol.ExtensionEntry -> item.customType in entryRenderable
+                // Pair edit ToolDiff into its EditBlock so edit renders as one official-parity card.
+                is app.pi.protocol.ToolDiff -> item.toolCallId == null || item.toolCallId !in pairedDiffByCallId
                 else -> true
             }
+        }
+    }
+    val displayRows = remember(visibleItems, pairedDiffByCallId, prefs.toolDisplayMode, prefs.hideThinkingBlock) {
+        if (prefs.toolDisplayMode == ActivityDisplayMode.COMPACT) {
+            ActivityGroupProjector.project(
+                items = visibleItems,
+                pairedDiffByCallId = pairedDiffByCallId,
+                hideThinking = prefs.hideThinkingBlock,
+            )
+        } else {
+            visibleItems.map { ChatRow.Single(it) }
         }
     }
     // The ViewModel's coarse tool clock (`UiState.nowMs`): what every 「已运行 N 秒」 in the
@@ -707,14 +728,14 @@ internal fun ChatBody(
     // conversation with the newest text hidden from them. `reArmTail()` closes it
     // again, so following the tail costs the last-50 window exactly as before.
     var windowOpen by rememberSaveable(sessionKey) { mutableStateOf(false) }
-    val renderedItems = remember(visibleItems, renderWindow, windowOpen) {
-        if (windowOpen) visibleItems else visibleItems.takeLast(renderWindow)
+    val renderedItems = remember(displayRows, renderWindow, windowOpen) {
+        if (windowOpen) displayRows else displayRows.takeLast(renderWindow)
     }
     // The same number `renderedItems` implies, but computed from the *window* rather
     // than from the list it produced: the anchor restore below needs to know how many
     // rows sit above a given row without having to build that list
     // (`TailFollow.hiddenRows`, pinned by the `tail-follow` harness).
-    val hiddenCount = hiddenRows(visibleItems.size, renderWindow, windowOpen)
+    val hiddenCount = hiddenRows(displayRows.size, renderWindow, windowOpen)
     // While anything is above the rendered window the loading row is item 0, so a
     // full-list index is a rendered index plus `hiddenCount` plus that one row — the
     // arithmetic every jump/reveal below relies on.
@@ -763,8 +784,8 @@ internal fun ChatBody(
     // parses: those run on the same `Dispatchers.Default` pool, but the pool is as
     // wide as the device's cores and the alternative is blocking the only thread
     // that can draw. The last key (`searchScan`) is the streaming/settle tick.
-    LaunchedEffect(searchQuery, prefs.hideThinkingBlock, searchScan) {
-        val items = visibleItems
+    LaunchedEffect(searchQuery, prefs.hideThinkingBlock, prefs.toolDisplayMode, searchScan) {
+        val rows = displayRows
         val query = searchQuery
         val hideThinking = prefs.hideThinkingBlock
         val hits = if (query.isBlank()) {
@@ -772,7 +793,7 @@ internal fun ChatBody(
         } else {
             // `withContext` re-checks cancellation on the way back, so a superseded
             // scan (a new keystroke, a new tick) can never publish over a newer one.
-            withContext(Dispatchers.Default) { scanSearchHits(items, query, hideThinking) }
+            withContext(Dispatchers.Default) { scanChatRowSearchHits(rows, query, hideThinking) }
         }
         searchMatches.value = hits
         searchMatchesSeq++
@@ -789,7 +810,9 @@ internal fun ChatBody(
     // The result is unchanged: it is still the full list that is scanned, which also
     // keeps the jumps working across rows the window has not rendered yet.
     fun userRowIndices(): List<Int> =
-        visibleItems.mapIndexedNotNull { index, item -> if (item is UserMessage) index else null }
+        displayRows.mapIndexedNotNull { index, row ->
+            if (row is ChatRow.Single && row.item is UserMessage) index else null
+        }
 
     // §4.8's 编辑并从此分叉, hoisted out of the item lambda and given a **stable
     // identity** on purpose.
@@ -843,7 +866,7 @@ internal fun ChatBody(
     // `reveal` keeps the four navigation call sites unchanged.
     var pendingJumpOffset by remember { mutableIntStateOf(0) }
     fun reveal(row: Int) {
-        val needed = visibleItems.size - row
+        val needed = displayRows.size - row
         if (needed > renderWindow) renderWindow = needed
         pendingJumpOffset = 0
         pendingJump = row
@@ -1142,7 +1165,7 @@ internal fun ChatBody(
     // content update costs one early return (the guard below runs first) plus, while
     // paused, one `indexOfFirst` over the loaded list. It never runs for a position it
     // does not own — a gesture in flight, a navigation jump, or a following tail.
-    LaunchedEffect(hiddenCount, visibleItems.size) {
+    LaunchedEffect(hiddenCount, displayRows.size) {
         // The user's hand, a reveal/search jump, or the follow: all three own the
         // position, and one of them is where the reader asked to be.
         if (listState.isScrollInProgress || following || pendingJump != null) {
@@ -1151,11 +1174,11 @@ internal fun ChatBody(
         }
         val key = anchorKey
         if (key != null) {
-            val visibleRow = visibleItems.indexOfFirst { it.key == key }
+            val visibleRow = displayRows.indexOfFirst { it.key == key }
             if (visibleRow >= 0) {
                 val index = itemIndexOfVisibleRow(
                     visibleRow = visibleRow,
-                    visibleRows = visibleItems.size,
+                    visibleRows = displayRows.size,
                     renderWindow = renderWindow,
                     windowOpen = windowOpen,
                     headerRows = 0,
@@ -1166,7 +1189,7 @@ internal fun ChatBody(
                     // window's head, and let the deferred consumer below land on it — that
                     // is what computes the index in the *new* list's coordinates
                     // (`reveal`'s two-phase trick, without the navigation).
-                    renderWindow = maxOf(renderWindow, visibleItems.size - visibleRow)
+                    renderWindow = maxOf(renderWindow, displayRows.size - visibleRow)
                     pendingJumpOffset = anchorOffset
                     pendingJump = visibleRow
                 } else if (index != listState.firstVisibleItemIndex) {
@@ -1231,8 +1254,8 @@ internal fun ChatBody(
         lastRenderedRows = renderedItems.size
         if (gained <= 0 || state.streaming) return@LaunchedEffect
         val keys = ArrayList<String>(minOf(gained, FRESH_ROW_KEYS_MAX))
-        for (i in hiddenCount until minOf(hiddenCount + gained, visibleItems.size)) {
-            keys += visibleItems[i].key
+        for (i in hiddenCount until minOf(hiddenCount + gained, displayRows.size)) {
+            keys += displayRows[i].key
         }
         if (keys.isEmpty()) return@LaunchedEffect
         // `freshRowKeysAfter` owns the trim and its bound (`ui/chat/TailFollow.kt`, where the
@@ -1314,7 +1337,7 @@ internal fun ChatBody(
         val row = pendingJump ?: return@LaunchedEffect
         val index = itemIndexOfVisibleRow(
             visibleRow = row,
-            visibleRows = visibleItems.size,
+            visibleRows = displayRows.size,
             renderWindow = renderWindow,
             windowOpen = windowOpen,
             headerRows = 0,
@@ -1600,6 +1623,7 @@ internal fun ChatBody(
             searchOpen = searchOpen,
             scrolled = topBarScrolled,
             toolsExpanded = toolsExpanded,
+            toolDisplayMode = prefs.toolDisplayMode,
             terminalRunningCount = app.pi.ui.terminal.PiTerminalManager.runningCount,
             onOpenSessions = onOpenSessions,
             onOpenWorkspace = onOpenWorkspace,
@@ -1625,6 +1649,14 @@ internal fun ChatBody(
                 toolsExpanded = next
                 RowHeightCache.shared.clear()
                 session.setToolsExpandedRemote(next)
+            },
+            onSelectToolDisplayMode = { mode ->
+                RowHeightCache.shared.clear()
+                session.settingsStore.write(
+                    ActivityDisplayMode.SETTING_KEY,
+                    kotlinx.serialization.json.JsonPrimitive(mode),
+                )
+                session.onSettingWritten(ActivityDisplayMode.SETTING_KEY)
             },
             onAction = { perform(it) },
         )
@@ -1783,46 +1815,22 @@ internal fun ChatBody(
                 // the content type — no new taxonomy needed.
                 itemsIndexed(
                     renderedItems,
-                    key = { _, item -> item.key },
-                    contentType = { _, item -> item::class },
-                ) { sliceIndex, item ->
-                    // F34: the search highlights and the prompt jumps speak full-list
-                    // indices, and both the window prefix and the loading row sit in
-                    // front of this item — translate once, here, so everything below
-                    // keeps using `index` as before.
+                    key = { _, row -> row.key },
+                    contentType = { _, row ->
+                        when (row) {
+                            is ChatRow.Single -> row.item::class
+                            is ChatRow.ActivityGroup -> ChatRow.ActivityGroup::class
+                        }
+                    },
+                ) { sliceIndex, row ->
                     val index = sliceIndex + hiddenCount
-                    // `present` is a `Set`: this line runs once per rendered row on every
-                    // frame the list composes, and the old `List<Int>.contains` was a
-                    // linear scan of every match in the session.
                     val isMatch = searchMatches.value.present.contains(index)
                     val isCurrentMatch = isMatch && searchMatches.value.ordered.getOrNull(searchCursor) == index
-                    // This row's markdown has finished parsing — the library's own
-                    // `State.Success`, reported up from `PiMarkdownText` through
-                    // `LocalPiMarkdownParsed`. It is what releases the height floor
-                    // `rememberedRowHeight` holds a freshly composed row at: "the parse
-                    // landed" rather than "enough frames passed" or "the content happened to
-                    // measure something", which is what makes the release exact. Both are
-                    // per-row state, keyed on the row's own key so a recycled item slot
-                    // cannot inherit the previous row's answer.
-                    val markdownParsed = remember(item.key) { mutableStateOf(false) }
+                    val markdownParsed = remember(row.key) { mutableStateOf(false) }
                     val onMarkdownParsed: () -> Unit = remember(markdownParsed) { { markdownParsed.value = true } }
-                    // 消息级间距（换人时大、同一条消息内部小）：这一行属于哪一档由
-                    // `transcriptGap` 按**列表顺序**判定，理由在
-                    // `ui/render/TranscriptSpacing.kt`（实时那条路没有可剥的 key 前缀）。
-                    //
-                    // 只补**差值**：列表自己的 `spacedBy(blockSpacing)` 一格不动，换人那一行
-                    // 在自己头顶多留 `间距 − blockSpacing`。这样 a) 同一条消息内部逐像素不变；
-                    // b) 经典档三段都是 8 → 差值 0 → 连 padding 节点都不进链，等于今天。
-                    //
-                    // 加在**搜索高亮之外**（链的最外层），两个理由：高亮框不该把这段留白也
-                    // 涂上；而 `rememberedRowHeight` 的 `onSizeChanged` 在它里面，所以
-                    // `RowHeightCache` 记下的仍然是**内容**高度 —— 与今天同一个数。
-                    // 行的实际高度是「留白 + max(内容, 记忆高度)」，留白是这一行自己的确定
-                    // 值，所以不会出现"看着 8dp、测出来另一个数"。间距因此**在测量之内**
-                    // （`LazyColumn` 量的是带 padding 的节点），也**不在缓存之内**。
                     val extraTop = (
                         prefs.typographyProfile
-                            .gapFor(transcriptGap(visibleItems, hiddenCount + sliceIndex)) - blockSpacing
+                            .gapFor(chatRowGap(displayRows, hiddenCount + sliceIndex)) - blockSpacing
                         ).coerceAtLeast(0.dp)
                     val highlightModifier = when {
                         isCurrentMatch -> Modifier
@@ -1834,68 +1842,32 @@ internal fun ChatBody(
                     }
                     val rowModifier = (if (extraTop > 0.dp) Modifier.padding(top = extraTop) else Modifier)
                         .then(highlightModifier)
-                        // The height this row had before, for the frames of a *fresh*
-                        // composition of it: markdown's parse state is built with a plain
-                        // `remember`, so a row that leaves and comes back (a destination
-                        // switch, a scroll past it and back) is composed at zero height and
-                        // grows when the parse lands — and every row below it moves with it.
-                        // A floor, not a size, released by the parse itself: see
-                        // `ui/render/TranscriptRowHeight.kt` (and `RowHeightCache`'s bound).
-                        .rememberedRowHeight(item.key, contentReady = markdownParsed.value)
-                    // The list no longer computes anything about a row's neighbours: the
-                    // execution rail's two ends were the only thing it read them for, and
-                    // the rail is gone (the state glyph moved into a tool card's own
-                    // header — `ui/blocks/ToolRail.kt`). A tool card is therefore the same
-                    // shape wherever it sits, which is also why no row's height depends on
-                    // what precedes or follows it.
-                    // Whether this row's markdown must be parsed before its first layout:
-                    // see `PiMarkdownImmediate.kt` for the defect, and the block above for
-                    // the gate. `RowHeightCache` is the latch — a row that has already been
-                    // measured never asks again, so the synchronous parse happens at most
-                    // once per row — and streaming text never asks: its content changes on
-                    // every token, and that parse belongs off the frame thread.
-                    //
-                    // The last term is the **frame budget**: `piMarkdownParseBudget` is billed
-                    // with the measured cost of every eager parse this frame (`PiMarkdown.kt`
-                    // times the `Markdown(state = …)` call), and when a frame has spent its
-                    // 4 ms the rest of its new rows take the asynchronous path. So a crowd of
-                    // expensive rows is thinned out while a lone row is unaffected — the
-                    // common case — and no row's fate is decided by its character count.
-                    val streamingRow = (item as? AssistantText)?.streaming == true ||
-                        (item as? ThinkingBlock)?.streaming == true
-                    // A row entering from ABOVE the first visible one (fast upward fling over
-                    // rows never measured: a long user bubble with code blocks, say) must be
-                    // parsed before its first layout and is exempt from the frame budget.
-                    // Otherwise it is laid out at zero height, the fling runs through it, and
-                    // when the parse lands it grows by its own height and the viewport jumps
-                    // by that much. Read without subscribing: the list state moves every frame.
+                        .rememberedRowHeight(row.key, contentReady = markdownParsed.value)
+                    val singleItem = (row as? ChatRow.Single)?.item
+                    val streamingRow = (singleItem as? AssistantText)?.streaming == true ||
+                        (singleItem as? ThinkingBlock)?.streaming == true ||
+                        (row as? ChatRow.ActivityGroup)?.summary?.isRunning == true
                     val enteringFromAbove = androidx.compose.runtime.snapshots.Snapshot
                         .withoutReadObservation { sliceIndex <= listState.firstVisibleItemIndex }
-                    val itemCharCount = when (item) {
-                        is AssistantText -> item.text.length
-                        is UserMessage -> item.text.length
-                        is ThinkingBlock -> item.text.length
+                    val itemCharCount = when (singleItem) {
+                        is AssistantText -> singleItem.text.length
+                        is UserMessage -> singleItem.text.length
+                        is ThinkingBlock -> singleItem.text.length
                         else -> 0
                     }
                     // 超长消息（>8000 字）绝不豁免 4ms 帧预算，避免快速上滑长会话时主线程同步解析卡死 ANR。
                     val allowSyncFromAbove = enteringFromAbove && itemCharCount <= 8_000
                     val immediateMarkdown = !streamingRow &&
-                        RowHeightCache.shared.of(item.key) == null &&
-                        (item.key in freshRowKeys || restoring || allowSyncFromAbove) &&
+                        RowHeightCache.shared.of(row.key) == null &&
+                        (row.key in freshRowKeys || restoring || allowSyncFromAbove) &&
                         (allowSyncFromAbove || piMarkdownParseBudget.allow(System.nanoTime()))
-                    // The row's own place in the list, for a card that is about to change
-                    // its height (see `TranscriptRowAnchor`). `following` is handed over as
-                    // a lambda: an armed follow re-pins to the end on every height change
-                    // (pi's `updateLayout` does the same,
-                    // `scroll-view.ts:189-201`), so the two must not both own the position.
-                    // Read at click time, which is the only time it matters.
-                    val rowAnchor = remember(listState, sliceIndex, item.key) {
+                    val rowAnchor = remember(listState, sliceIndex, row.key) {
                         TranscriptRowAnchor(
                             listState = listState,
                             index = sliceIndex,
                             isFollowing = { following },
                             onLocalLayoutToggle = { tail.holdOnLocalLayoutToggle() },
-                            onEvictHeight = { RowHeightCache.shared.evict(item.key) },
+                            onEvictHeight = { RowHeightCache.shared.evict(row.key) },
                         )
                     }
                     CompositionLocalProvider(
@@ -1903,20 +1875,37 @@ internal fun ChatBody(
                         LocalPiMarkdownImmediate provides immediateMarkdown,
                         LocalPiMarkdownParsed provides onMarkdownParsed,
                     ) {
-                        BlockRenderer(
-                            item = item,
-                            modifier = rowModifier,
-                            hideThinking = prefs.hideThinkingBlock,
-                            thinkingDefaultExpanded = !prefs.thinkingCollapsedByDefault,
-                            toolsDefaultExpanded = toolsExpanded,
-                            showBilledCost = prefs.showCacheMissNotices,
-                            showTimestamps = prefs.showTimestamps,
-                            onBranchClick = onBranchClick,
-                            onForkFromMessage = onForkFromMessage,
-                            onImageClick = onImageClick,
-                            // 仅把 1 Hz 粗时钟交给正在运行中的工具卡，避免每秒触发整屏已完成 Markdown/代码卡重组。
-                            nowMs = if (item is ToolCall && item.status == ToolStatus.Pending) nowMs else null,
-                        )
+                        when (row) {
+                            is ChatRow.Single -> BlockRenderer(
+                                item = row.item,
+                                modifier = rowModifier,
+                                hideThinking = prefs.hideThinkingBlock,
+                                thinkingDefaultExpanded = !prefs.thinkingCollapsedByDefault,
+                                toolsDefaultExpanded = toolsExpanded,
+                                showBilledCost = prefs.showCacheMissNotices,
+                                showTimestamps = prefs.showTimestamps,
+                                onBranchClick = onBranchClick,
+                                onForkFromMessage = onForkFromMessage,
+                                onImageClick = onImageClick,
+                                // 仅把 1 Hz 粗时钟交给正在运行中的工具卡，避免每秒触发整屏已完成 Markdown/代码卡重组。
+                                nowMs = if (row.item is ToolCall && row.item.status == ToolStatus.Pending) nowMs else null,
+                                pairedDiff = (row.item as? ToolCall)?.let { pairedDiffByCallId[it.toolCallId] },
+                            )
+
+                            is ChatRow.ActivityGroup -> ActivityGroupBlock(
+                                group = row,
+                                pairedDiffByCallId = pairedDiffByCallId,
+                                modifier = rowModifier,
+                                hideThinking = prefs.hideThinkingBlock,
+                                defaultExpanded = toolsExpanded,
+                                showBilledCost = prefs.showCacheMissNotices,
+                                showTimestamps = prefs.showTimestamps,
+                                onBranchClick = onBranchClick,
+                                onForkFromMessage = onForkFromMessage,
+                                onImageClick = onImageClick,
+                                nowMs = if (row.summary.hasPendingTool) nowMs else null,
+                            )
+                        }
                     }
                 }
             }

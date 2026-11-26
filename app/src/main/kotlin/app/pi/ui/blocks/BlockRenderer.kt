@@ -109,6 +109,7 @@ fun BlockRenderer(
      * on every message the user had written.
      */
     showTimestamps: Boolean = false,
+    pairedDiff: ToolDiff? = null,
 ) {
     when (item) {
         is UserMessage -> UserMessageBlock(item, modifier, onForkFromMessage, onImageClick, showTimestamps)
@@ -138,7 +139,7 @@ fun BlockRenderer(
         is ToolCall -> when (item.toolName) {
             "read" -> ReadBlock(item, modifier, toolsDefaultExpanded, onImageClick)
             "write" -> WriteBlock(item, modifier, toolsDefaultExpanded, onImageClick)
-            "edit" -> EditBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+            "edit" -> EditBlock(item, modifier, toolsDefaultExpanded, pairedDiff = pairedDiff, onImageClick = onImageClick)
             "grep" -> GrepBlock(item, modifier, toolsDefaultExpanded, onImageClick)
             "find" -> FindBlock(item, modifier, toolsDefaultExpanded, onImageClick)
             "ls" -> LsBlock(item, modifier, toolsDefaultExpanded, onImageClick)

@@ -72,7 +72,7 @@ internal fun WriteBlock(
                     // with `pathDisplay = renderToolPath(...)` → `fg("accent", …)`
                     // (`core/tools/render-utils.js:57-63`).
                     subject = listOf(toolPathPart(body.path, fallback = tr("文件", "file"))),
-                    right = toolHeaderReading(item, state, count = body.totalLines),
+                    right = toolHeaderReading(item, state, count = body.totalLines, showElapsed = false),
                     expanded = expanded,
                     expandable = hasBody,
                 )

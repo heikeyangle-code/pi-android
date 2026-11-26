@@ -380,6 +380,8 @@ data class UiPrefs(
     val showTimestamps: Boolean = false,
     val thinkingCollapsedByDefault: Boolean = true,
     val expandToolsByDefault: Boolean = false,
+    /** Isolated tool & process presentation mode: `"cards"` (classic default) or `"compact"` (Compact Trace). */
+    val toolDisplayMode: String = app.pi.ui.chat.activity.ActivityDisplayMode.CARDS,
     /** pi's `hideThinkingBlock`. */
     val hideThinkingBlock: Boolean = false,
     /**

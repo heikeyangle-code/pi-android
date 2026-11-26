@@ -108,7 +108,7 @@ internal fun searchHits(item: TranscriptItem, query: String): Boolean = when (it
     is UserMessage -> item.text.hits(query)
     is AssistantText -> item.text.hits(query)
     is ThinkingBlock -> item.text.hits(query)
-    is ToolCall -> item.toolName.hits(query) || item.argsSummary.hits(query) || item.output.hits(query)
+    is ToolCall -> item.toolName.hits(query) || item.argsSummary.hits(query) || item.output.hits(query) || (item.diffText?.hits(query) == true)
     is ToolDiff -> item.path.hits(query) || item.diffText.hits(query)
     is CompactionMarker -> item.summary.hits(query)
     is BranchSummary -> item.summary.hits(query)
@@ -148,6 +148,33 @@ internal fun scanSearchHits(
     items.forEachIndexed { index, item ->
         if (hideThinking && item is ThinkingBlock) return@forEachIndexed
         if (searchHits(item, query)) {
+            ordered += index
+            present += index
+        }
+    }
+    return SearchHits(ordered, present)
+}
+
+/** Search scan over projected [app.pi.ui.chat.activity.ChatRow]s (supports both Classic and Compact Trace). */
+internal fun scanChatRowSearchHits(
+    rows: List<app.pi.ui.chat.activity.ChatRow>,
+    query: String,
+    hideThinking: Boolean,
+): SearchHits {
+    val ordered = ArrayList<Int>()
+    val present = HashSet<Int>()
+    rows.forEachIndexed { index, row ->
+        val matched = when (row) {
+            is app.pi.ui.chat.activity.ChatRow.Single -> {
+                if (hideThinking && row.item is ThinkingBlock) false else searchHits(row.item, query)
+            }
+            is app.pi.ui.chat.activity.ChatRow.ActivityGroup -> {
+                row.items.any { item ->
+                    if (hideThinking && item is ThinkingBlock) false else searchHits(item, query)
+                }
+            }
+        }
+        if (matched) {
             ordered += index
             present += index
         }

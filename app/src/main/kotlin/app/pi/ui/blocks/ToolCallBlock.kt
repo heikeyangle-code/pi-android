@@ -264,7 +264,7 @@ fun ToolCallBlock(
                             ?.let { listOf(ToolCallPart(it, ToolCallToken.Uncoloured)) }
                             .orEmpty()
                     },
-                    right = toolHeaderReading(item, state, elapsedMs = liveElapsedMs, count = outputLineCount),
+                    right = toolHeaderReading(item, state, elapsedMs = liveElapsedMs),
                     expanded = expanded,
                     expandable = hasExpandableBody,
                 )

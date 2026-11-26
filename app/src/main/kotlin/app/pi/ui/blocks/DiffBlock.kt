@@ -2,14 +2,19 @@ package app.pi.ui.blocks
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -110,21 +115,9 @@ fun DiffBlock(
     // *composition*: a diff card that scrolls out of the list's reuse pool and back is
     // expanded again with no plan in hand, which paid the 3.9–13.2 ms a second time. The cache
     // is keyed on the same two values this `remember` is, so a hit is the same list of rows.
-    val plan = remember(item.key, item.diffText, expanded) {
-        if (expanded) DiffPlanCache.plan(item.key, item.diffText, item.hunks, MAX_DIFF_ROWS) else emptyList()
-    }
-    val omitted = item.lineCount > MAX_DIFF_ROWS || item.truncated
-
     // 长按复制差异正文（与工具卡同一个 `ToolActionMenu`）。只加交互，不改任何绘制。
     ToolActionMenu(command = null, output = item.diffText, fullOutputPath = null) {
         BlockColumn(modifier) {
-            // The diff card used to sit on the execution rail beside the calls it belongs to,
-            // with the one node that is not a state — `±` (`06 §3` 构件 1). The rail and its
-            // nodes are gone (`ToolRail.kt`'s KDoc: the state glyph moved into a tool card's
-            // header row), so this card is now inset by the same shared left edge as a tool
-            // card and draws no node at all. It carries **no duration tick** either (`06 §2`:
-            // diff 卡不显示 — nothing here was timed, and the row is already the densest in
-            // the stream).
             val chevronAngle = animateFloatAsState(if (expanded) 90f else 0f, label = "diff-chevron")
             ToolRailFrame {
                 BlockCard(
@@ -146,36 +139,17 @@ fun DiffBlock(
                         )
                         Spacer(Modifier.width(PiSpacing.inline))
                         Text(
-                            text = item.path.ifEmpty { tr("未命名文件", "Untitled file") },
+                            text = item.path.takeIf { it.isNotEmpty() }?.let { shortenToolPathForPhone(it) }
+                                ?: tr("未命名文件", "Untitled file"),
                             modifier = Modifier.weight(1f),
                             style = PiTheme.text.monoSmall,
                             color = palette.accent,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        Spacer(Modifier.width(6.dp))
-                        if (item.added > 0) {
-                            Text(
-                                text = "+${item.added}",
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(palette.toolDiffAdded.copy(alpha = 0.14f))
-                                    .padding(horizontal = 6.dp, vertical = 1.dp),
-                                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
-                                color = palette.toolDiffAdded,
-                            )
-                        }
-                        if (item.removed > 0) {
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = "−${item.removed}",
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(palette.toolDiffRemoved.copy(alpha = 0.14f))
-                                    .padding(horizontal = 6.dp, vertical = 1.dp),
-                                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
-                                color = palette.toolDiffRemoved,
-                            )
+                        if (item.added > 0 || item.removed > 0) {
+                            Spacer(Modifier.width(6.dp))
+                            DiffStatsBadges(item.added, item.removed)
                         }
                         Spacer(Modifier.width(6.dp))
                         Icon(
@@ -189,65 +163,133 @@ fun DiffBlock(
                     }
 
                     if (expanded) {
-                        if (plan.isEmpty()) {
-                            val raw = item.diffText
-                            val painted = remember(raw) { tailLines(raw, TOOL_BODY_MAX_LINES) }
-                            val hidden = remember(raw, painted) { hiddenLineCount(lineCount(raw), painted) }
-                            MonoText(
-                                text = painted.ifEmpty { tr("（无差异内容）", "(No diff content)") },
-                                color = palette.bodyOnTool,
-                            )
-                            if (hidden > 0) {
-                                Text(
-                                    text = tr("上方还有 $hidden 行未显示", "$hidden earlier lines not shown"),
-                                    style = PiTheme.text.meta,
-                                    color = palette.muted,
-                                    modifier = Modifier.padding(top = PiSpacing.tiny),
-                                )
-                            }
-                        } else {
-                            // 零间距 Column 包裹差异行，保证增删高亮底色连续成带，不被 BlockCard 的 6dp 行距打断。
-                            Column(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(0.dp),
-                            ) {
-                                for (row in plan) {
-                                    when (row) {
-                                        is DiffRow.Header -> Text(
-                                            text = row.text,
-                                            modifier = Modifier.padding(top = PiSpacing.tiny, bottom = 2.dp),
-                                            style = PiTheme.text.monoSmall,
-                                            color = palette.muted,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-
-                                        is DiffRow.Fold -> Text(
-                                            text = tr("… ${row.count} 行未变", "… ${row.count} unchanged lines"),
-                                            modifier = Modifier.padding(
-                                                start = PiSpacing.symbolColumn + PiSpacing.lineNumberColumn,
-                                                top = PiSpacing.tiny,
-                                                bottom = PiSpacing.tiny,
-                                            ),
-                                            style = PiTheme.text.monoSmall,
-                                            color = palette.muted,
-                                        )
-
-                                        is DiffRow.Line -> DiffLineRow(row)
-                                    }
-                                }
-                            }
-                            if (omitted) {
-                                Text(
-                                    text = tr("差异过长，仅显示前 $MAX_DIFF_ROWS 行", "Diff too long, showing first $MAX_DIFF_ROWS lines"),
-                                    style = PiTheme.text.meta,
-                                    color = palette.muted,
-                                )
-                            }
-                        }
+                        DiffBodyContent(item = item)
                     }
                 }
             }
+        }
+    }
+}
+
+/** Crisp `+N` / `−M` tabular diff counters shared by merged [EditBlock], [DiffBlock], and Compact Trace. */
+@Composable
+internal fun DiffStatsBadges(
+    added: Int,
+    removed: Int,
+    modifier: Modifier = Modifier,
+) {
+    val palette = PiTheme.palette
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (added > 0) {
+            Text(
+                text = "+$added",
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(palette.toolDiffAdded.copy(alpha = 0.14f))
+                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+                color = palette.toolDiffAdded,
+                maxLines = 1,
+            )
+        }
+        if (removed > 0) {
+            Text(
+                text = "−$removed",
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(palette.toolDiffRemoved.copy(alpha = 0.14f))
+                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+                color = palette.toolDiffRemoved,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/**
+ * Shared unified diff body rendered inside both merged [EditBlock] and standalone [DiffBlock].
+ * Horizontally scrollable on narrow phones so long code lines keep strict symbol/line-number
+ * alignment without wrapping into fragmented slivers; short diffs never scroll.
+ */
+@Composable
+internal fun DiffBodyContent(
+    item: ToolDiff,
+    modifier: Modifier = Modifier,
+) {
+    val palette = PiTheme.palette
+    val plan = remember(item.key, item.diffText) {
+        DiffPlanCache.plan(item.key, item.diffText, item.hunks, MAX_DIFF_ROWS)
+    }
+    val omitted = item.lineCount > MAX_DIFF_ROWS || item.truncated
+
+    if (plan.isEmpty()) {
+        val raw = item.diffText
+        val painted = remember(raw) { tailLines(raw, TOOL_BODY_MAX_LINES) }
+        val hidden = remember(raw, painted) { hiddenLineCount(lineCount(raw), painted) }
+        MonoText(
+            text = painted.ifEmpty { tr("（无差异内容）", "(No diff content)") },
+            color = palette.bodyOnTool,
+            modifier = modifier,
+        )
+        if (hidden > 0) {
+            Text(
+                text = tr("上方还有 $hidden 行未显示", "$hidden earlier lines not shown"),
+                style = PiTheme.text.meta,
+                color = palette.muted,
+                modifier = Modifier.padding(top = PiSpacing.tiny),
+            )
+        }
+    } else {
+        // 零间距 Column 包裹差异行，支持窄屏整块顺滑横滑且增删高亮底色铺满整行宽。
+        BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+            val minRowWidth = maxWidth
+            Column(
+                modifier = Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .width(IntrinsicSize.Max)
+                    .widthIn(min = minRowWidth),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                for (row in plan) {
+                    when (row) {
+                        is DiffRow.Header -> Text(
+                            text = row.text,
+                            modifier = Modifier.padding(top = PiSpacing.tiny, bottom = 2.dp),
+                            style = PiTheme.text.monoSmall,
+                            color = palette.muted,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+
+                        is DiffRow.Fold -> Text(
+                            text = tr("… ${row.count} 行未变", "… ${row.count} unchanged lines"),
+                            modifier = Modifier.padding(
+                                start = PiSpacing.symbolColumn + PiSpacing.lineNumberColumn,
+                                top = PiSpacing.tiny,
+                                bottom = PiSpacing.tiny,
+                            ),
+                            style = PiTheme.text.monoSmall,
+                            color = palette.muted,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+
+                        is DiffRow.Line -> DiffLineRow(row)
+                    }
+                }
+            }
+        }
+        if (omitted) {
+            Text(
+                text = tr("差异过长，仅显示前 $MAX_DIFF_ROWS 行", "Diff too long, showing first $MAX_DIFF_ROWS lines"),
+                style = PiTheme.text.meta,
+                color = palette.muted,
+            )
         }
     }
 }
@@ -315,9 +357,11 @@ private fun DiffLineRow(row: DiffRow.Line) {
         )
         Text(
             text = body,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.padding(end = 8.dp),
             style = PiTheme.text.code,
             color = lineColor,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }

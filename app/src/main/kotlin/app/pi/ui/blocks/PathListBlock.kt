@@ -167,7 +167,13 @@ private fun PathListBlock(
                     // the tool's own `limit` answer is what those two cards say first — and
                     // the reading puts the duration in front of it. `body.entryCount` is the
                     // number the parse above already produced, handed on rather than re-read.
-                    right = toolHeaderReading(item, state, count = body.entryCount, unit = tr("项", if (body.entryCount == 1) "item" else "items")),
+                    right = toolHeaderReading(
+                        item,
+                        state,
+                        count = body.entryCount,
+                        unit = tr("项", if (body.entryCount == 1) "item" else "items"),
+                        showElapsed = false,
+                    ),
                     expanded = expanded,
                     expandable = hasBody,
                 )
