@@ -401,6 +401,10 @@ fun PiNumberEditorSheet(
             Text(setting.title, style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(PiSpacing.small))
             Text(setting.description, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            setting.editorNote?.takeIf { it.isNotBlank() }?.let { note ->
+                Spacer(Modifier.height(6.dp))
+                Text(note, style = PiTheme.text.meta, color = PiTheme.palette.muted)
+            }
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
             val quickPresets = numberQuickPresetsFor(setting.key)
             if (quickPresets.isNotEmpty()) {
@@ -420,12 +424,14 @@ fun PiNumberEditorSheet(
                 }
                 Spacer(Modifier.height(PiSpacing.unit))
             }
+            val lowLabel = formatSettingNumber(setting.key, low, setting.unit)
+            val highLabel = formatSettingNumber(setting.key, high, setting.unit)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(PiSliderLabelGap),
             ) {
-                Text("$low", style = PiTheme.text.monoSmall, color = PiTheme.palette.muted)
+                Text(lowLabel, style = PiTheme.text.monoSmall, color = PiTheme.palette.muted)
                 PiSlider(
                     value = sliderValue.toFloat(),
                     onValueChange = { raw -> setWithinRange(raw.toInt()) },
@@ -433,7 +439,7 @@ fun PiNumberEditorSheet(
                     valueRange = range,
                     steps = sliderSteps,
                 )
-                Text("$high", style = PiTheme.text.monoSmall, color = MaterialTheme.colorScheme.onSurface)
+                Text(highLabel, style = PiTheme.text.monoSmall, color = MaterialTheme.colorScheme.onSurface)
             }
             Spacer(Modifier.height(PiSettingsMetrics.rowGap))
             Row(
@@ -482,21 +488,28 @@ fun PiNumberEditorSheet(
                     typed.isBlank() -> {
                         val fallback = setting.defaultValue?.intValueOrNull()
                         if (fallback != null) {
-                            val unitSuffix = setting.unit?.let { " $it" } ?: ""
+                            val formattedDefault = formatSettingNumber(setting.key, fallback, setting.unit)
                             tr(
-                                "未设置，pi 用自带的 $fallback$unitSuffix。",
-                                "Not set; pi uses its default of $fallback$unitSuffix.",
+                                "未设置，pi 使用默认 $formattedDefault。",
+                                "Not set; pi uses its default of $formattedDefault.",
                             )
                         } else {
-                            tr("未设置。留空保存就是把这个键删掉。", "Not set. Saving blank removes this key.")
+                            tr("未设置。留空保存即移除此键并回退默认。", "Not set. Saving blank removes this key.")
                         }
                     }
 
                     !inRange -> tr(
-                        "建议 $low 到 $high；保存会原样写入 ${parsed}，不会替你改。",
-                        "Recommended range is $low to $high; saving writes $parsed verbatim.",
+                        "建议 $lowLabel 到 $highLabel；保存会原样写入 ${parsed}，不会替你改。",
+                        "Recommended range is $lowLabel to $highLabel; saving writes $parsed verbatim.",
                     )
-                    else -> tr("取值范围 $low 到 $high", "Range: $low to $high")
+                    else -> {
+                        val preview = parsed?.let { formatSettingNumber(setting.key, it, setting.unit) }
+                        if (preview != null) {
+                            tr("当前等效：$preview · 范围 $lowLabel ~ $highLabel", "Effective: $preview · Range $lowLabel ~ $highLabel")
+                        } else {
+                            tr("取值范围 $lowLabel 到 $highLabel", "Range: $lowLabel to $highLabel")
+                        }
+                    }
                 },
                 style = PiTheme.text.meta,
                 color = if (problem != null) PiTheme.palette.error else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -932,6 +945,70 @@ private fun numberQuickPresetsFor(key: String): List<Pair<Int, String>> = when (
         30_000 to tr("30秒", "30s"),
         60_000 to tr("60秒", "60s"),
         0 to tr("不限时", "Disabled"),
+    )
+    "compaction.reserveTokens" -> listOf(
+        0 to tr("0 (上限)", "0 (limit)"),
+        8_192 to "8K",
+        16_384 to "16K",
+        24_576 to "24K",
+        32_768 to "32K",
+    )
+    "compaction.keepRecentTokens" -> listOf(
+        8_000 to "8K",
+        12_000 to "12K",
+        20_000 to "20K",
+        32_000 to "32K",
+        50_000 to "50K",
+    )
+    "branchSummary.reserveTokens" -> listOf(
+        8_192 to "8K",
+        16_384 to "16K",
+        24_576 to "24K",
+        32_768 to "32K",
+    )
+    "codemode.inlineBudget" -> listOf(
+        1_500 to "1.5K",
+        3_000 to "3K",
+        6_000 to "6K",
+        12_000 to "12K",
+    )
+    "retry.maxRetries" -> listOf(
+        1 to tr("1次", "1×"),
+        3 to tr("3次", "3×"),
+        5 to tr("5次", "5×"),
+        8 to tr("8次", "8×"),
+        10 to tr("10次", "10×"),
+    )
+    "retry.baseDelayMs" -> listOf(
+        1_000 to tr("1秒", "1s"),
+        2_000 to tr("2秒", "2s"),
+        5_000 to tr("5秒", "5s"),
+        10_000 to tr("10秒", "10s"),
+    )
+    "retry.maxAgentDelayMs" -> listOf(
+        15_000 to tr("15秒", "15s"),
+        30_000 to tr("30秒", "30s"),
+        60_000 to tr("1分钟", "1 min"),
+        120_000 to tr("2分钟", "2 min"),
+        300_000 to tr("5分钟", "5 min"),
+    )
+    "retry.provider.timeoutMs" -> listOf(
+        30_000 to tr("30秒", "30s"),
+        60_000 to tr("1分钟", "1 min"),
+        120_000 to tr("2分钟", "2 min"),
+        300_000 to tr("5分钟", "5 min"),
+    )
+    "retry.provider.maxRetries" -> listOf(
+        0 to tr("0 (推荐)", "0 (rec.)"),
+        1 to tr("1次", "1×"),
+        2 to tr("2次", "2×"),
+        3 to tr("3次", "3×"),
+    )
+    "retry.provider.maxRetryDelayMs" -> listOf(
+        30_000 to tr("30秒", "30s"),
+        60_000 to tr("1分钟", "1 min"),
+        120_000 to tr("2分钟", "2 min"),
+        0 to tr("不限制", "Unlimited"),
     )
     else -> emptyList()
 }

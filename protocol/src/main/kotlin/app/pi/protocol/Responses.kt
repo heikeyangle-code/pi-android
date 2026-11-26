@@ -288,8 +288,10 @@ object PiResponses {
         val exitCode: Int?,
         val cancelled: Boolean,
         val truncated: Boolean,
-        /** Present only when `truncated` is true. */
+        /** Present only when `truncated` is true and full output was written. */
         val fullOutputPath: String?,
+        /** Present when `truncated` is true and saving the full output failed (Pi 1.6.1). */
+        val fullOutputError: String? = null,
     )
 
     /** `clear_queue` data. */
@@ -499,6 +501,7 @@ object PiResponses {
             cancelled = obj.bool("cancelled") ?: false,
             truncated = obj.bool("truncated") ?: false,
             fullOutputPath = obj.str("fullOutputPath"),
+            fullOutputError = obj.str("fullOutputError"),
         )
     }
 

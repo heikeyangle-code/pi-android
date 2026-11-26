@@ -227,6 +227,7 @@ private fun statusText(run: BashRun): String? {
         if (run.truncated) {
             add(
                 run.fullOutputPath?.let { tr("输出被截断，完整输出：$it", "Output truncated, full output: $it") }
+                    ?: run.fullOutputError?.let { tr("输出被截断，未能保存完整输出：$it", "Output truncated, could not save full output: $it") }
                     ?: tr("输出被截断", "Output truncated"),
             )
         }

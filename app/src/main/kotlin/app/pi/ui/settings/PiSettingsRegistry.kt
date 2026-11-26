@@ -187,13 +187,58 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
             emptyListLabel = emptyDefault,
         ),
         PiSetting(
-            key = "showCacheMissNotices",
+            key = "notices.cacheMisses",
             title = t("缓存未命中提示", "Cache Miss Notices"),
-            description = t("提示缓存未命中、压缩计费及思考/推理块被丢弃等诊断。", "Show notices for cache misses, compaction billing, and dropped reasoning blocks."),
+            description = t("当助手回复产生较大缓存未命中（如切换模型或空闲过期）时弹出诊断提醒。", "Show notices when an assistant response pays for a significant prompt cache miss."),
+            kind = PiRowKind.Switch,
+            group = G_MODELS_SCREEN,
+            section = t("提示与诊断", "Notices & Diagnostics"),
+            effective = EffectiveKind.Immediate,
+            defaultValue = bool(false),
+            emptyListLabel = emptyDefault,
+        ),
+        PiSetting(
+            key = "notices.cacheWarming",
+            title = t("缓存预热费用提示", "Cache Warming Notices"),
+            description = t("当后台缓存预热触发计费时提示本次预热开销。", "Show notices when background prompt cache warming incurs usage."),
+            kind = PiRowKind.Switch,
+            group = G_MODELS_SCREEN,
+            section = t("提示与诊断", "Notices & Diagnostics"),
+            effective = EffectiveKind.Immediate,
+            defaultValue = bool(false),
+            emptyListLabel = emptyDefault,
+        ),
+        PiSetting(
+            key = "notices.compactionCosts",
+            title = t("压缩与摘要计费提示", "Compaction Cost Notices"),
+            description = t("在会话压缩与分支摘要卡片下方显示实际计费 Token 数与预估费用。", "Show billed tokens and cost under compaction and branch summary cards."),
+            kind = PiRowKind.Switch,
+            group = G_MODELS_SCREEN,
+            section = t("提示与诊断", "Notices & Diagnostics"),
+            effective = EffectiveKind.Immediate,
+            defaultValue = bool(false),
+            emptyListLabel = emptyDefault,
+        ),
+        PiSetting(
+            key = "notices.reasoningDrops",
+            title = t("推理块被丢弃提示", "Dropped Reasoning Notices"),
+            description = t("当 Anthropic 或 OpenAI 因签名/前缀变化丢弃历史思考块时弹出提醒。", "Show notices when a provider drops withheld thinking or reasoning blocks."),
+            kind = PiRowKind.Switch,
+            group = G_MODELS_SCREEN,
+            section = t("提示与诊断", "Notices & Diagnostics"),
+            effective = EffectiveKind.Immediate,
+            defaultValue = bool(false),
+            emptyListLabel = emptyDefault,
+        ),
+        PiSetting(
+            key = "warnings.anthropicExtraUsage",
+            title = t("Anthropic 超额计费提醒", "Anthropic Extra Usage Warning"),
+            description = t("使用 Anthropic 订阅登录且可能触发付费超额用量时给出提醒。", "Warn when Anthropic subscription auth may use paid extra usage."),
             kind = PiRowKind.Switch,
             group = G_MODELS_SCREEN,
             section = t("缓存", "Cache"),
-            defaultValue = bool(false),
+            effective = EffectiveKind.Immediate,
+            defaultValue = bool(true),
             emptyListLabel = emptyDefault,
         ),
         PiSetting(
@@ -372,8 +417,8 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
         ),
         PiSetting(
             key = "branchSummary.reserveTokens",
-            title = t("分支摘要保留 token", "Branch Summary Reserve Tokens"),
-            description = t("分支摘要预留 token（输出上限 4096）。", "Tokens reserved for the branch summary prompt and LLM response."),
+            title = t("分支摘要预留 token", "Branch Summary Reserve Tokens"),
+            description = t("为分支摘要提示词与模型回复预留的上下文余量。", "Tokens reserved for the branch summary prompt and LLM response."),
             kind = PiRowKind.Number,
             group = G_COMPACTION,
             section = t("压缩", "Compaction"),
@@ -673,7 +718,7 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
             ),
             kind = PiRowKind.List,
             group = G_RESOURCES,
-            section = t("包安装", "Package Install"),
+            section = t("包安装与遥测", "Packages & Telemetry"),
             effective = EffectiveKind.Immediate,
             presets = listOf("npm", "--registry=https://registry.npmmirror.com"),
             emptyListLabel = t("默认（npm）", "Default (npm)"),
@@ -684,9 +729,20 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
             description = t("执行 pi install/update 时发送匿名安装遥测与来源标头。", "Send anonymous install/update telemetry and attribution headers."),
             kind = PiRowKind.Switch,
             group = G_RESOURCES,
-            section = t("包安装", "Package Install"),
+            section = t("包安装与遥测", "Packages & Telemetry"),
             effective = EffectiveKind.Immediate,
             defaultValue = bool(true),
+            emptyListLabel = emptyDefault,
+        ),
+        PiSetting(
+            key = "enableAnalytics",
+            title = t("使用分析数据共享", "Analytics Sharing"),
+            description = t("可选加入 Pi 匿名使用分析（默认关闭）。", "Opt in to anonymous Pi usage analytics (off by default)."),
+            kind = PiRowKind.Switch,
+            group = G_RESOURCES,
+            section = t("包安装与遥测", "Packages & Telemetry"),
+            effective = EffectiveKind.Immediate,
+            defaultValue = bool(false),
             emptyListLabel = emptyDefault,
         ),
 
@@ -873,14 +929,17 @@ private fun buildGroups(zh: Boolean): List<PiSettingsGroup> {
             val enabled = PiSettingsCatalog.summaryText(store, "compaction.enabled")
             val reserve = PiSettingsCatalog.summaryText(store, "compaction.reserveTokens")
             val keep = PiSettingsCatalog.summaryText(store, "compaction.keepRecentTokens")
-            "$enabled · $reserve / $keep"
+            t("$enabled · 余量 $reserve · 保留 $keep", "$enabled · Reserve $reserve · Keep $keep")
         },
         PiSettingsGroup(G_RETRY, t("网络与重试", "Network & Retry"), Icons.Filled.Refresh) { store ->
-            val retries = PiSettingsCatalog.summaryText(store, "retry.maxRetries")
-            t(
-                "${PiSettingsCatalog.summaryText(store, "transport")} · 重试 ${PiSettingsCatalog.summaryText(store, "retry.enabled")} · $retries",
-                "${PiSettingsCatalog.summaryText(store, "transport")} · Retry ${PiSettingsCatalog.summaryText(store, "retry.enabled")} · $retries",
-            )
+            val idle = PiSettingsCatalog.summaryText(store, "httpIdleTimeoutMs")
+            val retryOn = PiSettingsCatalog.byKey["retry.enabled"]?.boolIn(store, true) ?: true
+            val retryPart = if (retryOn) {
+                t("重试 ${PiSettingsCatalog.summaryText(store, "retry.maxRetries")}", "Retry ${PiSettingsCatalog.summaryText(store, "retry.maxRetries")}")
+            } else {
+                t("重试关", "Retry off")
+            }
+            "${PiSettingsCatalog.summaryText(store, "transport")} · $idle · $retryPart"
         },
         PiSettingsGroup(G_TOOLS, t("工具", "Tools"), Icons.Filled.Build) { store ->
             val raw = store.read("defaultTools")
@@ -926,6 +985,7 @@ object PiSettingsCatalog {
     /** Keys written by App and consumed directly by pi SDK. */
     val piOwnedKeys: Map<String, String> = mapOf(
         "cacheWarming" to "settings-manager.js getCacheWarmingMode -> core/sdk.js CacheWarmer",
+        "warnings.anthropicExtraUsage" to "settings-manager.js getWarnings / setWarnings",
         "transport" to "settings-manager.js getTransport -> core/sdk.js",
         "modelThinkingLevels" to "settings-manager.js -> core/sdk.js",
         "thinkingBudgets" to "settings-manager.js -> core/sdk.js",
@@ -948,6 +1008,7 @@ object PiSettingsCatalog {
         "images.autoResize" to "settings-manager.js -> core/agent-session.js",
         "images.blockImages" to "settings-manager.js -> core/sdk.js",
         "enableInstallTelemetry" to "settings-manager.js -> core/telemetry.js",
+        "enableAnalytics" to "settings-manager.js getEnableAnalytics / setEnableAnalytics",
         "codemode.mode" to "extensions/codemode/index.js pi.getSettings().codemode.mode",
         "codemode.inlineBudget" to "extensions/codemode/index.js pi.getSettings().codemode.inlineBudget",
         "shellCommandPrefix" to "settings-manager.js getShellCommandPrefix -> core/tools/bash.js",

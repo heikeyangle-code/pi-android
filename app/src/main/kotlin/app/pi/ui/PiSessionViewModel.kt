@@ -1844,11 +1844,21 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     _renderRev.value += 1
                 }
                 if (ev.name == "settings.changed") {
+                    val obj = ev.data as? JsonObject
+                    val method = (obj?.get("method") as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    val key = (obj?.get("key") as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    val fullReload = method == "reload" || (method == null && key == null)
                     invalidateSettingsCache()
                     refreshPrefs()
-                    refreshTheme()
-                    refreshCommands()
-                    seedAutoRetryFromSettings()
+                    if (fullReload || key == "theme" || method == "setTheme" || method == "setThemes") {
+                        refreshTheme()
+                    }
+                    if (fullReload || method == "setEnableSkillCommands") {
+                        refreshCommands()
+                    }
+                    if (fullReload || method == "setRetryEnabled") {
+                        seedAutoRetryFromSettings()
+                    }
                 }
             }
         }
@@ -2169,7 +2179,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             val initialHostState = engine.commands.stateStore.state.value
             val initialSessionState = initialHostState?.toSessionState()
             if (initialHostState != null && initialSessionState != null) {
-                applySessionState(initialSessionState, initialHostState.availableThinkingLevels)
+                applySessionState(initialSessionState, initialHostState.availableThinkingLevels, initialHostState)
+                _state.update { s -> s.copy(stats = initialHostState.toSessionStats(previousToolResults = s.stats?.toolResults ?: 0)) }
                 if (initialHostState.availableThinkingLevels == null) {
                     refreshThinkingLevels()
                 }
@@ -2501,22 +2512,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
 
-            // The only ground truth for "the model changed behind our back":
-            // `model_select` is emitted to extensions only, never to session
-            // listeners (`agent-session.ts:1659-1670`, audit §5.3). Commands are
-            // re-read here too: an extension can register one at any time.
+            // 宿主已在 `agent_settled` 上自动推送完整 `state` 快照（含最新 model、thinkingLevel、
+            // availableThinkingLevels、contextUsage、tokens、cost 与 messageCounts），经 `hostStateJob`
+            // 自动折叠到 `_state.meta` 与 `_state.stats`；此处不再补发重复的 `session.snapshot` /
+            // `session.stats` 往返，仅在扩展动态注册命令时刷新命令表。
             is PiEvent.AgentSettled -> {
                 viewModelScope.launch {
-                    refreshState()
                     refreshCommands()
-                    // pi recomputes the footer's totals and context percentage on
-                    // every render (`components/footer.ts:106-111`). The app's
-                    // source for the same figures is `get_session_stats`, whose
-                    // `contextUsage` is literally `getContextUsage()`
-                    // (`core/agent-session.ts:3407`, the call the footer makes at
-                    // `footer.ts:108`), so it is re-read whenever a run settles —
-                    // F10.
-                    refreshStats()
                 }
             }
 
@@ -3465,7 +3467,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { ext.reload() }
                     .onSuccess {
                         refreshCommands()
-                        refreshState()
                         refreshPrefs()
                         refreshTheme()
                         pushNotice(tr("已重新加载扩展、技能、提示词和主题。", "Reloaded extensions, skills, prompts, and themes."), Notice.Tone.Info)
@@ -3882,7 +3883,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** 「模型与供应商」页要的全部宿主能力；引擎没跑时 null。 */
     fun modelsHost(): app.pi.ui.models.ModelsHost? {
         val engine = session ?: return null
-        val api = HostEngineApi(engine.commands)
+        val api = engine.api
         return app.pi.ui.models.ModelsHost(
             auth = engine.auth,
             advanced = engine.advanced,
@@ -3900,9 +3901,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             currentModel = { _state.value.meta.model?.let { m -> m.provider?.let { it to m.id } } },
             currentThinking = { _state.value.meta.thinkingLevel },
             thinkingLevels = {
-                api.getAvailableThinkingLevels().also { lv ->
-                    _state.update { s -> s.copy(meta = s.meta.copy(thinkingLevels = lv)) }
-                }
+                val cached = engine.commands.stateStore.state.value?.availableThinkingLevels
+                val levels = if (!cached.isNullOrEmpty()) cached else api.getAvailableThinkingLevels()
+                _state.update { s -> s.copy(meta = s.meta.copy(thinkingLevels = levels)) }
+                levels
             },
             setThinking = { level ->
                 api.setThinkingLevel(level)
@@ -3936,8 +3938,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 engine.commands.settingsSet("setEnabledModels", params)
                 invalidateSettingsCache()
             },
-            setShowCacheMissNotices = { show ->
-                engine.commands.settingsSet("setShowCacheMissNotices", listOf(JsonPrimitive(show)))
+            setNotice = { key, show ->
+                engine.commands.settingsSet("setNotice", listOf(JsonPrimitive(key), JsonPrimitive(show)))
                 invalidateSettingsCache()
                 refreshPrefs()
             },
@@ -4345,8 +4347,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun setThinkingLevel(level: String, persist: Boolean = false) {
         call(tr("切换思考等级", "Change thinking level")) { api ->
             api.setThinkingLevel(level, persist)
-            _state.update { s -> s.copy(meta = s.meta.copy(thinkingLevel = level)) }
-            refreshState()
+            val applied = session?.commands?.stateStore?.state?.value?.thinkingLevel?.takeIf { it.isNotBlank() } ?: level
+            _state.update { s -> s.copy(meta = s.meta.copy(thinkingLevel = applied)) }
         }
     }
 
@@ -4370,6 +4372,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * `model.cycle`：按作用域顺序切到下一个模型（pi 的 Ctrl+P）。
      * 只有一个可选模型时宿主答 null，给一句提示而不是静默。
+     * 宿主应答已附带最新 `withState`（含新模型的 `availableThinkingLevels` 与 `contextUsage`），无需补发 `snapshot`/`stats`。
      */
     fun cycleModel() {
         call(tr("切换模型", "Switch model")) { api ->
@@ -4380,8 +4383,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 return@call
             }
             _state.update { s -> s.copy(meta = s.meta.copy(model = model)) }
-            refreshState()
-            refreshStats()
+            applyLatestHostState()
         }
     }
 
@@ -4407,12 +4409,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             }
             val applied = api.setModel(ref.first, ref.second)
             _state.update { s -> s.copy(meta = s.meta.copy(model = applied)) }
-            refreshState()
-            refreshStats()
+            applyLatestHostState()
         }
     }
 
-    /** `set_model`. pi answers with the model it actually switched to. */
+    /** `set_model`. pi answers with the model it actually switched to + embedded `withState` snapshot. */
     fun setModel(model: PiResponses.ModelInfo, persist: Boolean = false) {
         val provider = model.provider
         if (provider.isNullOrBlank()) {
@@ -4422,13 +4423,18 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         call(tr("切换模型", "Switch model")) { api ->
             val applied = api.setModel(provider, model.id, persist = persist)
             _state.update { s -> s.copy(meta = s.meta.copy(model = applied)) }
-            // Thinking levels are a property of the model, and pi applies a
-            // per-model default on a model switch
-            // (`_getThinkingLevelForModelSwitch`), so re-read both.
-            refreshState()
-            // 上下文窗口是模型自己的：换模型之后 `contextUsage.contextWindow` 必须重读，
-            // 否则环上的总量会停在旧模型上，直到下一轮结束。
-            refreshStats()
+            applyLatestHostState()
+        }
+    }
+
+    /** 立刻折叠 `withState` 刚写进 `stateStore` 的快照（新模型思考档位 + 上下文窗口），省去额外 RPC 往返。 */
+    private fun applyLatestHostState() {
+        val hostState = session?.commands?.stateStore?.state?.value ?: return
+        hostState.toSessionState()?.let { remote ->
+            applySessionState(remote, hostState.availableThinkingLevels, hostState)
+        }
+        _state.update { s ->
+            s.copy(stats = hostState.toSessionStats(previousToolResults = s.stats?.toolResults ?: 0))
         }
     }
 
@@ -4713,6 +4719,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     cancelled = result.cancelled,
                     truncated = result.truncated,
                     fullOutputPath = result.fullOutputPath,
+                    fullOutputError = result.fullOutputError,
                 ),
             ) }
         }

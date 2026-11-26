@@ -332,6 +332,12 @@ private fun buildCustomSearchEntries(): List<CustomSearchEntry> = listOf(
         keywords = "extension skill prompt theme package npm trust project defaultProjectTrust 项目信任 resources",
     ),
     CustomSearchEntry(
+        routeKey = "theme",
+        title = tr("主题工坊与大师预设", "Theme Studio & Master Presets"),
+        subtitle = tr("12 套顶级深/浅配色（Claude / Vesper / Flexoki / Nord 等）与 OKHSL 自由调色", "12 iconic dark/light master presets (Claude, Vesper, Flexoki, Nord, etc.) & OKHSL tuner"),
+        keywords = "theme studio palette color preset claude vesper flexoki kanagawa nord ayu rose pine catppuccin tokyo night gruvbox everforest okhsl 主题 工坊 调色 配色 预设",
+    ),
+    CustomSearchEntry(
         routeKey = "hub:tools",
         title = tr("默认工具与工具开关", "Tools & Default Tools"),
         subtitle = tr("实时启停内置/扩展工具，写入 defaultTools", "Toggle active tools live and save defaultTools"),

@@ -125,8 +125,8 @@ stderr 是日志，不是协议。源码：`app/src/main/assets/guest/sdk-host/p
 
 ## 宿主向 App 的提问（`req.method`）
 
-`ui.select {title,options,timeout?}` · `ui.confirm {title,message,timeout?}` · `ui.input {title,placeholder?,timeout?}` · `ui.editor {title,prefill?}`
-App 用 `ui.respond` 回；用户取消回 `{cancelled:true}`。
+`ui.select {title,options,timeout?,blockedKind?}` · `ui.confirm {title,message,timeout?,blockedKind?}` · `ui.input {title,placeholder?,timeout?,blockedKind?}` · `ui.editor {title,prefill?}`
+App 用 `ui.respond` 回；用户取消回 `{cancelled:true}`。`blockedKind`（Pi 1.6.1）由宿主透传（`confirm` 默认 `"permission"`，`select`/`input` 默认 `"question"`）。
 
 ## 版本演进规则
 

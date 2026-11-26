@@ -135,8 +135,8 @@ Geist-OFL-1.1.txt	Geist & Geist Mono 1.9.2（OFL-1.1）	许可证全文
 IBMPlexSansSC-OFL-1.1.txt	IBM Plex Sans SC 1.1.0（OFL-1.1）	许可证全文
 LXGWWenKai-OFL-1.1.txt	LXGW WenKai 1.530（OFL-1.1）	许可证全文
 SourceHanSerif-OFL-1.1.txt	Source Han Serif CN 2.003R（OFL-1.1）	许可证全文
-pi-license.txt	pi 引擎 1.6.0（MIT）	许可证全文
+pi-license.txt	pi 引擎 1.6.1（MIT）	许可证全文
 proroot-license.txt	proroot v1.2.8（Proprietary）	许可证全文
 proprietary-third-party.txt	随包分发的专有组件（proroot）	专有组件
-pi-engine-licence-gaps.txt	未随包提供许可文本的依赖（12 个）	说明
+pi-engine-licence-gaps.txt	未随包提供许可文本的依赖（14 个）	说明
 pi-engine-npm-notices.txt	pi 引擎依赖的版权声明来源（含 3 个取不到的）	说明

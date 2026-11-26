@@ -501,11 +501,18 @@ private fun InputBody(
 @Composable
 private fun DialogHeading(dialog: ExtensionDialog) {
     val palette = PiTheme.palette
-    val (icon, badgeTint) = when (dialog.method) {
-        ExtensionDialogMethod.Confirm -> Icons.Filled.Warning to palette.warning
-        ExtensionDialogMethod.Select -> Icons.AutoMirrored.Filled.List to palette.accent
-        ExtensionDialogMethod.Input -> Icons.Filled.Edit to palette.accent
-        ExtensionDialogMethod.Editor -> Icons.Filled.Edit to palette.accent
+    val isPermission = dialog.blockedKind == "permission" ||
+        (dialog.blockedKind == null && dialog.method == ExtensionDialogMethod.Confirm)
+    val isLogin = dialog.blockedKind == "login"
+    val (icon, badgeTint) = when {
+        isPermission -> Icons.Filled.Warning to palette.warning
+        dialog.method == ExtensionDialogMethod.Select -> Icons.AutoMirrored.Filled.List to palette.accent
+        else -> Icons.Filled.Edit to palette.accent
+    }
+    val kindLabel = when {
+        isPermission -> tr("权限确认", "Permission")
+        isLogin -> tr("登录认证", "Sign in")
+        else -> null
     }
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -526,14 +533,23 @@ private fun DialogHeading(dialog: ExtensionDialog) {
                 modifier = Modifier.size(16.dp),
             )
         }
-        val titleText = dialog.title.ifBlank { dialog.method.fallbackTitle }
-        ExtensionSpans(
-            spans = remember(titleText) { chromeSpans(titleText) },
-            defaultColor = palette.text,
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            modifier = Modifier.weight(1f),
-            richStyle = true,
-        )
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (kindLabel != null) {
+                Text(
+                    text = kindLabel,
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = badgeTint,
+                    maxLines = 1,
+                )
+            }
+            val titleText = dialog.title.ifBlank { dialog.method.fallbackTitle }
+            ExtensionSpans(
+                spans = remember(titleText) { chromeSpans(titleText) },
+                defaultColor = palette.text,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                richStyle = true,
+            )
+        }
         dialog.remainingSeconds()?.let { secs ->
             Text(
                 text = "${secs}s",

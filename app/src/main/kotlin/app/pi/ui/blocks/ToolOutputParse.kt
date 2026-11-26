@@ -614,39 +614,47 @@ internal fun fullOutputPathOf(details: JsonElement?, output: String): String? {
         .takeIf { it.isNotEmpty() }
 }
 
+internal fun fullOutputErrorOf(details: JsonElement?): String? =
+    (details as? JsonObject)
+        ?.get("fullOutputError")
+        ?.let { it as? JsonPrimitive }
+        ?.takeIf { it.isString }
+        ?.content
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
 /**
- * Remove the `[ … Full output: <path>]` sentence pi's tool appended to its own text, so a
- * card prints it once as the notice instead of twice.
+ * Remove the `[ … Full output: <path>]` (or Pi 1.6.1 `[ … <fullOutputError>]`) sentence
+ * pi's tool appended to its own text, so a card prints it once as the notice instead of twice.
  *
- * pi's `rebuildBashResultRenderComponent` verbatim (`renderers/bash.ts:59-64`), including
+ * pi's `rebuildBashResultRenderComponent` verbatim (`renderers/bash.ts:30-36`), including
  * what it refuses to do:
  *
  *  - only when the text *ends* with `]`;
  *  - only the block after the **last** `\n\n[`;
- *  - and only when that block actually names [path].
+ *  - and only when that block actually names [path] or [error].
  */
-internal fun stripFullOutputFooter(text: String, path: String?): String {
-    if (path == null) return text
+internal fun stripFullOutputFooter(text: String, path: String?, error: String? = null): String {
+    val marker = path ?: error ?: return text
     if (!text.endsWith("]")) return text
     val footerStart = text.lastIndexOf("\n\n[")
     if (footerStart < 0) return text
-    if (!text.substring(footerStart).contains(path)) return text
+    if (!text.substring(footerStart).contains(marker)) return text
     return text.substring(0, footerStart).trimEnd()
 }
 
 /**
- * pi's warning line (`dist/core/tools/renderers/bash.js:53-67`), in this app's language.
+ * pi's warning line (`dist/core/tools/renderers/bash.js:56-73`), in this app's language.
  *
  * pi joins the parts with `". "` inside one `[ … ]` and colours the whole line warning; the
- * parts, in pi's order, are `Full output: <path>` when a path exists, then the truncation
+ * parts, in pi's order, are `Full output: <path>` when a path exists (or Pi 1.6.1's
+ * `Could not save the full output: <error>` when saving failed), then the truncation
  * report — `Truncated: showing X of Y lines` for the line limit, `Truncated: X lines shown
- * (<size> limit)` for the byte limit. The separators are the only thing translated; the
- * numbers are pi's and a part whose number pi did not send is left out rather than
- * estimated. Null when pi would print nothing — its condition is
- * `truncation?.truncated || fullOutputPath`.
+ * (<size> limit)` for the byte limit. Null when pi would print nothing — its condition is
+ * `truncation?.truncated || fullOutputPath || fullOutputError`.
  */
-internal fun truncationNotice(path: String?, truncation: ToolTruncation?): String? =
-    joinNotice(path, truncationText(truncation))
+internal fun truncationNotice(path: String?, truncation: ToolTruncation?, error: String? = null): String? =
+    joinNotice(path, truncationText(truncation), error)
 
 /**
  * The truncation half of a warning line, on its own so the list-shaped tools can put their
@@ -683,12 +691,16 @@ private fun truncationDetail(truncation: ToolTruncation): String? {
 }
 
 /**
- * `完整输出：<path>` in front of the detail, joined the way the app already joins its parts:
- * pi puts both inside one `[…]` separated by `. `; this line keeps `；`.
+ * `完整输出：<path>` (or `未能保存完整输出：<error>`) in front of the detail, joined the way
+ * the app already joins its parts: pi puts both inside one `[…]` separated by `. `; this line keeps `；`.
  */
-private fun joinNotice(path: String?, detail: String?): String? {
+private fun joinNotice(path: String?, detail: String?, error: String? = null): String? {
     val parts = mutableListOf<String>()
-    if (path != null) parts += tr("完整输出：$path", "Full output: $path")
+    if (path != null) {
+        parts += tr("完整输出：$path", "Full output: $path")
+    } else if (error != null) {
+        parts += tr("未能保存完整输出：$error", "Could not save the full output: $error")
+    }
     detail?.let { parts += it }
     return parts.takeIf { it.isNotEmpty() }?.joinToString(tr("；", ". "))
 }

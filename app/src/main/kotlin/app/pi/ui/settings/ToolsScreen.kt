@@ -375,24 +375,46 @@ internal fun ToolsScreen(
                             var first = true
                             codemodeModeSetting?.let { setting ->
                                 first = false
-                                PiSettingRow(
-                                    setting = setting,
-                                    valueText = setting.display(setting.current(store)),
-                                    checked = false,
-                                    onToggle = {},
-                                    onOpen = { editingSetting = setting },
+                                val mode = setting.textIn(store, "on")
+                                PiInlineSegmentRow(
+                                    title = setting.title,
+                                    description = setting.description,
+                                    options = listOf(
+                                        "on" to tr("on（保留直调）", "on (direct + script)"),
+                                        "only" to tr("only（仅脚本）", "only (script only)"),
+                                    ),
+                                    selected = mode,
+                                    effective = setting.effective,
                                     onExplainEffect = { explainingSetting = setting },
+                                    onSelect = { next ->
+                                        store.write(setting.key, JsonPrimitive(next))
+                                        onSettingWritten(setting.key)
+                                        pendingReload = true
+                                    },
                                 )
                             }
                             codemodeBudgetSetting?.let { setting ->
                                 if (!first) PiSettingsHairline()
-                                PiSettingRow(
-                                    setting = setting,
-                                    valueText = setting.display(setting.current(store)),
-                                    checked = false,
-                                    onToggle = {},
-                                    onOpen = { editingSetting = setting },
+                                val budget = setting.intIn(store, 3_000)
+                                PiInlinePresetRow(
+                                    title = setting.title,
+                                    description = setting.description,
+                                    valueText = formatTokenCount(budget),
+                                    presets = listOf(
+                                        1_500 to "1.5K",
+                                        3_000 to "3K",
+                                        6_000 to "6K",
+                                        12_000 to "12K",
+                                    ),
+                                    selected = budget,
+                                    effective = setting.effective,
                                     onExplainEffect = { explainingSetting = setting },
+                                    onSelect = { next ->
+                                        store.write(setting.key, JsonPrimitive(next))
+                                        onSettingWritten(setting.key)
+                                        pendingReload = true
+                                    },
+                                    onCustomClick = { editingSetting = setting },
                                 )
                             }
                         }

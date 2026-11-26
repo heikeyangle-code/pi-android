@@ -53,15 +53,27 @@ export function register(reg, { controller, hub }) {
     if (method === "setDefaultProjectTrust") await controller.reconcileProjectTrust?.();
     // 与 Pi 官方 `interactive-mode.js` / `settings-selector.js` 一致：同步运行中会话与 Agent 的实时状态。
     const session = controller.session;
+    let stateMutated = false;
     if (session) {
       try {
-        if (method === "setSteeringMode" && typeof params[0] === "string") session.setSteeringMode?.(params[0]);
-        else if (method === "setFollowUpMode" && typeof params[0] === "string") session.setFollowUpMode?.(params[0]);
-        else if (method === "setCompactionEnabled" && typeof params[0] === "boolean") session.setAutoCompactionEnabled?.(params[0]);
-        else if (method === "setRetryEnabled" && typeof params[0] === "boolean") session.setAutoRetryEnabled?.(params[0]);
-        else if (method === "setCacheWarmingMode" && typeof params[0] === "string") session.setCacheWarmingMode?.(params[0]);
-        else if (method === "setTransport" && typeof params[0] === "string" && session.agent) {
+        if (method === "setSteeringMode" && typeof params[0] === "string") {
+          session.setSteeringMode?.(params[0]);
+          stateMutated = true;
+        } else if (method === "setFollowUpMode" && typeof params[0] === "string") {
+          session.setFollowUpMode?.(params[0]);
+          stateMutated = true;
+        } else if (method === "setCompactionEnabled" && typeof params[0] === "boolean") {
+          session.setAutoCompactionEnabled?.(params[0]);
+          stateMutated = true;
+        } else if (method === "setRetryEnabled" && typeof params[0] === "boolean") {
+          session.setAutoRetryEnabled?.(params[0]);
+          stateMutated = true;
+        } else if (method === "setCacheWarmingMode" && typeof params[0] === "string") {
+          session.setCacheWarmingMode?.(params[0]);
+        } else if (method === "setTransport" && typeof params[0] === "string" && session.agent) {
           session.agent.transport = params[0];
+        } else if (method === "setThinkingBudgets" && session.agent) {
+          session.agent.thinkingBudgets = sm.getThinkingBudgets?.();
         } else if ((method === "setModelThinkingLevel" || method === "removeModelThinkingLevel") && typeof params[0] === "string") {
           const cur = session.model;
           const providerArg = params[0];
@@ -77,6 +89,7 @@ export function register(reg, { controller, hub }) {
               : null;
             const nextLevel = levelArg ?? (sm.getDefaultThinkingLevel?.() ?? "medium");
             session.setThinkingLevel?.(nextLevel);
+            stateMutated = true;
           }
         } else if (method === "setEnabledModels" && typeof session.setScopedModels === "function") {
           const patterns = Array.isArray(params[0]) ? params[0].filter((p) => typeof p === "string" && p.trim()) : [];
@@ -86,11 +99,13 @@ export function register(reg, { controller, hub }) {
             const { scopedModels } = await controller.sdk.resolveModelScopeWithDiagnostics(patterns, session.modelRuntime);
             session.setScopedModels(scopedModels);
           }
+          stateMutated = true;
         }
       } catch {
         // 会话尚未就绪或不支持该运行时方法时不阻塞设置落盘
       }
     }
+    if (stateMutated) controller.pushState?.("settings");
     hub.emit("settings.changed", { method });
     return view(sm);
   });
@@ -127,6 +142,16 @@ export function register(reg, { controller, hub }) {
             session.setThinkingLevel?.(sm.getDefaultThinkingLevel?.() ?? "medium");
           }
         }
+        if (typeof session.setScopedModels === "function") {
+          const enabled = sm.getEnabledModels?.();
+          const patterns = Array.isArray(enabled) ? enabled.filter((p) => typeof p === "string" && p.trim()) : [];
+          if (patterns.length === 0) {
+            session.setScopedModels([]);
+          } else if (typeof controller.sdk?.resolveModelScopeWithDiagnostics === "function" && session.modelRuntime) {
+            const { scopedModels } = await controller.sdk.resolveModelScopeWithDiagnostics(patterns, session.modelRuntime);
+            session.setScopedModels(scopedModels);
+          }
+        }
       } catch {
         // ignore if session not ready
       }
@@ -144,6 +169,7 @@ export function register(reg, { controller, hub }) {
           // ignore if agent shape differs
         }
       }
+      controller.pushState?.("settings.reload");
     }
     hub.emit("settings.changed", { method: "reload" });
     return view(sm);

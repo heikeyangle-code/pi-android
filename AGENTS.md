@@ -1,6 +1,6 @@
 # AGENTS.md — Pi Android 架构与防回退指南
 
-**Pi Android** = 官方 Pi Coding Agent（`@earendil-works/pi-coding-agent` 1.6.0）的原生 Android 前端。
+**Pi Android** = 官方 Pi Coding Agent（`@earendil-works/pi-coding-agent` 1.6.1）的原生 Android 前端。
 
 ```
 Kotlin / Jetpack Compose（原生手机界面 + 富渲染管线）

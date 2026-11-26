@@ -975,6 +975,16 @@ try {
     const rmLvl = await h.call("settings.set", { method: "removeModelThinkingLevel", params: ["anthropic", "claude-sonnet-4-5"] });
     expect("settings.set removeModelThinkingLevel 成功移除", rmLvl.ok && !rmLvl.data?.effective?.modelThinkingLevels?.["anthropic/claude-sonnet-4-5"], JSON.stringify(rmLvl.data?.effective?.modelThinkingLevels));
 
+    const warnOff = await h.call("settings.set", { method: "setWarnings", params: [{ anthropicExtraUsage: false }] });
+    expect("settings.set setWarnings 写入 warnings.anthropicExtraUsage=false", warnOff.ok && warnOff.data?.effective?.warnings?.anthropicExtraUsage === false, JSON.stringify(warnOff.data?.effective?.warnings));
+    const warnOn = await h.call("settings.set", { method: "setWarnings", params: [{ anthropicExtraUsage: true }] });
+    expect("settings.set setWarnings 恢复 warnings.anthropicExtraUsage=true", warnOn.ok && warnOn.data?.effective?.warnings?.anthropicExtraUsage === true, JSON.stringify(warnOn.data?.effective?.warnings));
+
+    const idleOff = await h.call("settings.set", { method: "setHttpIdleTimeoutMs", params: [0] });
+    expect("settings.set setHttpIdleTimeoutMs(0) 关闭空闲超时", idleOff.ok && idleOff.data?.effective?.httpIdleTimeoutMs === 0, JSON.stringify(idleOff.error ?? idleOff.data?.effective?.httpIdleTimeoutMs));
+    const reloaded = await h.call("settings.reload");
+    expect("settings.reload 重载并同步会话作用域状态不抛错", reloaded.ok && reloaded.data?.effective?.httpIdleTimeoutMs === 0, JSON.stringify(reloaded.error ?? reloaded.data?.effective));
+
     const allModels = await h.call("model.list", { all: true });
     const sampleReasoning = allModels.data?.models?.find((m) => m.reasoning === true);
     const sampleNonReasoning = allModels.data?.models?.find((m) => m.reasoning === false);
@@ -1030,8 +1040,16 @@ try {
     expect("Surfaces 兼容冻结的 readonly string[] render() 输出", frozenMounted && frozenLines[0] === "Line A");
     surf.closeAll();
 
-    // Pi 1.6.0：OpenAI / Anthropic 推理块被丢弃诊断解析（仅在 showCacheMissNotices 开启且丢弃数增长时提示）。
-    const { formatDroppedReasoningNotice } = await import(
+    // Pi 1.6.1：四项独立 notices.*（cacheMisses / cacheWarming / compactionCosts / reasoningDrops）与 setNotice。
+    const noticeSet = await h.call("settings.set", { method: "setNotice", params: ["reasoningDrops", true] });
+    expect(
+      "Pi 1.6.1 settings.set(setNotice) 写入 notices.reasoningDrops=true",
+      noticeSet.ok && noticeSet.data?.effective?.notices?.reasoningDrops === true,
+      JSON.stringify(noticeSet.data?.effective?.notices),
+    );
+    await h.call("settings.set", { method: "setNotice", params: ["reasoningDrops", false] });
+
+    const { formatDroppedReasoningNotice, formatCacheWarmingNotice, formatCacheMissNotice } = await import(
       pathToFileURL(join(here, "../../app/src/main/assets/guest/sdk-host/controller.mjs")).href
     );
     const makeDropMsg = (type, itemType, count, reason) => ({
@@ -1043,32 +1061,82 @@ try {
         },
       }],
     });
-    const fakeSession = (enabled, prevMsg = null) => ({
-      settingsManager: { getShowCacheMissNotices: () => enabled },
+    const fakeSession = (notices, prevMsg = null) => ({
+      settingsManager: { getNotices: () => ({ cacheMisses: false, cacheWarming: false, compactionCosts: false, reasoningDrops: false, ...notices }) },
       sessionManager: { getBranch: () => (prevMsg ? [{ type: "message", message: prevMsg }] : []) },
     });
     const oai2 = makeDropMsg("openai_input_transformations", "reasoning", 2, "prefix_mismatch");
     const ant1 = makeDropMsg("anthropic_input_transformations", "thinking_dropped", 1, "signature_mismatch");
     expect(
-      "showCacheMissNotices 关闭时不提示 OpenAI 推理丢弃",
-      formatDroppedReasoningNotice(fakeSession(false), oai2) === null,
+      "notices.reasoningDrops 关闭时不提示 OpenAI 推理丢弃",
+      formatDroppedReasoningNotice(fakeSession({ reasoningDrops: false }), oai2) === null,
     );
-    const oaiNotice = formatDroppedReasoningNotice(fakeSession(true), oai2);
+    const oaiNotice = formatDroppedReasoningNotice(fakeSession({ reasoningDrops: true }), oai2);
     expect(
-      "showCacheMissNotices 开启时格式化 OpenAI 推理丢弃原因",
+      "notices.reasoningDrops 开启时格式化 OpenAI 推理丢弃原因",
       oaiNotice?.includes("OpenAI") && oaiNotice.includes("2") && oaiNotice.includes("prefix_mismatch"),
       String(oaiNotice),
     );
     const oai2Next = makeDropMsg("openai_input_transformations", "reasoning", 2, "prefix_mismatch");
     expect(
       "OpenAI 丢弃数未超过上一条助手消息时不重复提示",
-      formatDroppedReasoningNotice(fakeSession(true, oai2), oai2Next) === null,
+      formatDroppedReasoningNotice(fakeSession({ reasoningDrops: true }, oai2), oai2Next) === null,
     );
-    const antNotice = formatDroppedReasoningNotice(fakeSession(true), ant1);
+    const antNotice = formatDroppedReasoningNotice(fakeSession({ reasoningDrops: true }), ant1);
     expect(
       "Anthropic 思考块丢弃诊断带原因文本",
       antNotice?.includes("Anthropic") && antNotice.includes("signature_mismatch"),
       String(antNotice),
+    );
+    const warmEntry = { type: "usage", kind: "cache_warm", usage: { cost: { total: 0.02 } }, note: "idle" };
+    expect(
+      "notices.cacheWarming 关闭时不提示缓存预热",
+      formatCacheWarmingNotice(fakeSession({ cacheWarming: false }), warmEntry) === null,
+    );
+    const warmText = formatCacheWarmingNotice(fakeSession({ cacheWarming: true }), warmEntry);
+    expect(
+      "notices.cacheWarming 开启时格式化预热费用",
+      warmText?.includes("$0.02") && warmText.includes("idle"),
+      String(warmText),
+    );
+    expect(
+      "formatCacheMissNotice 忽略低于阈值的小未命中",
+      formatCacheMissNotice({ missedTokens: 5000, missedCost: 0.01, modelChanged: false, idleMs: 0 }) === null,
+    );
+    const missText = formatCacheMissNotice({ missedTokens: 32000, missedCost: 0.12, modelChanged: true, idleMs: 0 });
+    expect(
+      "formatCacheMissNotice 正确格式化切换模型导致的缓存未命中",
+      missText?.includes("切换模型") && missText.includes("32.0k") && missText.includes("$0.12"),
+      String(missText),
+    );
+
+    // Pi 1.6.1：ui/context.mjs 透传 blockedKind（confirm 默认 permission，select/input 默认 question，可显式覆盖）。
+    const { createUiContext } = await import(
+      pathToFileURL(join(here, "../../app/src/main/assets/guest/sdk-host/ui/context.mjs")).href
+    );
+    const asked = [];
+    const dialogHub = {
+      ask: async (method, params, fallback) => {
+        asked.push({ method, params });
+        return fallback;
+      },
+      emit: () => {},
+    };
+    const dialogSurfaces = { mount: () => {}, closeByKey: () => {}, closeAll: () => {}, repaintKey: () => {} };
+    const uiCtx = createUiContext({ hub: dialogHub, surfaces: dialogSurfaces });
+    await uiCtx.context.select("Choose", ["A", "B"]);
+    await uiCtx.context.select("Trust?", ["Allow", "Deny"], { blockedKind: "permission" });
+    await uiCtx.context.confirm("Delete?", "Really?");
+    await uiCtx.context.input("Token?", "sk-...", { blockedKind: "login" });
+    expect(
+      "ui.select 默认 blockedKind=question 且支持显式覆盖 permission",
+      asked[0]?.params?.blockedKind === "question" && asked[1]?.params?.blockedKind === "permission",
+      JSON.stringify(asked.slice(0, 2)),
+    );
+    expect(
+      "ui.confirm 默认 blockedKind=permission，ui.input 支持显式 blockedKind=login",
+      asked[2]?.params?.blockedKind === "permission" && asked[3]?.params?.blockedKind === "login",
+      JSON.stringify(asked.slice(2, 4)),
     );
 
     // ---- 7c. 扩展快捷键 / ctx.ui.setTheme / getAllThemes / ui.terminalInput 事件 / toolComponents 缓存清理 ----

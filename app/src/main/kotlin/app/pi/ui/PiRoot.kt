@@ -755,6 +755,16 @@ fun PiRoot() {
                     }
 
                     PiDestination.Settings -> saveableStateHolder.SaveableStateProvider(dest.name) {
+                        val liveCompaction by remember(session) {
+                            session.state.map { s ->
+                                val modelLabel = s.meta.model?.let { m ->
+                                    listOfNotNull(m.provider?.takeIf { it.isNotBlank() }, m.id.takeIf { it.isNotBlank() })
+                                        .joinToString(" / ")
+                                        .takeIf { it.isNotBlank() }
+                                }
+                                Triple(s.stats?.contextUsage, modelLabel, s.meta.compacting)
+                            }.distinctUntilChanged()
+                        }.collectAsStateWithLifecycle(initialValue = Triple(null, null, false))
                         PiSettingsStack(
                             contentPadding = padding,
                             onBack = openChat,
@@ -798,6 +808,10 @@ fun PiRoot() {
                             onRebuildRuntime = { session.boot(rebuild = true) },
                             onExternalSettingsWrite = { session.invalidateSettingsCache() },
                             onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
+                            liveContextUsage = liveCompaction.first,
+                            liveModelLabel = liveCompaction.second,
+                            isCompacting = liveCompaction.third,
+                            onRunCompaction = { session.compact() },
                         )
                     }
                 }

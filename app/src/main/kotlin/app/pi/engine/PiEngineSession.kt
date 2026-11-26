@@ -760,10 +760,15 @@ class PiEngineSession(
         }
     }
 
+    @Volatile
+    private var compacting: Boolean = false
+
     private fun handleAgent(event: PiEvent) {
         when (event) {
             is PiEvent.AgentStart -> _state.value = EngineState.Busy
             is PiEvent.AgentSettled, is PiEvent.AgentEnd -> _state.value = EngineState.Ready
+            is PiEvent.CompactionStart -> compacting = true
+            is PiEvent.CompactionEnd -> compacting = false
             else -> Unit
         }
         try {
@@ -1370,12 +1375,20 @@ class PiEngineSession(
             close()
             return
         }
-        runCatching {
-            val snapshot = withTimeout(minOf(timeoutMs, 5_000L)) { commands.snapshot() }
-            val streaming = (snapshot["isStreaming"] as? JsonPrimitive)?.content == "true"
-            val compacting = (snapshot["isCompacting"] as? JsonPrimitive)?.content == "true"
-            if (streaming || compacting) {
-                withTimeout(timeoutMs) { commands.call("session.abort", timeoutMs = timeoutMs) }
+        val cachedState = commands.stateStore.state.value
+        val knownIdle = _state.value == EngineState.Ready &&
+            !compacting &&
+            cachedState != null &&
+            !cachedState.isStreaming &&
+            !cachedState.isCompacting
+        if (!knownIdle) {
+            runCatching {
+                val snapshot = withTimeout(minOf(timeoutMs, 5_000L)) { commands.snapshot() }
+                val streaming = (snapshot["isStreaming"] as? JsonPrimitive)?.content == "true"
+                val isCompacting = (snapshot["isCompacting"] as? JsonPrimitive)?.content == "true"
+                if (streaming || isCompacting) {
+                    withTimeout(timeoutMs) { commands.call("session.abort", timeoutMs = timeoutMs) }
+                }
             }
         }
         // Ask sdk-host to run `runtime.dispose()` & extension `session_shutdown` hooks cleanly

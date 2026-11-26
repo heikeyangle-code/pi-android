@@ -59,7 +59,7 @@ const ts = sdk.ProjectTrustStore?.prototype ?? {};
 for (const m of ["get", "getEntry", "set", "setMany"]) check(`ProjectTrustStore.${m}`, has(ts, m));
 check("hasTrustRequiringProjectResources", typeof sdk.hasTrustRequiringProjectResources === "function");
 const stm = sdk.SettingsManager?.prototype ?? {};
-for (const m of ["setProjectTrusted", "isProjectTrusted", "getDefaultProjectTrust"]) check(`SettingsManager.${m}`, has(stm, m));
+for (const m of ["setProjectTrusted", "isProjectTrusted", "getDefaultProjectTrust", "getNotices", "setNotice"]) check(`SettingsManager.${m}`, has(stm, m));
 const drl = sdk.DefaultResourceLoader?.prototype ?? {};
 for (const m of ["getExtensions", "getSkills", "getPrompts", "getThemes", "getAgentsFiles", "getSystemPromptSource", "getAppendSystemPromptSources"]) check(`ResourceLoader.${m}`, has(drl, m));
 
@@ -74,6 +74,7 @@ const internals = [
   ["core/keybindings.js", ["KeybindingsManager"], "controller.mjs"],
   ["core/footer-data-provider.js", ["FooterDataProvider"], "controller.mjs"],
   ["core/http-dispatcher.js", ["applyHttpProxySettings", "configureHttpDispatcher"], "controller.mjs"],
+  ["core/cache-stats.js", ["detectCacheMiss", "CACHE_TTL_MS"], "controller.mjs"],
   ["core/slash-commands.js", ["BUILTIN_SLASH_COMMANDS"], "catalog.mjs"],
   ["modes/interactive/components/custom-entry.js", ["CustomEntryComponent"], "catalog.mjs"],
   ["core/model-resolver.js", ["findExactModelReferenceMatch"], "model.mjs"],

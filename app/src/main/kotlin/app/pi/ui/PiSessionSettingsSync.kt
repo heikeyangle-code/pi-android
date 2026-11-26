@@ -147,10 +147,8 @@ internal fun PiSessionViewModel.readPrefs(): UiPrefs {
             raw(app.pi.ui.chat.activity.ActivityDisplayMode.SETTING_KEY),
         ),
         hideThinkingBlock = bool("hideThinkingBlock", false),
-        // pi's own key, at the top level of the document, default false
-        // (`core/settings-manager.ts:120`, `:965-967`). Gates the
-        // compaction / branch-summary cost line (F18).
-        showCacheMissNotices = bool("showCacheMissNotices", false),
+        // Pi 1.6.1：`notices.compactionCosts` 控制压缩/分支摘要计费行（向后兼容旧键 `showCacheMissNotices`）。
+        showCompactionCostNotices = bool("notices.compactionCosts", bool("showCacheMissNotices", false)),
         keepAlive = bool("app.runtime.keepAlive", true),
     )
 }
@@ -213,11 +211,12 @@ internal fun PiSessionViewModel.onSettingWrittenImpl(key: String) {
         key.startsWith("app.appearance.") ||
         key.startsWith("app.tools.") ||
         key == "app.runtime.keepAlive" ||
-        key == "showCacheMissNotices" ||
+        key.startsWith("notices.") ||
         key == "themes"
     ) {
         refreshPrefs()
-        refreshTheme()
+        // 仅主题目录变更时才重扫主题与调宿主 `resources.loaded`，避免普通开关触发无效磁盘与 IPC 扫描。
+        if (key == "themes") refreshTheme()
     }
     if (key == "enableSkillCommands") {
         refreshCommands()
@@ -262,9 +261,26 @@ private fun PiSessionViewModel.sdkSetterFor(key: String): Pair<String, List<Json
         "defaultThinkingLevel" -> (raw as? JsonPrimitive)?.content?.let { "setDefaultThinkingLevel" to listOf(JsonPrimitive(it)) }
         "treeFilterMode" -> (raw as? JsonPrimitive)?.content?.let { "setTreeFilterMode" to listOf(JsonPrimitive(it)) }
         "transport" -> (raw as? JsonPrimitive)?.content?.let { "setTransport" to listOf(JsonPrimitive(it)) }
-        "httpIdleTimeoutMs" -> (raw as? JsonPrimitive)?.content?.toIntOrNull()?.let { "setHttpIdleTimeoutMs" to listOf(JsonPrimitive(it)) }
+        "httpIdleTimeoutMs" -> {
+            val text = (raw as? JsonPrimitive)?.content?.trim()
+            val ms = when {
+                text == null -> null
+                text.equals("disabled", ignoreCase = true) -> 0
+                else -> text.toIntOrNull()
+            }
+            ms?.let { "setHttpIdleTimeoutMs" to listOf(JsonPrimitive(it)) }
+        }
+        "warnings.anthropicExtraUsage" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { enabled ->
+            val current = (settingsStore.read("warnings") as? kotlinx.serialization.json.JsonObject)?.toMutableMap()
+                ?: mutableMapOf()
+            current["anthropicExtraUsage"] = JsonPrimitive(enabled)
+            "setWarnings" to listOf(kotlinx.serialization.json.JsonObject(current))
+        }
         "cacheWarming" -> (raw as? JsonPrimitive)?.content?.let { "setCacheWarmingMode" to listOf(JsonPrimitive(it)) }
-        "showCacheMissNotices" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setShowCacheMissNotices" to listOf(JsonPrimitive(it)) }
+        "notices.cacheMisses" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setNotice" to listOf(JsonPrimitive("cacheMisses"), JsonPrimitive(it)) }
+        "notices.cacheWarming" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setNotice" to listOf(JsonPrimitive("cacheWarming"), JsonPrimitive(it)) }
+        "notices.compactionCosts" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setNotice" to listOf(JsonPrimitive("compactionCosts"), JsonPrimitive(it)) }
+        "notices.reasoningDrops" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setNotice" to listOf(JsonPrimitive("reasoningDrops"), JsonPrimitive(it)) }
         "hideThinkingBlock" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setHideThinkingBlock" to listOf(JsonPrimitive(it)) }
         "enableSkillCommands" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setEnableSkillCommands" to listOf(JsonPrimitive(it)) }
         "images.autoResize" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setImageAutoResize" to listOf(JsonPrimitive(it)) }

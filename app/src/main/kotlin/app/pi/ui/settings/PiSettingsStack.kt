@@ -158,6 +158,10 @@ fun PiSettingsStack(
     onStartEngine: () -> Unit = {},
     onRepairRuntime: () -> Unit = {},
     onRebuildRuntime: () -> Unit = {},
+    liveContextUsage: PiResponses.ContextUsage? = null,
+    liveModelLabel: String? = null,
+    isCompacting: Boolean = false,
+    onRunCompaction: (() -> Unit)? = null,
 ) {
     val activeStore = store ?: rememberInMemoryPiSettingsStore()
     // Every level of this stack is `rememberSaveable`, not `remember`: the settings
@@ -424,6 +428,9 @@ fun PiSettingsStack(
         currentGroup == "tools" -> "tools" to 1
         currentGroup == "prompts" -> "prompts" to 1
         currentGroup == "appearance" -> "appearance" to 1
+        currentGroup == "messages" -> "messages" to 1
+        currentGroup == "compaction" -> "compaction" to 1
+        currentGroup == "retry" -> "retry" to 1
         currentGroup != null -> "group:$currentGroup" to (if (resources) 2 else 1)
         resources -> "resources" to 1
         else -> "home" to 0
@@ -549,6 +556,48 @@ fun PiSettingsStack(
                         groupId = null
                         highlightKey = null
                     },
+                )
+
+                route == "messages" -> ChatMessagesScreen(
+                    store = activeStore,
+                    freshness = rowsEpoch,
+                    contentPadding = contentPadding,
+                    onSettingWritten = handleSettingWritten,
+                    onBack = {
+                        groupId = null
+                        highlightKey = null
+                    },
+                    highlightKey = highlightKey,
+                )
+
+                route == "compaction" -> CompactionScreen(
+                    store = activeStore,
+                    freshness = rowsEpoch,
+                    contentPadding = contentPadding,
+                    onSettingWritten = handleSettingWritten,
+                    onBack = {
+                        groupId = null
+                        highlightKey = null
+                    },
+                    contextUsage = liveContextUsage,
+                    activeModelLabel = liveModelLabel,
+                    isCompacting = isCompacting,
+                    onRunCompaction = onRunCompaction,
+                    availableModels = availableModels,
+                    onLoadAvailableModels = onLoadAvailableModels,
+                    highlightKey = highlightKey,
+                )
+
+                route == "retry" -> NetworkRetryScreen(
+                    store = activeStore,
+                    freshness = rowsEpoch,
+                    contentPadding = contentPadding,
+                    onSettingWritten = handleSettingWritten,
+                    onBack = {
+                        groupId = null
+                        highlightKey = null
+                    },
+                    highlightKey = highlightKey,
                 )
 
                 route.startsWith("group:") -> {

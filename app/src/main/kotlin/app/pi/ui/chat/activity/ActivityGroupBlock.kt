@@ -110,13 +110,11 @@ fun ActivityGroupBlock(
 
     val hasError = summary.failedCount > 0
     val containerBg = when {
-        hasError -> palette.toolErrorBg.copy(alpha = 0.72f)
-        summary.isRunning -> palette.toolPendingBg.copy(alpha = 0.72f)
-        else -> palette.toolSuccessBg.copy(alpha = 0.56f)
+        summary.isRunning -> palette.toolPendingBg.copy(alpha = 0.65f)
+        else -> palette.userMessageBg.copy(alpha = 0.55f)
     }
     val borderColor = when {
-        hasError -> palette.error.copy(alpha = 0.38f)
-        summary.isRunning -> palette.accent.copy(alpha = 0.32f)
+        summary.isRunning -> palette.accent.copy(alpha = 0.34f)
         expanded -> palette.borderMuted.copy(alpha = 0.72f)
         else -> palette.borderMuted.copy(alpha = 0.50f)
     }
@@ -161,13 +159,9 @@ fun ActivityGroupBlock(
                             text = headline,
                             modifier = Modifier.weight(1f),
                             style = PiTheme.text.meta.copy(
-                                fontWeight = if (summary.isRunning || hasError) FontWeight.Medium else FontWeight.Normal,
+                                fontWeight = if (summary.isRunning) FontWeight.Medium else FontWeight.Normal,
                             ),
-                            color = when {
-                                hasError -> palette.error
-                                summary.isRunning -> palette.text
-                                else -> palette.muted
-                            },
+                            color = if (summary.isRunning) palette.text else palette.muted,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )

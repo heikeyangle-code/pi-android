@@ -423,9 +423,9 @@ private val PI_MENU_MAX_HEIGHT = 320.dp
  * translation — a translated label would stop matching the line the desktop TUI
  * shows for the same session.
  *
- * Shown only when pi's `showCacheMissNotices` is on: pi guards the call with
- * `if (!this.settingsManager.getShowCacheMissNotices()) return;` (`:3803`), and
- * that setting defaults to `false` (`core/settings-manager.ts:120`, `:966`).
+ * Shown only when pi's `notices.compactionCosts` is on: pi guards the call with
+ * `if (!this.settingsManager.getNotices().compactionCosts) return;` (`interactive-mode.js:3529`),
+ * defaulting to `false` (and automatically migrating legacy `showCacheMissNotices`).
  */
 @Composable
 fun PiBilledCostLine(

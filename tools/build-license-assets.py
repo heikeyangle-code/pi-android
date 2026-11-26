@@ -344,15 +344,17 @@ PI_ENGINE_NO_LICENCE_TEXT = [
           "@earendil-works/pi-agent-core",
           "@earendil-works/pi-ai",
           "@earendil-works/pi-codemode",
+          "@earendil-works/pi-mcp",
+          "@earendil-works/pi-schema",
           "@earendil-works/pi-telemetry",
           "@earendil-works/pi-tui",
       )),
     ("data-uri-to-buffer", "4.0.1", "MIT"),
     ("proxy-agent-negotiate", "1.1.0", "MIT"),
     ("standardwebhooks", "1.3.0", "MIT"),
-    ("@aws-sdk/credential-provider-http", "3.972.86", "Apache-2.0"),
-    ("@aws-sdk/credential-provider-login", "3.972.92", "Apache-2.0"),
-    ("@aws-sdk/nested-clients", "3.998.3", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-http", "3.972.88", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-login", "3.972.94", "Apache-2.0"),
+    ("@aws-sdk/nested-clients", "3.998.5", "Apache-2.0"),
 ]
 
 # Where the notice for each of those packages can actually be found, and what was
@@ -365,10 +367,10 @@ PI_ENGINE_NO_LICENCE_TEXT = [
 # (package, version, licence, notice sentence, source url, sha256 or "" when none)
 PI_ENGINE_NOTICES = [
     (
-        "6 × @earendil-works/* 包",
+        "8 × @earendil-works/* 包",
         engine_version(),
         "MIT",
-        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2/v1.0.0/v1.0.1/v1.0.2/v1.0.3 八个标签的 LICENSE 逐字节相同，sha256 未变）",
+        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这八个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2/v1.0.0/v1.0.1/v1.0.2/v1.0.3/v1.5.2/v1.6.0/v1.6.1 各标签的 LICENSE 逐字节相同，sha256 未变）",
         f"https://raw.githubusercontent.com/earendil-works/pi/v{engine_version()}/LICENSE",
         "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
     ),

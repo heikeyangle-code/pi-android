@@ -1562,7 +1562,7 @@ internal fun ChatBody(
                         )
                     }
                 } else {
-                    session.refreshThinkingLevels()
+                    if (state.meta.thinkingLevels.isEmpty()) session.refreshThinkingLevels()
                     sheet = ChatSheet.Thinking
                 }
             }
@@ -1882,7 +1882,7 @@ internal fun ChatBody(
                                 hideThinking = prefs.hideThinkingBlock,
                                 thinkingDefaultExpanded = !prefs.thinkingCollapsedByDefault,
                                 toolsDefaultExpanded = toolsExpanded,
-                                showBilledCost = prefs.showCacheMissNotices,
+                                showBilledCost = prefs.showCompactionCostNotices,
                                 showTimestamps = prefs.showTimestamps,
                                 onBranchClick = onBranchClick,
                                 onForkFromMessage = onForkFromMessage,
@@ -1898,7 +1898,7 @@ internal fun ChatBody(
                                 modifier = rowModifier,
                                 hideThinking = prefs.hideThinkingBlock,
                                 defaultExpanded = toolsExpanded,
-                                showBilledCost = prefs.showCacheMissNotices,
+                                showBilledCost = prefs.showCompactionCostNotices,
                                 showTimestamps = prefs.showTimestamps,
                                 onBranchClick = onBranchClick,
                                 onForkFromMessage = onForkFromMessage,
@@ -2214,7 +2214,7 @@ internal fun ChatBody(
                         canSteer = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
                         onCycleThinking = { session.cycleThinkingLevel() },
                         onPickThinking = {
-                            session.refreshThinkingLevels()
+                            if (state.meta.thinkingLevels.isEmpty()) session.refreshThinkingLevels()
                             sheet = ChatSheet.Thinking
                         },
                         onOpenPalette = {

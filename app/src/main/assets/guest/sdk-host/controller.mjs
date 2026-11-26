@@ -61,7 +61,9 @@ export function getDroppedReasoning(message) {
 }
 
 export function formatDroppedReasoningNotice(session, message) {
-  if (!session?.settingsManager?.getShowCacheMissNotices?.()) return null;
+  const notices = session?.settingsManager?.getNotices?.();
+  const enabled = notices ? Boolean(notices.reasoningDrops) : Boolean(session?.settingsManager?.getShowCacheMissNotices?.());
+  if (!enabled) return null;
   const dropped = getDroppedReasoning(message);
   if (!dropped) return null;
   // 与官方一致：供应商在后续回放请求里会重复报告旧丢弃，仅当数量超过上一条助手消息时提示。
@@ -77,6 +79,32 @@ export function formatDroppedReasoningNotice(session, message) {
   const { provider, noun } = dropped.diagnostic;
   const reasonText = dropped.reasons.length > 0 ? `：${dropped.reasons.join(", ")}` : "";
   return `${provider} 丢弃了 ${dropped.count} ${noun}${reasonText}`;
+}
+
+/**
+ * 对照 Pi 1.6.1 `interactive-mode.js#addCacheWarmingUsage`：
+ * 当 `notices.cacheWarming` 开启且会话记录了 `usage (kind="cache_warm")` 条目时生成简短提示。
+ */
+export function formatCacheWarmingNotice(session, entry) {
+  if (!session?.settingsManager?.getNotices?.()?.cacheWarming) return null;
+  if (entry?.type !== "usage" || entry?.kind !== "cache_warm") return null;
+  const totalCost = Number(entry?.usage?.cost?.total ?? 0);
+  const costText = Number.isFinite(totalCost) && totalCost >= 0.01 ? ` (~$${totalCost.toFixed(2)})` : "";
+  const note = typeof entry?.note === "string" && entry.note.trim() ? ` · ${entry.note.trim()}` : "";
+  return `缓存预热已执行${costText}${note}`;
+}
+
+export function formatCacheMissNotice(miss, cacheTtlMs = 5 * 60_000) {
+  if (!miss || (miss.missedTokens < 20_000 && miss.missedCost < 0.1)) return null;
+  const tokensText = miss.missedTokens >= 1000 ? `${(miss.missedTokens / 1000).toFixed(1)}k` : String(miss.missedTokens);
+  const costText = miss.missedCost >= 0.01 ? ` (~$${miss.missedCost.toFixed(2)})` : "";
+  let label = "缓存未命中";
+  if (miss.modelChanged) {
+    label = "切换模型后缓存未命中";
+  } else if (typeof miss.idleMs === "number" && miss.idleMs >= cacheTtlMs) {
+    label = `空闲 ${Math.round(miss.idleMs / 60_000)} 分钟后缓存未命中`;
+  }
+  return `${label}：重新计费 ${tokensText} tokens${costText}`;
 }
 
 /**
@@ -122,6 +150,7 @@ export class Controller {
     this.lastOpenArgs = null;
     this.footerData = null;
     this.httpDispatcherMod = null;
+    this.cacheStatsMod = null;
     this.httpSettingsPromise = null;
     this.httpSettingsApplied = false;
     this.keybindingsPromise = null;
@@ -454,7 +483,7 @@ export class Controller {
     return [{ name: "pi-android-bridge", factory: bundled.androidBridge, replaceable: true, builtin: true }];
   }
 
-  #projectTrusted(cwd) {
+  #projectTrusted(cwd, defaultTrustOverride = undefined) {
     const sdk = this.sdk;
     if (this.trustOverride !== undefined && this.trustOverrideCwd === cwd) {
       return { value: this.trustOverride, undecided: false, source: "session" };
@@ -462,7 +491,7 @@ export class Controller {
     const stored = this.trustStore.get(cwd);
     if (stored === true || stored === false) return { value: stored, undecided: false, source: "store" };
     if (!sdk.hasTrustRequiringProjectResources(cwd)) return { value: true, undecided: false, source: "nothing-to-trust" };
-    const fallback = this.#defaultProjectTrust(cwd);
+    const fallback = defaultTrustOverride ?? this.#defaultProjectTrust(cwd);
     if (fallback === "always") return { value: true, undecided: false, source: "default" };
     if (fallback === "never") return { value: false, undecided: false, source: "default" };
     return { value: false, undecided: true, source: "ask" };
@@ -489,7 +518,8 @@ export class Controller {
   trustState() {
     this.requireSession();
     const cwd = this.cwd;
-    const t = this.#projectTrusted(cwd);
+    const defaultTrust = this.#defaultProjectTrust(cwd);
+    const t = this.#projectTrusted(cwd, defaultTrust);
     const entry = this.trustStore.getEntry(cwd);
     let canonical = cwd;
     try {
@@ -505,7 +535,7 @@ export class Controller {
       source: t.source,
       entry: entry ? { path: entry.path, decision: entry.decision, inherited: entry.path !== canonical } : null,
       needsTrust: this.sdk.hasTrustRequiringProjectResources(cwd),
-      defaultProjectTrust: this.#defaultProjectTrust(cwd),
+      defaultProjectTrust: defaultTrust,
       parent: parent === canonical ? null : parent,
     };
   }
@@ -513,15 +543,37 @@ export class Controller {
   /**
    * 一批目录各自的信任结论（项目切换列表用）。同一个 `#projectTrusted` 顺序，所以与切过去之后
    * 看到的一致；只读，不建会话、不动信任库。目录名不是字符串或不是绝对路径的忽略。
+   * 全局 `defaultProjectTrust` 仅读一次，避免目录多时重复初始化 N 次 SettingsManager。
    */
   trustOf(cwds) {
     const out = {};
-    for (const cwd of Array.isArray(cwds) ? cwds.slice(0, 200) : []) {
+    const list = Array.isArray(cwds) ? cwds.slice(0, 200) : [];
+    const defaultTrust = list.length > 0 ? this.#defaultProjectTrust(this.cwd || "/") : "ask";
+    for (const cwd of list) {
       if (typeof cwd !== "string" || !cwd.startsWith("/")) continue;
-      const t = this.#projectTrusted(cwd);
+      const t = this.#projectTrusted(cwd, defaultTrust);
       out[cwd] = { trusted: t.value, undecided: t.undecided, source: t.source };
     }
     return out;
+  }
+
+  /** 按需懒加载官方 `cache-stats.js`：仅在 `notices.cacheMisses` 开启且收到助手回复时才导入，冷启动零开销。 */
+  async #emitCacheMissNotice(session, message) {
+    if (!this.cfg.piDir) return;
+    if (message.stopReason === "aborted" || message.stopReason === "error") return;
+    try {
+      if (!this.cacheStatsMod) {
+        const { pathToFileURL } = await import("node:url");
+        this.cacheStatsMod = await import(pathToFileURL(join(this.cfg.piDir, "dist", "core", "cache-stats.js")).href);
+      }
+      const { detectCacheMiss, CACHE_TTL_MS } = this.cacheStatsMod;
+      if (typeof detectCacheMiss !== "function") return;
+      const miss = detectCacheMiss(session.sessionManager.getEntries(), message, session.modelRuntime);
+      const text = formatCacheMissNotice(miss, CACHE_TTL_MS);
+      if (text) this.hub.emit("ui.notify", { message: text, tone: "warning" });
+    } catch {
+      // 忽略诊断计算异常，绝不干扰正常对话流。
+    }
   }
 
   #pickSessionManager(sdk, cwd, sessionDir, sel) {
@@ -566,9 +618,16 @@ export class Controller {
       ) {
         this.pushState(event.type);
       }
+      if (event.type === "entry_appended") {
+        const warmNotice = formatCacheWarmingNotice(session, event.entry);
+        if (warmNotice) hub.emit("ui.notify", { message: warmNotice, tone: "info" });
+      }
       if (event.type === "message_end" && event.message?.role === "assistant") {
         const dropNotice = formatDroppedReasoningNotice(session, event.message);
         if (dropNotice) hub.emit("ui.notify", { message: dropNotice, tone: "warning" });
+        if (session?.settingsManager?.getNotices?.()?.cacheMisses) {
+          void this.#emitCacheMissNotice(session, event.message);
+        }
       }
       if (event.type === "agent_end" || event.type === "agent_settled") {
         // 新会话在首条助手回复后落盘，老会话也会增长消息数/修改时间；使列表缓存失效，确保立刻可见。

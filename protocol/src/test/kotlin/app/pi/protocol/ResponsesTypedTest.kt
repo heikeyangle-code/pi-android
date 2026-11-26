@@ -517,6 +517,18 @@ class ResponsesTypedTest {
         )!!
         assertTrue(truncated.truncated)
         assertEquals("/tmp/pi-bash-abc123.log", truncated.fullOutputPath)
+        assertNull(truncated.fullOutputError)
+
+        val saveFailed = PiResponses.bashResult(
+            response(
+                "bash",
+                """{"output":"truncated output...","exitCode":0,"cancelled":false,"truncated":true,
+                    "fullOutputError":"ENOSPC: no space left on device"}""".trimIndent().replace("\n", ""),
+            ),
+        )!!
+        assertTrue(saveFailed.truncated)
+        assertNull(saveFailed.fullOutputPath)
+        assertEquals("ENOSPC: no space left on device", saveFailed.fullOutputError)
 
         // core/bash-executor.ts: exitCode is undefined when killed/cancelled.
         val cancelled = PiResponses.bashResult(

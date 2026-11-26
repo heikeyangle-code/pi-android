@@ -99,7 +99,10 @@ fun ToolCallBlock(
     // verbatim through `contentText` and `protocol/.../Transcript.kt` keeps `details`
     // whole — so the only place the path could be lost is this file.
     val fullOutputPath = remember(item.details, item.output) { fullOutputPathOf(item.details, item.output) }
-    val notice = remember(fullOutputPath, truncation, PiLocale.isZh) { truncationNotice(fullOutputPath, truncation) }
+    val fullOutputError = remember(item.details) { fullOutputErrorOf(item.details) }
+    val notice = remember(fullOutputPath, fullOutputError, truncation, PiLocale.isZh) {
+        truncationNotice(fullOutputPath, truncation, fullOutputError)
+    }
     // F17 + spec §4.2: 默认渲染前 200 行 + 「展开全部」; 单块 >200 KB 时不画正文
     // （正文仍可由长按菜单的「复制输出」整份取出），改给 pi 记录的完整输出路径
     // —— spec §4.2 原文的「前往工作区」是 App 自己发明的动作，pi 没有它。
@@ -112,10 +115,10 @@ fun ToolCallBlock(
     // cost — see the body below), so the name is read once, here, and used by both the body's
     // text and the blocks that the engine's `details` feeds.
     val isCodemode = item.toolName == "codemode"
-    val bodyText = remember(item.output, fullOutputPath, truncation, item.status, isCodemode) {
+    val bodyText = remember(item.output, fullOutputPath, fullOutputError, truncation, item.status, isCodemode) {
         // pi's `!options.isPartial`: a still-streaming row keeps its text untouched.
         val text = if (state != ToolState.Running && truncation != null) {
-            stripFullOutputFooter(item.output, fullOutputPath)
+            stripFullOutputFooter(item.output, fullOutputPath, fullOutputError)
         } else {
             item.output
         }

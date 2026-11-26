@@ -46,6 +46,6 @@ class ModelsHost(
     val removeModelThinkingLevel: suspend (provider: String, modelId: String) -> Unit = { _, _ -> },
     /** 通过 SDK `SettingsManager.setEnabledModels` 持久化作用域/循环模型列表（空列表 = 清除限制）。 */
     val setEnabledModels: suspend (patterns: List<String>?) -> Unit = {},
-    /** 通过 SDK `SettingsManager.setShowCacheMissNotices` 切换缓存未命中诊断提示。 */
-    val setShowCacheMissNotices: suspend (show: Boolean) -> Unit = {},
+    /** 通过 SDK `SettingsManager.setNotice(key, shown)` 切换细粒度对话诊断提示（Pi 1.6.1）。 */
+    val setNotice: suspend (key: String, show: Boolean) -> Unit = { _, _ -> },
 )

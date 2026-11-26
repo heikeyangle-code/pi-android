@@ -81,6 +81,7 @@ fun HostRequest.toExtensionDialog(): ExtensionDialog? {
         timeoutMs = timeoutMs,
         // Seed the countdown so the first frame shows the full duration before the first tick.
         remainingMs = timeoutMs,
+        blockedKind = p.strOrNull("blockedKind"),
     )
 }
 
@@ -112,6 +113,8 @@ data class ExtensionDialog(
     val prefill: String? = null,
     val timeoutMs: Long? = null,
     val remainingMs: Long? = null,
+    /** Pi 1.6.1 `ExtensionUIDialogOptions.blockedKind` (`permission` / `question` / `login` 等). */
+    val blockedKind: String? = null,
 ) {
     val timed: Boolean get() = (timeoutMs ?: 0L) > 0L
 

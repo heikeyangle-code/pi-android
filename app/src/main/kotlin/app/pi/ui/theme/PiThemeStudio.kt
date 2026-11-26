@@ -330,19 +330,281 @@ object PiThemeStudio {
         codeBlockInk = Color(0xFF212733),
     )
 
+    /** Authentic Gruvbox Material Dark canvas (`#1D2021` / `#282828`). */
+    private val gruvboxDark = PiThemeCanvas(
+        id = "gruvbox-dark",
+        slugEn = "Gruvbox",
+        labelZh = "暖棕",
+        labelEn = "Gruvbox",
+        dark = true,
+        pageBg = Color(0xFF1D2021),
+        cardBg = Color(0xFF282828),
+        userMessageBg = Color(0xFF32302F),
+        toolPendingBg = Color(0xFF252423),
+        borderMuted = Color(0xFF3C3836),
+        text = Color(0xFFEBDBB2),
+        heading = Color(0xFFFBF1C7),
+        muted = Color(0xFFA89984),
+        dim = Color(0xFF8A7D6B),
+        codeBlockInk = Color(0xFFE4D5AE),
+    )
+
+    /** Authentic Everforest Dark Hard canvas (`#232A2E` / `#2D353B`). */
+    private val everforestDark = PiThemeCanvas(
+        id = "everforest-dark",
+        slugEn = "Everforest",
+        labelZh = "暮林",
+        labelEn = "Everforest",
+        dark = true,
+        pageBg = Color(0xFF232A2E),
+        cardBg = Color(0xFF2D353B),
+        userMessageBg = Color(0xFF343F44),
+        toolPendingBg = Color(0xFF293136),
+        borderMuted = Color(0xFF3D484D),
+        text = Color(0xFFD3C6AA),
+        heading = Color(0xFFE6DBC2),
+        muted = Color(0xFF9DA9A0),
+        dim = Color(0xFF7A8478),
+        codeBlockInk = Color(0xFFD8CCB2),
+    )
+
+    /** Authentic Gruvbox Light Hard canvas (`#F9F5D7` / `#FBF1C7`). */
+    private val gruvboxLight = PiThemeCanvas(
+        id = "gruvbox-light",
+        slugEn = "Gruvbox",
+        labelZh = "复古纸",
+        labelEn = "Gruvbox",
+        dark = false,
+        pageBg = Color(0xFFFBF1C7),
+        cardBg = Color(0xFFF9F5D7),
+        userMessageBg = Color(0xFFF2E5BC),
+        toolPendingBg = Color(0xFFF4E9C4),
+        borderMuted = Color(0xFFD5C4A1),
+        text = Color(0xFF282828),
+        heading = Color(0xFF1D2021),
+        muted = Color(0xFF665C54),
+        dim = Color(0xFF7C6F64),
+        codeBlockInk = Color(0xFF3C3836),
+    )
+
+    /** Authentic Everforest Light Hard canvas (`#FDF6E3` / `#F4F0D9`). */
+    private val everforestLight = PiThemeCanvas(
+        id = "everforest-light",
+        slugEn = "Everforest",
+        labelZh = "林雾",
+        labelEn = "Everforest",
+        dark = false,
+        pageBg = Color(0xFFFDF6E3),
+        cardBg = Color(0xFFF4F0D9),
+        userMessageBg = Color(0xFFEDE8CE),
+        toolPendingBg = Color(0xFFF0ECD4),
+        borderMuted = Color(0xFFDCD6BC),
+        text = Color(0xFF2E383C),
+        heading = Color(0xFF21292C),
+        muted = Color(0xFF5C6A72),
+        dim = Color(0xFF708089),
+        codeBlockInk = Color(0xFF374348),
+    )
+
+    /** Authentic Vesper Dark canvas (`#101010` / `#161616`, Rauno Freiberg). */
+    private val vesperDark = PiThemeCanvas(
+        id = "vesper-dark",
+        slugEn = "Vesper",
+        labelZh = "暮黑",
+        labelEn = "Vesper",
+        dark = true,
+        pageBg = Color(0xFF101010),
+        cardBg = Color(0xFF161616),
+        userMessageBg = Color(0xFF1E1E1E),
+        toolPendingBg = Color(0xFF151515),
+        borderMuted = Color(0xFF282828),
+        text = Color(0xFFEBEBEB),
+        heading = Color(0xFFFFFFFF),
+        muted = Color(0xFF949494),
+        dim = Color(0xFF707070),
+        codeBlockInk = Color(0xFFE2E2E2),
+    )
+
+    /** Authentic Kanagawa Wave SumiInk canvas (`#1F1F28` / `#2A2A37`). */
+    private val kanagawaDark = PiThemeCanvas(
+        id = "kanagawa-dark",
+        slugEn = "Kanagawa",
+        labelZh = "墨浪",
+        labelEn = "Kanagawa",
+        dark = true,
+        pageBg = Color(0xFF1F1F28),
+        cardBg = Color(0xFF2A2A37),
+        userMessageBg = Color(0xFF343445),
+        toolPendingBg = Color(0xFF252532),
+        borderMuted = Color(0xFF3D3D50),
+        text = Color(0xFFDCD7BA),
+        heading = Color(0xFFECE8D1),
+        muted = Color(0xFF9E9BB2),
+        dim = Color(0xFF7A7890),
+        codeBlockInk = Color(0xFFDCD7BA),
+    )
+
+    /** Authentic Nord Polar Night canvas (`#2E3440` / `#3B4252`, Arctic Ice Studio). */
+    private val nordDark = PiThemeCanvas(
+        id = "nord-dark",
+        slugEn = "Nord",
+        labelZh = "极夜",
+        labelEn = "Nord",
+        dark = true,
+        pageBg = Color(0xFF242933),
+        cardBg = Color(0xFF2E3440),
+        userMessageBg = Color(0xFF3B4252),
+        toolPendingBg = Color(0xFF2A303C),
+        borderMuted = Color(0xFF434C5E),
+        text = Color(0xFFE5E9F0),
+        heading = Color(0xFFECEFF4),
+        muted = Color(0xFFA5B1C4),
+        dim = Color(0xFF818EA3),
+        codeBlockInk = Color(0xFFD8DEE9),
+    )
+
+    /** Authentic Ayu Dark canvas (`#0D1017` / `#131721`, Ike Ku). */
+    private val ayuDark = PiThemeCanvas(
+        id = "ayu-dark",
+        slugEn = "Ayu",
+        labelZh = "玄夜",
+        labelEn = "Ayu",
+        dark = true,
+        pageBg = Color(0xFF0D1017),
+        cardBg = Color(0xFF131721),
+        userMessageBg = Color(0xFF1B2130),
+        toolPendingBg = Color(0xFF121620),
+        borderMuted = Color(0xFF242B3D),
+        text = Color(0xFFBFBDB6),
+        heading = Color(0xFFE6E4DC),
+        muted = Color(0xFF8D929E),
+        dim = Color(0xFF6B707D),
+        codeBlockInk = Color(0xFFD2D0C8),
+    )
+
+    /** Authentic Vesper Light canvas (`#F4F4F4` / `#FFFFFF`). */
+    private val vesperLight = PiThemeCanvas(
+        id = "vesper-light",
+        slugEn = "Vesper",
+        labelZh = "雾灰",
+        labelEn = "Vesper",
+        dark = false,
+        pageBg = Color(0xFFF4F4F4),
+        cardBg = Color(0xFFFFFFFF),
+        userMessageBg = Color(0xFFEAEAEA),
+        toolPendingBg = Color(0xFFEEEEEE),
+        borderMuted = Color(0xFFDCDCDC),
+        text = Color(0xFF141414),
+        heading = Color(0xFF0A0A0A),
+        muted = Color(0xFF5E5E5E),
+        dim = Color(0xFF767676),
+        codeBlockInk = Color(0xFF222222),
+    )
+
+    /** Authentic Kanagawa Lotus light canvas (`#F2ECBC` / `#F7F3D0`). */
+    private val kanagawaLight = PiThemeCanvas(
+        id = "kanagawa-light",
+        slugEn = "Lotus",
+        labelZh = "莲纸",
+        labelEn = "Lotus",
+        dark = false,
+        pageBg = Color(0xFFF2ECBC),
+        cardBg = Color(0xFFF8F4D4),
+        userMessageBg = Color(0xFFE9E1AC),
+        toolPendingBg = Color(0xFFEEE8B8),
+        borderMuted = Color(0xFFD6CD97),
+        text = Color(0xFF2C2A3B),
+        heading = Color(0xFF1E1D2B),
+        muted = Color(0xFF5D596B),
+        dim = Color(0xFF736E82),
+        codeBlockInk = Color(0xFF333044),
+    )
+
+    /** Authentic Nord Snow Storm light canvas (`#ECEFF4` / `#F8FAFC`). */
+    private val nordLight = PiThemeCanvas(
+        id = "nord-light",
+        slugEn = "Nord",
+        labelZh = "雪原",
+        labelEn = "Nord",
+        dark = false,
+        pageBg = Color(0xFFECEFF4),
+        cardBg = Color(0xFFF8FAFC),
+        userMessageBg = Color(0xFFE2E7F0),
+        toolPendingBg = Color(0xFFE5E9F0),
+        borderMuted = Color(0xFFD4DBE7),
+        text = Color(0xFF2E3440),
+        heading = Color(0xFF1E232C),
+        muted = Color(0xFF576175),
+        dim = Color(0xFF6F7A90),
+        codeBlockInk = Color(0xFF343B49),
+    )
+
+    /** Authentic Ayu Light canvas (`#FAFAFA` / `#FFFFFF`). */
+    private val ayuLight = PiThemeCanvas(
+        id = "ayu-light",
+        slugEn = "Ayu",
+        labelZh = "晨白",
+        labelEn = "Ayu",
+        dark = false,
+        pageBg = Color(0xFFFAFAFA),
+        cardBg = Color(0xFFFFFFFF),
+        userMessageBg = Color(0xFFF0F1F2),
+        toolPendingBg = Color(0xFFF3F4F5),
+        borderMuted = Color(0xFFE2E4E7),
+        text = Color(0xFF282D33),
+        heading = Color(0xFF16191D),
+        muted = Color(0xFF5E6570),
+        dim = Color(0xFF777E8A),
+        codeBlockInk = Color(0xFF343A42),
+    )
+
     /** Primary 4 dark & 4 light studio canvases shown in the canvas selector strip. */
     val darkCanvases: List<PiThemeCanvas> = listOf(carbonDark, oledDark, claudeInkDark, midnightDark)
     val lightCanvases: List<PiThemeCanvas> = listOf(paperLight, claudeCreamLight, flexokiLight, porcelainLight)
     val allCanvases: List<PiThemeCanvas> = listOf(
         carbonDark, oledDark, claudeInkDark, midnightDark, flexokiDark, rosePineDark, mochaDark,
+        gruvboxDark, everforestDark, vesperDark, kanagawaDark, nordDark, ayuDark,
         paperLight, claudeCreamLight, flexokiLight, rosePineDawnLight, latteLight, porcelainLight,
+        gruvboxLight, everforestLight, vesperLight, kanagawaLight, nordLight, ayuLight,
     )
+
+    /** Returns the natural opposite-mode counterpart canvas (dark <-> light) for dual-mode pair export. */
+    fun counterpartCanvas(canvas: PiThemeCanvas): PiThemeCanvas = when (canvas.id) {
+        carbonDark.id -> paperLight
+        oledDark.id -> paperLight
+        claudeInkDark.id -> claudeCreamLight
+        midnightDark.id -> porcelainLight
+        flexokiDark.id -> flexokiLight
+        rosePineDark.id -> rosePineDawnLight
+        mochaDark.id -> latteLight
+        gruvboxDark.id -> gruvboxLight
+        everforestDark.id -> everforestLight
+        vesperDark.id -> vesperLight
+        kanagawaDark.id -> kanagawaLight
+        nordDark.id -> nordLight
+        ayuDark.id -> ayuLight
+        paperLight.id -> carbonDark
+        claudeCreamLight.id -> claudeInkDark
+        flexokiLight.id -> flexokiDark
+        rosePineDawnLight.id -> rosePineDark
+        latteLight.id -> mochaDark
+        porcelainLight.id -> midnightDark
+        gruvboxLight.id -> gruvboxDark
+        everforestLight.id -> everforestDark
+        vesperLight.id -> vesperDark
+        kanagawaLight.id -> kanagawaDark
+        nordLight.id -> nordDark
+        ayuLight.id -> ayuDark
+        else -> if (canvas.dark) paperLight else carbonDark
+    }
 
     // --------------------------------------------------------- Curated Master Presets
 
     /**
-     * Six iconic dual-mode master presets crafted from globally revered developer & editorial
-     * color systems (Claude Warm Ink, Flexoki, Rosé Pine, Catppuccin, Tokyo Night, OLED Mono).
+     * Twelve iconic dual-mode master presets (= 24 ready-made dark/light themes) crafted from
+     * globally revered developer & editorial color systems:
+     * Claude Warm, Vesper, Flexoki, Kanagawa, Nord, Ayu, Rosé Pine, Catppuccin,
+     * Tokyo Night, Gruvbox, Everforest, and OLED Mono.
      */
     val masterPresets: List<PiThemeMasterPreset> = listOf(
         PiThemeMasterPreset(
@@ -357,6 +619,17 @@ object PiThemeStudio {
             mood = PiThemeMood.Balanced,
         ),
         PiThemeMasterPreset(
+            id = "vesper",
+            labelZh = "Vesper 暮光",
+            labelEn = "Vesper",
+            darkName = "Vesper Dark",
+            lightName = "Vesper Light",
+            darkCanvas = vesperDark,
+            lightCanvas = vesperLight,
+            accentHue = 46.0, // Warm studio peach-amber (#FFC799 / #D97F41)
+            mood = PiThemeMood.Minimal,
+        ),
+        PiThemeMasterPreset(
             id = "flexoki",
             labelZh = "Flexoki 墨纸",
             labelEn = "Flexoki",
@@ -365,6 +638,39 @@ object PiThemeStudio {
             darkCanvas = flexokiDark,
             lightCanvas = flexokiLight,
             accentHue = 192.0, // Analog ink cyan-teal (#3AA99F / #24837B)
+            mood = PiThemeMood.Balanced,
+        ),
+        PiThemeMasterPreset(
+            id = "kanagawa",
+            labelZh = "Kanagawa 浮世绘",
+            labelEn = "Kanagawa",
+            darkName = "Kanagawa Wave",
+            lightName = "Kanagawa Lotus",
+            darkCanvas = kanagawaDark,
+            lightCanvas = kanagawaLight,
+            accentHue = 212.0, // Wave aqua-indigo (#7AA89F / #4D699B)
+            mood = PiThemeMood.Balanced,
+        ),
+        PiThemeMasterPreset(
+            id = "nord",
+            labelZh = "Nord 极地冰",
+            labelEn = "Nord",
+            darkName = "Nord Dark",
+            lightName = "Nord Light",
+            darkCanvas = nordDark,
+            lightCanvas = nordLight,
+            accentHue = 220.0, // Arctic frost blue (#88C0D0 / #5E81AC)
+            mood = PiThemeMood.Minimal,
+        ),
+        PiThemeMasterPreset(
+            id = "ayu",
+            labelZh = "Ayu 暖金",
+            labelEn = "Ayu",
+            darkName = "Ayu Dark",
+            lightName = "Ayu Light",
+            darkCanvas = ayuDark,
+            lightCanvas = ayuLight,
+            accentHue = 66.0, // Warm amber gold (#E6B450 / #D97B0C)
             mood = PiThemeMood.Balanced,
         ),
         PiThemeMasterPreset(
@@ -399,6 +705,28 @@ object PiThemeStudio {
             lightCanvas = porcelainLight,
             accentHue = 256.0, // Electric calm cobalt (#7AA2F7 / #2E7DE9)
             mood = PiThemeMood.Vibrant,
+        ),
+        PiThemeMasterPreset(
+            id = "gruvbox",
+            labelZh = "Gruvbox 复古",
+            labelEn = "Gruvbox",
+            darkName = "Gruvbox Dark",
+            lightName = "Gruvbox Light",
+            darkCanvas = gruvboxDark,
+            lightCanvas = gruvboxLight,
+            accentHue = 52.0, // Retro amber-ochre (#FE8019 / #AF3A03)
+            mood = PiThemeMood.Balanced,
+        ),
+        PiThemeMasterPreset(
+            id = "everforest",
+            labelZh = "Everforest 暮林",
+            labelEn = "Everforest",
+            darkName = "Everforest Dark",
+            lightName = "Everforest Light",
+            darkCanvas = everforestDark,
+            lightCanvas = everforestLight,
+            accentHue = 142.0, // Calm sage-moss (#A7C080 / #5B7E3C)
+            mood = PiThemeMood.Minimal,
         ),
         PiThemeMasterPreset(
             id = "mono",

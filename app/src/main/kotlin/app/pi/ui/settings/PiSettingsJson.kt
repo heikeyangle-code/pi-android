@@ -147,8 +147,22 @@ internal fun PiSetting.display(element: JsonElement?): String {
         }
 
         PiRowKind.Number -> {
+            if (isTimeoutSettingKey(key)) {
+                val raw = element.primitiveText()?.trim()
+                if (raw != null && raw.equals("disabled", ignoreCase = true)) {
+                    return if (key == KEY_WEBSOCKET_CONNECT_TIMEOUT_MS) {
+                        tr("不限时", "Disabled")
+                    } else {
+                        tr("不超时", "Disabled")
+                    }
+                }
+            }
             val number = element.intValueOrNull()
-            if (number == null) tr("未设置", "Not set") else number.toString() + (unit?.let { " $it" } ?: "")
+            if (number == null) {
+                tr("未设置", "Not set")
+            } else {
+                formatSettingNumber(key, number, unit)
+            }
         }
 
         PiRowKind.Text -> {
@@ -207,6 +221,56 @@ internal fun PiSetting.countIn(store: PiSettingsStore): Int {
 }
 
 internal fun PiSetting.isExplicit(store: PiSettingsStore): Boolean = store.read(key) != null
+
+/**
+ * Reads a Pi timeout setting (`httpIdleTimeoutMs` / `websocketConnectTimeoutMs`) normalized to ms,
+ * where `"disabled"` maps to `0` (matching Pi 1.6.0 `parseTimeoutSetting`).
+ */
+internal fun PiSetting.timeoutMsIn(store: PiSettingsStore, fallback: Int): Int {
+    val raw = store.read(key) ?: defaultValue ?: return fallback
+    val text = raw.primitiveText()?.trim()
+    if (text != null && text.equals("disabled", ignoreCase = true)) return 0
+    return raw.intValueOrNull() ?: fallback
+}
+
+internal fun formatSettingNumber(key: String, value: Int, unit: String?): String = when (unit) {
+    "ms" -> when {
+        value == 0 && key == KEY_HTTP_IDLE_TIMEOUT_MS -> tr("不超时", "Disabled")
+        value == 0 && key == KEY_WEBSOCKET_CONNECT_TIMEOUT_MS -> tr("不限时", "Disabled")
+        value == 0 && key == "retry.provider.maxRetryDelayMs" -> tr("不限制", "Unlimited")
+        else -> formatDurationMs(value)
+    }
+
+    "token" -> formatTokenCount(value)
+
+    else -> value.toString() + (unit?.let { if (it == "×") it else " $it" } ?: "")
+}
+
+internal fun formatDurationMs(ms: Int): String = when {
+    ms <= 0 -> "0 ms"
+    ms >= 60_000 && ms % 60_000 == 0 -> {
+        val mins = ms / 60_000
+        tr("$mins 分钟", "$mins min")
+    }
+    ms >= 1_000 && ms % 1_000 == 0 -> {
+        val secs = ms / 1_000
+        tr("$secs 秒", "${secs}s")
+    }
+    ms >= 1_000 && ms % 100 == 0 -> {
+        val secs = String.format(java.util.Locale.US, "%.1f", ms / 1000.0)
+        tr("$secs 秒", "${secs}s")
+    }
+    else -> "$ms ms"
+}
+
+internal fun formatTokenCount(tokens: Int): String = when {
+    tokens <= 0 -> "0"
+    tokens >= 1_000_000 && tokens % 1_000_000 == 0 -> "${tokens / 1_000_000}M"
+    tokens >= 1024 && tokens % 1024 == 0 -> "${tokens / 1024}K"
+    tokens >= 1000 && tokens % 1000 == 0 -> "${tokens / 1000}K"
+    tokens >= 1000 && tokens % 500 == 0 -> String.format(java.util.Locale.US, "%.1fK", tokens / 1000.0)
+    else -> String.format(java.util.Locale.US, "%,d", tokens)
+}
 
 /**
  * 这一行即将写入的值，pi 能不能接受。

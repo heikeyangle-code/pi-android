@@ -74,17 +74,19 @@ import kotlinx.coroutines.withContext
 
 /**
  * 现代主题工坊弹层（Theme Studio）：
- * - 顶部 6 套国际顶级大师双极预设一键套用（Claude 暖陶 / Flexoki 墨纸 / Rosé Pine 暮松 /
- *   Catppuccin / Tokyo Night / 极简石墨），自动随深浅模式切对应明暗版本；
+ * - 顶部 12 套国际顶级大师双极预设一键套用（Claude 暖陶 / Vesper 暮光 / Flexoki 墨纸 /
+ *   Kanagawa 浮世绘 / Nord 极地冰 / Ayu 暖金 / Rosé Pine 暮松 / Catppuccin / Tokyo Night /
+ *   Gruvbox 复古 / Everforest 暮林 / 极简石墨），自动随深浅模式切对应明暗版本（共 24 款）；
  * - 下方支持画布质感、8 枚精选强调色、0°–360° OKHSL 自由色相滑杆与 3 档色彩调性任意微调；
- * - 一键生成 100% 官方 Pi 1.6.0 Schema 主题文件写入 `~/.pi/agent/themes/<slug>.json`，
- *   直接出现在主题画廊中并与桌面端 Pi CLI/TUI 完全互通。
+ * - 支持单套保存或「浅+深双版一键配对」，写出 100% 官方 Pi 1.6.0 Schema 主题文件到
+ *   `~/.pi/agent/themes/<slug>.json`，与桌面端 Pi CLI/TUI 完全互通。
  */
 @Composable
 internal fun PiThemeStudioSheet(
     agentDir: File,
     initialDark: Boolean,
     onSaved: (PiImportedTheme) -> Unit,
+    onSavedPair: ((light: PiImportedTheme, dark: PiImportedTheme) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -106,6 +108,7 @@ internal fun PiThemeStudioSheet(
         mutableStateOf(PiThemeStudio.masterPresets.first().nameFor(initialDark))
     }
     var userEditedName by remember { mutableStateOf(false) }
+    var saveDualPair by remember { mutableStateOf(onSavedPair != null) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
 
@@ -508,6 +511,64 @@ internal fun PiThemeStudioSheet(
                     modifier = Modifier.fillMaxWidth(),
                 )
 
+                if (onSavedPair != null) {
+                    val pairNames = remember(activePreset, themeName, selectedCanvas.dark) {
+                        val preset = activePreset
+                        if (preset != null && !userEditedName) {
+                            preset.lightName to preset.darkName
+                        } else {
+                            val base = themeName.trim()
+                                .replace(Regex("\\s*(Dark|Light|Day|Night)$", RegexOption.IGNORE_CASE), "")
+                                .ifBlank { "Custom" }
+                            "$base Light" to "$base Dark"
+                        }
+                    }
+                    Surface(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            saveDualPair = !saveDualPair
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = PiSheetChromeMetrics.sheetCardBg,
+                        border = BorderStroke(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outlineVariant),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = tr("同时生成浅/深双版并自动配对", "Save Light + Dark pair & auto-switch"),
+                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    text = if (saveDualPair) {
+                                        tr("将保存「${pairNames.first}」+「${pairNames.second}」并随系统切换", "Saves \"${pairNames.first}\" + \"${pairNames.second}\" for system auto-switch")
+                                    } else {
+                                        tr("仅保存当前预览的这一套主题", "Saves only the currently previewed theme")
+                                    },
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            PiSettingsSwitch(
+                                checked = saveDualPair,
+                                onCheckedChange = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    saveDualPair = it
+                                },
+                            )
+                        }
+                    }
+                }
+
                 if (saveError != null) {
                     Text(
                         text = saveError!!,
@@ -526,7 +587,11 @@ internal fun PiThemeStudioSheet(
                     onClick = onDismiss,
                 )
                 PiPrimaryButton(
-                    label = if (saving) tr("保存中…", "Saving…") else tr("保存并应用", "Save & Apply"),
+                    label = when {
+                        saving -> tr("保存中…", "Saving…")
+                        saveDualPair && onSavedPair != null -> tr("保存双版并应用", "Save Pair & Apply")
+                        else -> tr("保存并应用", "Save & Apply")
+                    },
                     enabled = canSave,
                     onClick = {
                         saving = true
@@ -534,21 +599,65 @@ internal fun PiThemeStudioSheet(
                         val targetName = themeName.trim()
                         val targetDark = selectedCanvas.dark
                         val targetPalette = previewPalette
+                        val presetSnap = activePreset
+                        val editedSnap = userEditedName
+                        val hueSnap = accentHue
+                        val monoSnap = monochrome
+                        val moodSnap = mood
+                        val canvasSnap = selectedCanvas
+                        val pairCallback = onSavedPair
                         scope.launch {
-                            val result = withContext(Dispatchers.IO) {
-                                PiThemeLoader.saveCustomTheme(
-                                    name = targetName,
-                                    dark = targetDark,
-                                    palette = targetPalette,
-                                    agentDir = agentDir,
-                                )
-                            }
-                            saving = false
-                            result.onSuccess { saved ->
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onSaved(saved)
-                            }.onFailure { err ->
-                                saveError = err.message ?: tr("主题保存失败", "Failed to save theme")
+                            if (saveDualPair && pairCallback != null) {
+                                val lightCanvas = if (canvasSnap.dark) {
+                                    presetSnap?.lightCanvas ?: PiThemeStudio.counterpartCanvas(canvasSnap)
+                                } else {
+                                    canvasSnap
+                                }
+                                val darkCanvas = if (canvasSnap.dark) {
+                                    canvasSnap
+                                } else {
+                                    presetSnap?.darkCanvas ?: PiThemeStudio.counterpartCanvas(canvasSnap)
+                                }
+                                val (lightName, darkName) = if (presetSnap != null && !editedSnap) {
+                                    presetSnap.lightName to presetSnap.darkName
+                                } else {
+                                    val base = targetName
+                                        .replace(Regex("\\s*(Dark|Light|Day|Night)$", RegexOption.IGNORE_CASE), "")
+                                        .ifBlank { "Custom" }
+                                    "$base Light" to "$base Dark"
+                                }
+                                val pairResult = withContext(Dispatchers.IO) {
+                                    val lightPalette = PiThemeStudio.synthesize(lightCanvas, hueSnap, monoSnap, moodSnap)
+                                    val darkPalette = PiThemeStudio.synthesize(darkCanvas, hueSnap, monoSnap, moodSnap)
+                                    val savedLight = PiThemeLoader.saveCustomTheme(lightName, false, lightPalette, agentDir)
+                                        .getOrElse { return@withContext Result.failure(it) }
+                                    val savedDark = PiThemeLoader.saveCustomTheme(darkName, true, darkPalette, agentDir)
+                                        .getOrElse { return@withContext Result.failure(it) }
+                                    Result.success(savedLight to savedDark)
+                                }
+                                saving = false
+                                pairResult.onSuccess { (savedLight, savedDark) ->
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    pairCallback(savedLight, savedDark)
+                                }.onFailure { err ->
+                                    saveError = err.message ?: tr("主题保存失败", "Failed to save theme")
+                                }
+                            } else {
+                                val result = withContext(Dispatchers.IO) {
+                                    PiThemeLoader.saveCustomTheme(
+                                        name = targetName,
+                                        dark = targetDark,
+                                        palette = targetPalette,
+                                        agentDir = agentDir,
+                                    )
+                                }
+                                saving = false
+                                result.onSuccess { saved ->
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onSaved(saved)
+                                }.onFailure { err ->
+                                    saveError = err.message ?: tr("主题保存失败", "Failed to save theme")
+                                }
                             }
                         }
                     },

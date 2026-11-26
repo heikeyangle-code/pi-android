@@ -250,6 +250,7 @@ data class BashRun(
     val cancelled: Boolean = false,
     val truncated: Boolean = false,
     val fullOutputPath: String? = null,
+    val fullOutputError: String? = null,
 )
 
 /**
@@ -391,17 +392,10 @@ data class UiPrefs(
      */
     val keepAlive: Boolean = true,
     /**
-     * pi's `showCacheMissNotices` (`core/settings-manager.ts:120`, read at
-     * `:965-967` as `?? false`). It is the switch that gates the summarization
-     * cost line, and pi reads it for exactly three notices: the compaction /
-     * branch-summary billing line (`modes/interactive/interactive-mode.ts:3802-3812`),
-     * the assistant diagnostics (`:3814`) and the provider-recovery notices.
-     *
-     * Default `false` **is pi's default** — the row exists in the settings stack
-     * (`ui/settings/PiSettingsRegistry.kt:331`) and, until this field existed, no
-     * code read it, so the switch looked wired and was not.
+     * Pi 1.6.1 `notices.compactionCosts` (migrated automatically from legacy `showCacheMissNotices`),
+     * default `false`. Controls the compaction / branch-summary billed cost line.
      */
-    val showCacheMissNotices: Boolean = false,
+    val showCompactionCostNotices: Boolean = false,
 )
 
 /**

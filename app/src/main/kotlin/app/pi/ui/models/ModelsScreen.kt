@@ -33,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +50,7 @@ import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.settings.G_MODELS_SCREEN
 import app.pi.ui.settings.PiInfoNote
+import app.pi.ui.settings.PiInlineSegmentRow
 import app.pi.ui.settings.PiSetting
 import app.pi.ui.settings.PiSettingEditorSheet
 import app.pi.ui.settings.PiSettingsCatalog
@@ -61,6 +63,7 @@ import app.pi.ui.settings.boolIn
 import app.pi.ui.settings.current
 import app.pi.ui.settings.display
 import app.pi.ui.settings.settingsPageTopInset
+import app.pi.ui.settings.textIn
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.async
@@ -538,8 +541,17 @@ fun ModelsScreen(
                 val defaultThinkingSetting = settingByKey["defaultThinkingLevel"]
                 val budgetsSetting = settingByKey["thinkingBudgets"]
                 val cacheWarmingSetting = settingByKey["cacheWarming"]
-                val cacheMissSetting = settingByKey["showCacheMissNotices"]
+                val noticeSettings = remember(settingByKey) {
+                    listOfNotNull(
+                        settingByKey["notices.cacheMisses"],
+                        settingByKey["notices.cacheWarming"],
+                        settingByKey["notices.compactionCosts"],
+                        settingByKey["notices.reasoningDrops"],
+                    )
+                }
+                val extraUsageWarningSetting = settingByKey["warnings.anthropicExtraUsage"]
                 val cacheRetentionSetting = settingByKey["app.runtime.cacheRetention"]
+                var noticesExpanded by rememberSaveable { mutableStateOf(false) }
 
                 val persistedEnabledModels = remember(store, freshness, reload) {
                     (store.read("enabledModels") as? kotlinx.serialization.json.JsonArray)
@@ -643,19 +655,87 @@ fun ModelsScreen(
                             }
                         } else if (cacheWarmingSetting != null) {
                             ModelsDivider()
-                            val summary = remember(store, cacheWarmingSetting.key, freshness, reload) {
-                                cacheWarmingSetting.display(cacheWarmingSetting.current(store))
+                            val mode = remember(store, cacheWarmingSetting.key, freshness, reload) {
+                                cacheWarmingSetting.textIn(store, "idle")
                             }
-                            PiSettingsEntryRow(
+                            PiInlineSegmentRow(
                                 title = cacheWarmingSetting.title,
-                                supporting = "$summary · ${cacheWarmingSetting.description}",
-                                onClick = { editingSetting = cacheWarmingSetting },
+                                description = cacheWarmingSetting.description,
+                                options = listOf(
+                                    "off" to tr("关闭", "Off"),
+                                    "streaming" to tr("仅流式", "Streaming"),
+                                    "idle" to tr("含空闲", "Idle"),
+                                ),
+                                selected = mode,
+                                onSelect = { next ->
+                                    store.write(cacheWarmingSetting.key, JsonPrimitive(next))
+                                    onSettingWritten(cacheWarmingSetting.key)
+                                    reload++
+                                },
                             )
                         }
 
-                        cacheMissSetting?.let { setting ->
+                        if (noticeSettings.isNotEmpty()) {
                             ModelsDivider()
-                            val checked = remember(store, setting.key, freshness, reload) { setting.boolIn(store) }
+                            val legacyNoticesDefault = remember(store, freshness, reload) {
+                                (store.read("showCacheMissNotices") as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
+                            }
+                            val enabledCount = remember(store, noticeSettings, legacyNoticesDefault, freshness, reload) {
+                                noticeSettings.count { it.boolIn(store, legacyNoticesDefault) }
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { noticesExpanded = !noticesExpanded }
+                                    .padding(horizontal = ModelsCardPadding, vertical = 13.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        tr("对话诊断提示", "Transcript Notices"),
+                                        style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                                        color = PiTheme.palette.text,
+                                    )
+                                    Text(
+                                        tr(
+                                            "已开启 $enabledCount / ${noticeSettings.size} 项（缓存未命中、预热、压缩计费、推理丢弃）",
+                                            "$enabledCount of ${noticeSettings.size} enabled (cache misses, warming, compaction, reasoning)",
+                                        ),
+                                        style = PiTheme.text.meta,
+                                        color = PiTheme.palette.muted,
+                                    )
+                                }
+                                Icon(
+                                    imageVector = if (noticesExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                    contentDescription = null,
+                                    tint = PiTheme.palette.muted,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            if (noticesExpanded) {
+                                noticeSettings.forEach { setting ->
+                                    ModelsDivider()
+                                    val checked = remember(store, setting.key, legacyNoticesDefault, freshness, reload) {
+                                        setting.boolIn(store, legacyNoticesDefault)
+                                    }
+                                    PiSettingsToggleRow(
+                                        title = setting.title,
+                                        supporting = setting.description,
+                                        checked = checked,
+                                        onCheckedChange = { on ->
+                                            store.write(setting.key, JsonPrimitive(on))
+                                            onSettingWritten(setting.key)
+                                            reload++
+                                        },
+                                    )
+                                }
+                            }
+                        }
+
+                        extraUsageWarningSetting?.let { setting ->
+                            ModelsDivider()
+                            val checked = remember(store, setting.key, freshness, reload) { setting.boolIn(store, true) }
                             PiSettingsToggleRow(
                                 title = setting.title,
                                 supporting = setting.description,
@@ -670,13 +750,26 @@ fun ModelsScreen(
 
                         cacheRetentionSetting?.let { setting ->
                             ModelsDivider()
-                            val summary = remember(store, setting.key, freshness, reload) {
-                                setting.display(setting.current(store))
+                            val retention = remember(store, setting.key, freshness, reload) {
+                                setting.textIn(store, "short")
                             }
-                            PiSettingsEntryRow(
+                            PiInlineSegmentRow(
                                 title = setting.title,
-                                supporting = "$summary · ${setting.description}",
-                                onClick = { editingSetting = setting },
+                                description = setting.description,
+                                options = listOf(
+                                    "short" to tr("短期（~5 分钟）", "Short (~5 min)"),
+                                    "long" to tr("长期（~1 小时）", "Long (~1 hr)"),
+                                ),
+                                selected = retention,
+                                effective = setting.effective,
+                                onExplainEffect = {
+                                    notice = tr("提示缓存保留时长已保存，重启引擎后生效。", "Prompt cache retention saved; takes effect after restarting the engine.")
+                                },
+                                onSelect = { next ->
+                                    store.write(setting.key, JsonPrimitive(next))
+                                    onSettingWritten(setting.key)
+                                    reload++
+                                },
                             )
                         }
                     }

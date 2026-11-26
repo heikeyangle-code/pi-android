@@ -108,14 +108,19 @@ internal fun ShellBlock(
         ToolOutputParse.shellExitCode(item.exitCode, item.output)
     }
     val fullOutputPath = remember(item.details, item.output) { fullOutputPathOf(item.details, item.output) }
+    val fullOutputError = remember(item.details) { fullOutputErrorOf(item.details) }
     val truncation = remember(item.details) { truncationOf(item.details) }
-    val notice = remember(fullOutputPath, truncation, PiLocale.isZh) { truncationNotice(fullOutputPath, truncation) }
+    val notice = remember(fullOutputPath, fullOutputError, truncation, PiLocale.isZh) {
+        truncationNotice(fullOutputPath, truncation, fullOutputError)
+    }
     // pi strips the footer sentence only when it is about to print the same thing as its
-    // warning line, and never while the result is still partial (`renderers/bash.ts:59-64`,
-    // `:142`).
-    val bodyText = remember(item.output, fullOutputPath, truncation, item.status) {
-        val text =
-            if (!pending && truncation != null) stripFullOutputFooter(item.output, fullOutputPath) else item.output
+    // warning line, and never while the result is still partial (`renderers/bash.ts:30-36`).
+    val bodyText = remember(item.output, fullOutputPath, fullOutputError, truncation, item.status) {
+        val text = if (!pending && truncation != null) {
+            stripFullOutputFooter(item.output, fullOutputPath, fullOutputError)
+        } else {
+            item.output
+        }
         // pi drops ANSI **at the source**, twice: the bash executor strips every chunk
         // before it is buffered or streamed (`core/bash-executor.ts:82`), and the display
         // path strips again on the way out (`core/tools/render-utils.ts:48`). So a pi

@@ -1253,15 +1253,16 @@ internal suspend fun PiSessionViewModel.afterSessionReplaced(brandNew: Boolean =
     val cachedRemote = cachedState?.toSessionState()
     if (cachedState != null && cachedRemote != null) {
         applySessionState(cachedRemote, cachedState.availableThinkingLevels, cachedState)
+        _state.update { s -> s.copy(stats = cachedState.toSessionStats()) }
     } else {
         api?.let { refreshStateNow(it) }
     }
     replayHistory(engine, brandNew)
     // 立刻把当前新会话/切换后的会话更新到会话列表（哪怕是刚新建的 0 消息会话也马上置顶可见）。
     applyActiveRow()
-    // 统计、命令表与会话列表磁盘刷新放到后台，不阻塞切入对话的流畅度。
+    // 命令表与会话列表磁盘刷新放到后台，不阻塞切入对话的流畅度；stats 已由宿主 withState 同步。
     viewModelScope.launch {
-        refreshStats()
+        if (cachedState == null) refreshStats()
         refreshCommands()
         if (sessionListLoadedOnce && !_sessionList.value.loading) refreshSessions()
     }

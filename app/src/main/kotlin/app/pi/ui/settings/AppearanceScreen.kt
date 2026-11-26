@@ -269,8 +269,65 @@ fun AppearanceScreen(
                 )
             }
 
-            // 2. Theme Section (Follow System + Visual Gallery + System Palette Strip)
+            // 2. Hero Theme Studio Entry Card (front-and-center, outside the horizontal scroll)
+            item(key = "theme-studio-hero") {
+                ThemeStudioHeroCard(
+                    onOpenStudio = { showStudioSheet = true },
+                    onImportTheme = { showImportSheet = true },
+                    modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
+                )
+            }
+
+            // 3. Theme Section (Follow System Auto-Switch + Quick Search + Visual Gallery)
             item(key = "theme") {
+                var themeQuery by remember { mutableStateOf("") }
+                val activeTargetName = if (followSystem) {
+                    if (activePairSlot == PairSlot.Light) lightSlot else darkSlot
+                } else {
+                    fixedTheme
+                }
+                val visibleThemes = remember(themeEntries, themeQuery, activeTargetName, lightSlot, darkSlot, followSystem) {
+                    val needle = themeQuery.trim()
+                    val filtered = if (needle.isEmpty()) {
+                        themeEntries
+                    } else {
+                        themeEntries.filter { it.name.contains(needle, ignoreCase = true) }
+                    }
+                    // Keep the active theme(s) visible at the front when browsing a large library.
+                    val pinnedNames = buildSet {
+                        add(activeTargetName)
+                        if (followSystem) {
+                            add(lightSlot)
+                            add(darkSlot)
+                        }
+                    }
+                    if (needle.isNotEmpty() || filtered.size <= 6) {
+                        filtered
+                    } else {
+                        val pinned = filtered.filter { it.name in pinnedNames }
+                        val rest = filtered.filterNot { it.name in pinnedNames }
+                        pinned + rest
+                    }
+                }
+                val editingInactiveSlot = followSystem &&
+                    ((activePairSlot == PairSlot.Light && systemDark) || (activePairSlot == PairSlot.Dark && !systemDark))
+
+                val currentIsDark = PiTheme.isDark
+                fun enableFollowSystem() {
+                    val counterpart = findCounterpartTheme(
+                        currentName = fixedTheme,
+                        currentIsDark = currentIsDark,
+                        entries = themeEntries,
+                    )
+                    val nextPair = if (currentIsDark) {
+                        "$counterpart/$fixedTheme"
+                    } else {
+                        "$fixedTheme/$counterpart"
+                    }
+                    activePairSlot = if (systemDark) PairSlot.Dark else PairSlot.Light
+                    writeStr("theme", nextPair)
+                }
+
                 Column(verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupHeaderGap)) {
                     Row(
                         modifier = Modifier
@@ -280,7 +337,7 @@ fun AppearanceScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            tr("主题", "Theme"),
+                            tr("主题库", "Themes"),
                             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                             color = PiTheme.palette.muted,
                         )
@@ -310,53 +367,7 @@ fun AppearanceScreen(
                         }
                     }
 
-                    // Visual Theme Gallery
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = PiSettingsMetrics.pageHorizontal),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        items(themeEntries, key = { it.name }) { entry ->
-                            val isSelected = if (followSystem) {
-                                val targetName = if (activePairSlot == PairSlot.Light) lightSlot else darkSlot
-                                entry.name == targetName
-                            } else {
-                                entry.name == fixedTheme
-                            }
-                            ThemeGalleryCard(
-                                entry = entry,
-                                systemDark = systemDark,
-                                freshness = freshness,
-                                selected = isSelected,
-                                onSelect = {
-                                    if (followSystem) {
-                                        val next = if (activePairSlot == PairSlot.Light) {
-                                            "${entry.name}/$darkSlot"
-                                        } else {
-                                            "$lightSlot/${entry.name}"
-                                        }
-                                        writeStr("theme", next)
-                                    } else {
-                                        writeStr("theme", entry.name)
-                                    }
-                                },
-                                onDelete = if (entry.scope == PiThemeScope.AgentDir || entry.scope == PiThemeScope.Project) {
-                                    { deleteCandidate = entry }
-                                } else {
-                                    null
-                                },
-                            )
-                        }
-                        item(key = "studio-card") {
-                            CreateThemeGalleryTile(onClick = { showStudioSheet = true })
-                        }
-                        item(key = "import-card") {
-                            ImportThemeGalleryTile(onClick = { showImportSheet = true })
-                        }
-                    }
-
-                    Spacer(Modifier.height(2.dp))
-
-                    // Follow System + System Palette Card
+                    // Follow System Auto-Switch Card placed ABOVE the gallery so users clearly see which slot they are assigning.
                     PiSettingsCard {
                         Row(
                             modifier = Modifier
@@ -365,9 +376,7 @@ fun AppearanceScreen(
                                     if (followSystem) {
                                         writeStr("theme", if (systemDark) darkSlot else lightSlot)
                                     } else {
-                                        val nextLight = if (fixedTheme == "dark") "light" else fixedTheme
-                                        val nextDark = if (fixedTheme == "light") "dark" else fixedTheme
-                                        writeStr("theme", "$nextLight/$nextDark")
+                                        enableFollowSystem()
                                     }
                                 }
                                 .padding(
@@ -378,16 +387,20 @@ fun AppearanceScreen(
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    tr("跟随系统浅/深色", "Follow System Light/Dark"),
+                                    tr("随系统自动切换昼夜主题", "Auto-Switch Day & Night"),
                                     style = PiType.rowTitle,
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
                                 Text(
-                                    tr("浅色与深色模式各指定一套主题", "Pick separate themes for light and dark modes"),
+                                    if (followSystem) {
+                                        tr("手机浅/深色切换时自动换主题（兼容官方 Pi 主题配对）", "Automatically swaps themes with system light/dark mode")
+                                    } else {
+                                        tr("当前固定使用「$fixedTheme」，不随系统深浅变化", "Locked to \"$fixedTheme\" regardless of system appearance")
+                                    },
                                     modifier = Modifier.padding(top = 2.dp),
                                     style = PiTheme.text.meta,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
+                                    maxLines = 2,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
@@ -395,41 +408,108 @@ fun AppearanceScreen(
                             PiSettingsSwitch(
                                 checked = followSystem,
                                 onCheckedChange = { on ->
-                                    if (on) {
-                                        val nextLight = if (fixedTheme == "dark") "light" else fixedTheme
-                                        val nextDark = if (fixedTheme == "light") "dark" else fixedTheme
-                                        writeStr("theme", "$nextLight/$nextDark")
-                                    } else {
-                                        writeStr("theme", if (systemDark) darkSlot else lightSlot)
-                                    }
+                                    if (on) enableFollowSystem() else writeStr("theme", if (systemDark) darkSlot else lightSlot)
                                 },
                             )
                         }
 
                         if (followSystem) {
                             PiSettingsHairline()
-                            Row(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(
                                         horizontal = PiSettingsMetrics.rowPaddingHorizontal,
                                         vertical = 10.dp,
                                     ),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                PairSlotChip(
-                                    label = tr("浅色", "Light"),
-                                    themeName = lightSlot,
-                                    active = activePairSlot == PairSlot.Light,
-                                    onClick = { activePairSlot = PairSlot.Light },
-                                    modifier = Modifier.weight(1f),
-                                )
-                                PairSlotChip(
-                                    label = tr("深色", "Dark"),
-                                    themeName = darkSlot,
-                                    active = activePairSlot == PairSlot.Dark,
-                                    onClick = { activePairSlot = PairSlot.Dark },
-                                    modifier = Modifier.weight(1f),
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    PairSlotChip(
+                                        label = tr("白天 · 浅色", "Day · Light"),
+                                        themeName = lightSlot,
+                                        active = activePairSlot == PairSlot.Light,
+                                        isLiveNow = !systemDark,
+                                        onClick = { activePairSlot = PairSlot.Light },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    PairSlotChip(
+                                        label = tr("夜间 · 深色", "Night · Dark"),
+                                        themeName = darkSlot,
+                                        active = activePairSlot == PairSlot.Dark,
+                                        isLiveNow = systemDark,
+                                        onClick = { activePairSlot = PairSlot.Dark },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                if (editingInactiveSlot) {
+                                    Text(
+                                        text = if (activePairSlot == PairSlot.Light) {
+                                            tr("正在配置「白天浅色」主题：下方点选即可绑定，手机切浅色时生效。", "Configuring Day/Light slot: tap a theme below; applies when device is in Light mode.")
+                                        } else {
+                                            tr("正在配置「夜间深色」主题：下方点选即可绑定，手机切深色时生效。", "Configuring Night/Dark slot: tap a theme below; applies when device is in Dark mode.")
+                                        },
+                                        style = PiTheme.text.meta,
+                                        color = PiTheme.palette.accent,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Quick search bar when the user has a large theme library
+                    if (themeEntries.size > 6) {
+                        app.pi.ui.models.ModelsSearchBar(
+                            value = themeQuery,
+                            onValueChange = { themeQuery = it },
+                            placeholder = tr("筛选 ${themeEntries.size} 套主题…", "Filter ${themeEntries.size} themes…"),
+                            modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
+                        )
+                    }
+
+                    // Visual Theme Gallery (pure theme cards; active themes surfaced at front)
+                    if (visibleThemes.isEmpty()) {
+                        Text(
+                            text = tr("没有匹配「$themeQuery」的主题", "No themes matching \"$themeQuery\""),
+                            modifier = Modifier.padding(
+                                horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small,
+                                vertical = 6.dp,
+                            ),
+                            style = PiTheme.text.meta,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = PiSettingsMetrics.pageHorizontal),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            items(visibleThemes, key = { it.name }) { entry ->
+                                val isSelected = entry.name == activeTargetName
+                                ThemeGalleryCard(
+                                    entry = entry,
+                                    systemDark = systemDark,
+                                    freshness = freshness,
+                                    selected = isSelected,
+                                    onSelect = {
+                                        if (followSystem) {
+                                            val next = if (activePairSlot == PairSlot.Light) {
+                                                "${entry.name}/$darkSlot"
+                                            } else {
+                                                "$lightSlot/${entry.name}"
+                                            }
+                                            writeStr("theme", next)
+                                        } else {
+                                            writeStr("theme", entry.name)
+                                        }
+                                    },
+                                    onDelete = if (entry.scope == PiThemeScope.AgentDir || entry.scope == PiThemeScope.Project) {
+                                        { deleteCandidate = entry }
+                                    } else {
+                                        null
+                                    },
                                 )
                             }
                         }
@@ -724,6 +804,12 @@ fun AppearanceScreen(
                 } else {
                     store.write("theme", JsonPrimitive(saved.name))
                 }
+                onSettingWritten("theme")
+            },
+            onSavedPair = { savedLight, savedDark ->
+                showStudioSheet = false
+                store.write("theme", JsonPrimitive("${savedLight.name}/${savedDark.name}"))
+                activePairSlot = if (systemDark) PairSlot.Dark else PairSlot.Light
                 onSettingWritten("theme")
             },
             onDismiss = { showStudioSheet = false },
@@ -1306,101 +1392,187 @@ private fun ThemeGalleryCard(
     }
 }
 
+/**
+ * Prominent Theme Studio entry card positioned outside the horizontal theme gallery
+ * so users with dozens of themes can launch presets, OKHSL studio, or JSON import in 1 tap.
+ */
 @Composable
-private fun CreateThemeGalleryTile(onClick: () -> Unit) {
+private fun ThemeStudioHeroCard(
+    onOpenStudio: () -> Unit,
+    onImportTheme: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val palette = PiTheme.palette
+    val previewSwatches = remember {
+        listOf(
+            Color(0xFFD97757), // Claude Terracotta
+            Color(0xFFFFC799), // Vesper Peach
+            Color(0xFF3AA99F), // Flexoki Teal
+            Color(0xFF7AA89F), // Kanagawa Aqua
+            Color(0xFF88C0D0), // Nord Frost
+            Color(0xFFE6B450), // Ayu Gold
+            Color(0xFFB4BEFE), // Catppuccin Lavender
+            Color(0xFFA7C080), // Everforest Sage
+        )
+    }
     Surface(
-        onClick = onClick,
-        modifier = Modifier
-            .width(104.dp)
-            .height(106.dp),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(PiSpacing.hairline, MaterialTheme.colorScheme.outlineVariant),
+        onClick = onOpenStudio,
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(PiSettingsMetrics.cardRadius),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(10.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                contentAlignment = Alignment.Center,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    Icons.Outlined.Palette,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = PiTheme.palette.accent,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(palette.accent.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Outlined.Palette,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp),
+                            tint = palette.accent,
+                        )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                text = tr("主题工坊", "Theme Studio"),
+                                style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            PiSettingsBadge(
+                                label = tr("12 套大师预设", "12 Master Presets"),
+                                tone = palette.accent,
+                            )
+                        }
+                        Text(
+                            text = tr(
+                                "Claude · Vesper · Flexoki · Kanagawa · Nord 等 24 款深/浅配色，支持自由调色",
+                                "Claude · Vesper · Flexoki · Kanagawa · Nord (24 dark/light) + free OKHSL tuning",
+                            ),
+                            style = PiTheme.text.meta,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                tr("主题工坊", "Studio"),
-                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-            )
-            Text(
-                tr("定制配色", "Customize"),
-                style = PiTheme.text.monoSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    previewSwatches.forEach { swatch ->
+                        Box(
+                            modifier = Modifier
+                                .size(11.dp)
+                                .clip(CircleShape)
+                                .background(swatch)
+                                .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    app.pi.ui.components.PiSecondaryButton(
+                        label = tr("导入", "Import"),
+                        leadingIcon = Icons.Outlined.FileUpload,
+                        compact = true,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        onClick = onImportTheme,
+                    )
+                    app.pi.ui.components.PiPrimaryButton(
+                        label = tr("进入工坊", "Open Studio"),
+                        compact = true,
+                        onClick = onOpenStudio,
+                    )
+                }
+            }
         }
     }
 }
 
-@Composable
-private fun ImportThemeGalleryTile(onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        modifier = Modifier
-            .width(104.dp)
-            .height(106.dp),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(PiSpacing.hairline, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(10.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Outlined.FileUpload,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = PiTheme.palette.accent,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                tr("导入主题", "Import"),
-                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-            )
-            Text(
-                ".json",
-                style = PiTheme.text.monoSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+/**
+ * Finds the natural light/dark sibling theme when enabling system day/night auto-switching,
+ * preventing dark themes from being blindly paired with themselves (e.g. `claude-dark/claude-dark`).
+ */
+private fun findCounterpartTheme(
+    currentName: String,
+    currentIsDark: Boolean,
+    entries: List<PiThemeEntry>,
+): String {
+    val fallback = if (currentIsDark) "light" else "dark"
+    val available = entries.map { it.name }.associateBy { it.lowercase() }
+    val key = currentName.lowercase()
+    if (key == "dark" || key == "light") return fallback
+
+    val knownPairs = listOf(
+        "claude-dark" to "claude-light",
+        "vesper-dark" to "vesper-light",
+        "flexoki-dark" to "flexoki-light",
+        "kanagawa-wave" to "kanagawa-lotus",
+        "nord-dark" to "nord-light",
+        "ayu-dark" to "ayu-light",
+        "rose-pine" to "rose-pine-dawn",
+        "catppuccin-mocha" to "catppuccin-latte",
+        "tokyo-night" to "tokyo-day",
+        "gruvbox-dark" to "gruvbox-light",
+        "everforest-dark" to "everforest-light",
+        "oled-mono" to "gallery-mono",
+    )
+    for ((d, l) in knownPairs) {
+        if (currentIsDark && key == d) available[l]?.let { return it }
+        if (!currentIsDark && key == l) available[d]?.let { return it }
+    }
+
+    val suffixCandidates = if (currentIsDark) {
+        listOf(
+            key.replace("-dark", "-light"),
+            key.replace("dark", "light"),
+            key.replace("-night", "-day"),
+            key.replace("night", "day"),
+        )
+    } else {
+        listOf(
+            key.replace("-light", "-dark"),
+            key.replace("light", "dark"),
+            key.replace("-day", "-night"),
+            key.replace("day", "night"),
+        )
+    }
+    for (candidate in suffixCandidates) {
+        if (candidate != key) {
+            available[candidate]?.let { return it }
         }
     }
+    return fallback
 }
 
 @Composable
@@ -1408,6 +1580,7 @@ private fun PairSlotChip(
     label: String,
     themeName: String,
     active: Boolean,
+    isLiveNow: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1424,11 +1597,24 @@ private fun PairSlotChip(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text(
-                text = label,
-                style = PiTheme.text.meta,
-                color = if (active) PiTheme.palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Text(
+                    text = label,
+                    style = PiTheme.text.meta,
+                    color = if (active) PiTheme.palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (isLiveNow) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(PiTheme.palette.success),
+                    )
+                }
+            }
             Text(
                 text = themeName,
                 style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),

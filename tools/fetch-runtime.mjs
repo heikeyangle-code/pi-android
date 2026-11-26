@@ -269,8 +269,26 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  *     已核查 `ui/surfaces.mjs`、`commands/catalog.mjs` 与 `app/src/main/assets/pi-extensions/` 均无原地修改。
  *  5. **依赖与安全修复**：`undici` 8.12.3 → 8.12.4（6 个 GHSA 安全修复），`standardwebhooks` 1.1.1 → 1.3.0；
  *     v1.6.0 根 `LICENSE` 与之前各版本逐字节相同（sha256 `0457f5bc…`），许可证资产同步刷新。
+ *
+ * ## pi 1.6.0 → 1.6.1（2026-11-26；升级评审由 `tools/pi-upgrade-audit.mjs` + 逐包 diff 复核）
+ *
+ *  1. **破坏性设置项迁移（`showCacheMissNotices` → `notices.*` 四项细粒度开关）**：
+ *     - `SettingsManager.getShowCacheMissNotices()` / `setShowCacheMissNotices()` 已移除，
+ *       替换为 `getNotices()` / `setNotice(key, shown)`，支持 `cacheMisses`、`cacheWarming`、
+ *       `compactionCosts`、`reasoningDrops` 四项独立开关（旧配置自动迁移）。
+ *     - 宿主 `controller.mjs` 已切换至 `getNotices()` 并完整接入 `reasoningDrops`、`cacheMisses`（按需懒加载 `cache-stats.js`，默认零冷启开销）与 `cacheWarming` 实时通知；
+ *       App 设置页与 `PiSessionSettingsSync` 全量对接官方 `SettingsManager.setNotice`。
+ *  2. **扩展弹窗 `blockedKind` 语义透传**：
+ *     - `ExtensionUIDialogOptions` 新增 `blockedKind`（`confirm` 默认 `"permission"`，`select`/`input` 默认 `"question"`，`project-trust.js` 已传 `"permission"`）。
+ *     - 宿主 `ui/context.mjs` 透传 `blockedKind`；App `ExtensionDialog` / `ExtensionDialogs` 展示对应语义徽标与色调。
+ *  3. **Bash 截断失败错误 `fullOutputError`**：
+ *     - `BashExecutionMessage` 与 `bash` 工具结果新增 `fullOutputError`，截断输出落盘失败时不再丢失错误原因。
+ *     - `protocol/.../Responses.kt`、`ToolOutputParse.kt`、`ShellBlock.kt`、`ToolCallBlock.kt`、`BashPanel.kt` 已全部支持解析、正文去重与告警条展示。
+ *  4. **契约与依赖核查**：`core/slash-commands.js`、`theme/{dark,light}.json`、`utils/image-resize-core.js`、
+ *     `core/session-manager.d.ts`、`modes/rpc/rpc-types.d.ts` 零破坏；`pi-mcp` 仅增量导出 `toMcpModelContent` /
+ *     `createMcpResultSchema`；3 个 `@aws-sdk/*` 补丁升级，许可证资产与引擎锁文件同步更新。
  */
-const PI_VERSION = "1.6.0";
+const PI_VERSION = "1.6.1";
 
 /**
  * proroot — the optional second container runtime, and the only artifact here whose

@@ -113,14 +113,17 @@ export function createUiContext({ hub, surfaces, theme, themeHandle = null, flag
   const context = {
     // ---- 对话框 ---------------------------------------------------------
     async select(title, options, opts) {
-      const value = await hub.ask("ui.select", { title, options, timeout: opts?.timeout }, undefined, opts);
+      const blockedKind = typeof opts?.blockedKind === "string" && opts.blockedKind ? opts.blockedKind : "question";
+      const value = await hub.ask("ui.select", { title, options, timeout: opts?.timeout, blockedKind }, undefined, opts);
       return typeof value === "string" ? value : undefined;
     },
     async confirm(title, message, opts) {
-      return (await hub.ask("ui.confirm", { title, message, timeout: opts?.timeout }, false, opts)) === true;
+      const blockedKind = typeof opts?.blockedKind === "string" && opts.blockedKind ? opts.blockedKind : "permission";
+      return (await hub.ask("ui.confirm", { title, message, timeout: opts?.timeout, blockedKind }, false, opts)) === true;
     },
     async input(title, placeholder, opts) {
-      const value = await hub.ask("ui.input", { title, placeholder, timeout: opts?.timeout }, undefined, opts);
+      const blockedKind = typeof opts?.blockedKind === "string" && opts.blockedKind ? opts.blockedKind : "question";
+      const value = await hub.ask("ui.input", { title, placeholder, timeout: opts?.timeout, blockedKind }, undefined, opts);
       return typeof value === "string" ? value : undefined;
     },
     async editor(title, prefill) {
