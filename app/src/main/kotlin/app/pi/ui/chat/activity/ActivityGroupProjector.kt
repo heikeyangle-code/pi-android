@@ -330,7 +330,7 @@ object ActivityGroupProjector {
 }
 
 /** Speaker-change spacing helper over projected [ChatRow]s, mirroring `transcriptGap`. */
-fun chatRowGap(rows: List<ChatRow>, index: Int): TranscriptGap {
+internal fun chatRowGap(rows: List<ChatRow>, index: Int): TranscriptGap {
     val item = rows.getOrNull(index)?.firstItem ?: return TranscriptGap.SameMessage
     if (item is DateSeparator) return TranscriptGap.SameMessage
     if (item is UserMessage) return TranscriptGap.UserMessage
