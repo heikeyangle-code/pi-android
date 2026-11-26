@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pi for Android — Interactive Chat Demo</title>
+  <link rel="stylesheet" href="/tools/readme-assets/design.css" />
+  <style>
+    .demo-stage {
+      width: 660px;
+      height: 896px;
+      padding: 22px 0 26px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      position: relative;
+      background:
+        radial-gradient(520px 420px at 22% 14%, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0) 68%),
+        radial-gradient(480px 420px at 80% 88%, rgba(226, 218, 204, 0.48) 0%, rgba(226, 218, 204, 0) 65%),
+        linear-gradient(155deg, #F5F3EE 0%, #EDEAE2 100%);
+    }
+    .demo-top-strip {
+      width: 392px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      z-index: 4;
+    }
+    .demo-phone {
+      width: 392px;
+      height: 786px;
+      border-radius: 48px;
+      padding: 10px;
+      background: linear-gradient(145deg, #2A2B2F 0%, #16171A 52%, #232428 100%);
+      box-shadow:
+        0 30px 64px -18px rgba(18, 17, 15, 0.28),
+        0 8px 20px -6px rgba(18, 17, 15, 0.14),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+      position: relative;
+      z-index: 2;
+    }
+    .demo-phone .phone-screen {
+      border-radius: 39px;
+    }
+    .stream-cursor {
+      display: inline-block;
+      width: 5px;
+      height: 12px;
+      background: var(--accent);
+      border-radius: 1.5px;
+      vertical-align: -1.5px;
+      margin-left: 2px;
+    }
+    .send-ring-wrap {
+      position: relative;
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .thinking-ring-svg {
+      position: absolute;
+      inset: 0;
+      width: 34px;
+      height: 34px;
+      pointer-events: none;
+    }
+    .fade-block {
+      transition: none;
+    }
+    .empty-hero {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      text-align: center;
+      padding: 0 28px;
+    }
+    .empty-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 13px;
+      opacity: 0.92;
+      box-shadow: 0 4px 12px rgba(20, 20, 19, 0.10);
+    }
+    .empty-title {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .empty-sub {
+      font-size: 11.5px;
+      line-height: 1.55;
+      color: var(--muted);
+    }
+    .demo-meta-badge {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      font-weight: 550;
+      color: #4D4B45;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(20, 20, 19, 0.09);
+      padding: 5px 11px;
+      border-radius: 999px;
+    }
+    .demo-step-pill {
+      font-size: 11.2px;
+      font-weight: 500;
+      color: #5E5C56;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(20, 20, 19, 0.09);
+      padding: 5px 11px;
+      border-radius: 999px;
+      font-variant-numeric: tabular-nums;
+    }
+    .tap-ripple {
+      position: absolute;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 2px solid var(--accent);
+      pointer-events: none;
+      opacity: 0;
+    }
+  </style>
+  <script>
+    window.MathJax = {
+      loader: {
+        paths: {
+          mathjax: "/app/src/main/assets/rich/mathjax",
+          "mathjax-newcm": "/app/src/main/assets/rich/mathjax"
+        },
+        versionWarnings: false
+      },
+      tex: {
+        inlineMath: [["\\(", "\\)"]],
+        displayMath: [["$$", "$$"]],
+        processEnvironments: true
+      },
+      svg: {
+        fontCache: "local",
+        linebreaks: { inline: false },
+        dynamicPrefix: "/app/src/main/assets/rich/mathjax/svg/dynamic"
+      },
+      startup: { typeset: false },
+      options: {
+        enableMenu: false,
+        enableEnrichment: false,
+        enableSpeech: false,
+        enableBraille: false,
+        enableComplexity: false,
+        enableExplorer: false,
+        a11y: { speech: false, braille: false }
+      }
+    };
+  </script>
+  <script src="/app/src/main/assets/rich/mathjax/tex-svg.js"></script>
+</head>
+<body>
+  <div id="demoRoot" class="demo-stage">
+    <div class="stage-grid"></div>
+    <div class="demo-top-strip">
+      <div id="brandBadge" class="demo-meta-badge"></div>
+      <div id="stepPill" class="demo-step-pill"></div>
+    </div>
+    <div class="demo-phone">
+      <div id="phoneScreen" class="phone-screen theme-warm-paper"></div>
+    </div>
+  </div>
+
+  <script>
+    const ICONS = {
+      menu: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="15" y2="17"/></svg>`,
+      chevDown: `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`,
+      plus: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+      kebab: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg>`,
+      arrowUp: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg>`,
+      stopSq: `<svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor"><rect x="1" y="1" width="10" height="10" rx="2.2"/></svg>`,
+      wifi: `<svg width="12" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M2 9.5a15 15 0 0 1 20 0"/><path d="M5.5 13a10 10 0 0 1 13 0"/><path d="M9 16.5a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r="1.2" fill="currentColor"/></svg>`,
+      battery: `<svg width="18" height="10" viewBox="0 0 26 14" fill="none"><rect x="1" y="2" width="21" height="10" rx="2.5" stroke="currentColor" stroke-width="1.7"/><rect x="3.5" y="4.5" width="14" height="5" rx="1" fill="currentColor"/><path d="M23.5 5v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`,
+      copy: `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+    };
+
+    const SCRIPT = {
+      zh: {
+        badge: "Pi for Android · Warm Paper",
+        steps: ["1/4 输入问题", "2/4 思考与流式排版", "3/4 公式与队列排队", "4/4 自动接续回答"],
+        emptyTitle: "开始一段新对话",
+        emptySub: "模型与对话均保存在本机，支持 Markdown、公式与图表离线排版。",
+        newChat: "新对话",
+        activeTitle: "排序复杂度对比",
+        placeholder: "输入消息，或 / 唤起命令...",
+        prompt: "对比归并排序与快速排序，给出表格和递推公式。",
+        followUp: "再补一句空间复杂度对比。",
+        thinkingLive: (s) => `思考中 ${s.toFixed(1)}s`,
+        thinkingDone: "已思考 1.6s",
+        lead: "归并排序与快速排序的平均时间复杂度均为 O(n log n)，关键区别在于最坏情况与稳定性：",
+        th: ["算法", "平均", "最坏", "稳定性"],
+        rows: [
+          ["归并排序", "O(n log n)", "O(n log n)", "稳定"],
+          ["快速排序", "O(n log n)", "O(n²)", "不稳定"],
+        ],
+        formulaLead: "归并排序的分治递推关系：",
+        codeLang: "kotlin",
+        codeLines: [
+          `<span class="kw">fun</span> <span class="fn">mergeSort</span>(a: <span class="ty">IntArray</span>): <span class="ty">IntArray</span> {`,
+          `  <span class="kw">if</span> (a.size &lt;= <span class="num">1</span>) <span class="kw">return</span> a`,
+          `  <span class="kw">val</span> mid = a.size / <span class="num">2</span>`,
+          `  <span class="kw">return</span> <span class="fn">merge</span>(<span class="fn">mergeSort</span>(a.<span class="fn">sliceArray</span>(<span class="num">0</span>..&lt;mid)), ...)`,
+          `}`,
+        ],
+        steer: "→ 引导",
+        queue: "↓ 后续",
+        queueTag: "后续 · 1",
+        queueMode: "逐条",
+        followReply: "空间复杂度方面，归并排序需要 O(n) 辅助数组，而原地快速排序平均只需 O(log n) 递归栈空间。",
+      },
+      en: {
+        badge: "Pi for Android · Warm Paper",
+        steps: ["1/4 Prompt", "2/4 Streaming Layout", "3/4 Math & Queue", "4/4 Follow-up Sent"],
+        emptyTitle: "Start a new conversation",
+        emptySub: "Your models and history stay local, with offline Markdown, math, and diagram rendering.",
+        newChat: "New chat",
+        activeTitle: "Sorting Complexity",
+        placeholder: "Message or type / for commands...",
+        prompt: "Compare Merge Sort and Quick Sort with a table and recurrence.",
+        followUp: "Add a brief note on space complexity.",
+        thinkingLive: (s) => `Thinking ${s.toFixed(1)}s`,
+        thinkingDone: "Thought for 1.6s",
+        lead: "Both Merge Sort and Quick Sort average O(n log n), differing mainly in worst-case bounds and stability:",
+        th: ["Algorithm", "Average", "Worst", "Stable"],
+        rows: [
+          ["Merge Sort", "O(n log n)", "O(n log n)", "Yes"],
+          ["Quick Sort", "O(n log n)", "O(n²)", "No"],
+        ],
+        formulaLead: "Merge Sort divide-and-conquer recurrence:",
+        codeLang: "kotlin",
+        codeLines: [
+          `<span class="kw">fun</span> <span class="fn">mergeSort</span>(a: <span class="ty">IntArray</span>): <span class="ty">IntArray</span> {`,
+          `  <span class="kw">if</span> (a.size &lt;= <span class="num">1</span>) <span class="kw">return</span> a`,
+          `  <span class="kw">val</span> mid = a.size / <span class="num">2</span>`,
+          `  <span class="kw">return</span> <span class="fn">merge</span>(<span class="fn">mergeSort</span>(a.<span class="fn">sliceArray</span>(<span class="num">0</span>..&lt;mid)), ...)`,
+          `}`,
+        ],
+        steer: "→ Steer",
+        queue: "↓ Queue",
+        queueTag: "Queue · 1",
+        queueMode: "One-by-one",
+        followReply: "For space, Merge Sort uses an O(n) auxiliary buffer, while in-place Quick Sort averages O(log n) stack space.",
+      },
+    };
+
+    let cachedFormulaSvg = "";
+    let currentLang = "zh";
+
+    window.initDemo = async function initDemo(lang) {
+      currentLang = lang;
+      await window.MathJax.startup.promise;
+      const doc = window.MathJax.startup.document;
+      if (doc && doc.options) {
+        doc.options.enableEnrichment = false;
+        doc.options.enableSpeech = false;
+        doc.options.enableBraille = false;
+        doc.options.enableComplexity = false;
+        doc.options.enableExplorer = false;
+      }
+      if (doc && doc.outputJax && doc.outputJax.font && doc.outputJax.font.options) {
+        doc.outputJax.font.options.dynamicPrefix = "/app/src/main/assets/rich/mathjax/svg/dynamic";
+      }
+      const svgNode = await window.MathJax.tex2svgPromise(
+        "T(n) = 2T\\!\\left(\\frac{n}{2}\\right) + \\Theta(n) \\implies \\Theta(n \\log n)",
+        { display: true }
+      );
+      cachedFormulaSvg = svgNode.outerHTML;
+      await document.fonts.ready;
+      window.setDemoTime(0);
+      return true;
+    };
+
+    function ctxRing(pct) {
+      const r = 5.5;
+      const c = 2 * Math.PI * r;
+      const offset = c * (1 - pct / 100);
+      return `<span class="ctx-ring"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="${r}" fill="none" stroke="var(--border-strong)" stroke-width="1.8"/><circle cx="8" cy="8" r="${r}" fill="none" stroke="var(--muted)" stroke-width="1.8" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}" stroke-linecap="round" transform="rotate(-90 8 8)"/></svg><span>${pct}%</span></span>`;
+    }
+
+    function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+
+    window.setDemoTime = function setDemoTime(t) {
+      const s = SCRIPT[currentLang];
+      document.getElementById("brandBadge").innerHTML =
+        `<img src="/brand/pi-readme-icon.png" style="width:18px;height:18px;border-radius:5px"/><span>${s.badge}</span>`;
+
+      let stepIdx = 0;
+      if (t >= 13.0) stepIdx = 3;
+      else if (t >= 9.0) stepIdx = 2;
+      else if (t >= 2.4) stepIdx = 1;
+      document.getElementById("stepPill").textContent = s.steps[stepIdx];
+
+      const sentFirst = t >= 2.4;
+      const streamingFirst = t >= 2.4 && t < 12.6;
+      const thinkingPhase = t >= 2.4 && t < 4.0;
+      const typingFollowUp = t >= 9.4 && t < 11.4;
+      const queuedFollowUp = t >= 11.4 && t < 12.8;
+      const sentFollowUp = t >= 12.8;
+      const streamingSecond = t >= 12.8 && t < 14.5;
+      const isStreaming = streamingFirst || streamingSecond;
+
+      const title = sentFirst ? s.activeTitle : s.newChat;
+      const pct = sentFollowUp ? 16 : (t > 6.5 ? 14 : 12);
+
+      // Composer text
+      let inputHtml = `<span class="composer-placeholder">${s.placeholder}</span>`;
+      let hasDraft = false;
+      if (t < 2.4) {
+        const p = clamp01((t - 0.35) / 1.65);
+        const chars = Math.floor(s.prompt.length * p);
+        if (chars > 0) {
+          hasDraft = true;
+          const blink = Math.floor(t * 2.5) % 2 === 0;
+          inputHtml = `${s.prompt.slice(0, chars)}${blink ? `<span class="stream-cursor"></span>` : ""}`;
+        }
+      } else if (typingFollowUp) {
+        const p = clamp01((t - 9.4) / 1.5);
+        const chars = Math.floor(s.followUp.length * p);
+        if (chars > 0) {
+          hasDraft = true;
+          const blink = Math.floor(t * 2.5) % 2 === 0;
+          inputHtml = `${s.followUp.slice(0, chars)}${blink ? `<span class="stream-cursor"></span>` : ""}`;
+        }
+      }
+
+      // Queue Tray (Redesigned Single-Layer Row)
+      const queueHtml = queuedFollowUp
+        ? `<div class="queue-tray">
+             <span class="queue-tag">${s.queueTag}</span>
+             <span class="queue-text">${s.followUp}</span>
+             <span class="queue-mode">${s.queueMode}</span>
+           </div>`
+        : "";
+
+      // Chat Area
+      let chatHtml = "";
+      if (!sentFirst) {
+        chatHtml = `
+          <div class="empty-hero">
+            <img class="empty-icon" src="/brand/pi-readme-icon.png" alt="Pi"/>
+            <div class="empty-title">${s.emptyTitle}</div>
+            <div class="empty-sub">${s.emptySub}</div>
+          </div>`;
+      } else {
+        const blocks = [];
+        blocks.push(`<div class="user-bubble-row"><div class="user-bubble">${s.prompt}</div></div>`);
+
+        const asstParts = [];
+        if (thinkingPhase) {
+          const sec = Math.max(0.1, t - 2.4);
+          const pulse = 0.45 + 0.55 * Math.abs(Math.sin(t * 4.5));
+          asstParts.push(`<div class="thinking-strip"><span class="thinking-dot" style="opacity:${pulse.toFixed(2)};background:var(--accent)"></span><span>${s.thinkingLive(sec)}</span></div>`);
+        } else {
+          asstParts.push(`<div class="thinking-strip"><span class="thinking-dot"></span><span>${s.thinkingDone}</span>${ICONS.chevDown}</div>`);
+        }
+
+        // Streaming lead sentence (4.0s -> 5.7s)
+        if (t >= 4.0) {
+          const p = clamp01((t - 4.0) / 1.6);
+          const chars = Math.floor(s.lead.length * p);
+          const cur = p < 1 ? `<span class="stream-cursor"></span>` : "";
+          asstParts.push(`<div class="asst-p">${s.lead.slice(0, chars)}${cur}</div>`);
+        }
+
+        // GFM table reveal (5.8s -> 7.2s)
+        if (t >= 5.8) {
+          const visibleRows = t >= 6.6 ? 2 : 1;
+          const rowsHtml = s.rows
+            .slice(0, visibleRows)
+            .map((r) => `<tr><td><strong>${r[0]}</strong></td><td style="font-family:var(--font-mono);font-size:10px">${r[1]}</td><td style="font-family:var(--font-mono);font-size:10px">${r[2]}</td><td>${r[3]}</td></tr>`)
+            .join("");
+          asstParts.push(`
+            <div class="md-table-wrap">
+              <table class="md-table">
+                <thead><tr>${s.th.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+            </div>`);
+        }
+
+        // Real MathJax formula (7.4s -> 8.7s)
+        if (t >= 7.4) {
+          const op = clamp01((t - 7.4) / 0.45);
+          asstParts.push(`<div class="asst-p" style="opacity:${op.toFixed(2)}">${s.formulaLead}</div>`);
+        }
+        if (t >= 7.8) {
+          const op = clamp01((t - 7.8) / 0.45);
+          asstParts.push(`<div class="math-block" style="opacity:${op.toFixed(2)}">${cachedFormulaSvg}</div>`);
+        }
+
+        // Code block streaming (8.6s -> 10.6s) — hide if follow-up is sent so everything fits cleanly without clipping!
+        if (t >= 8.6 && !sentFollowUp) {
+          const linesCount = Math.min(s.codeLines.length, Math.max(1, Math.floor((t - 8.6) / 0.38) + 1));
+          const codeHtml = s.codeLines.slice(0, linesCount).join("\n");
+          const cur = streamingFirst && linesCount < s.codeLines.length ? `<span class="stream-cursor"></span>` : "";
+          asstParts.push(`
+            <div class="code-card">
+              <div class="code-hdr"><span>${s.codeLang}</span><span style="display:inline-flex;align-items:center;gap:4px">${ICONS.copy} Copy</span></div>
+              <pre class="code-pre">${codeHtml}${cur}</pre>
+            </div>`);
+        }
+
+        blocks.push(`<div class="asst-block">${asstParts.join("")}</div>`);
+
+        // Follow-up turn (12.8s -> 16.0s)
+        if (sentFollowUp) {
+          blocks.push(`<div class="user-bubble-row"><div class="user-bubble">${s.followUp}</div></div>`);
+          const p2 = clamp01((t - 13.0) / 1.45);
+          const chars2 = Math.floor(s.followReply.length * p2);
+          const cur2 = streamingSecond ? `<span class="stream-cursor"></span>` : "";
+          blocks.push(`<div class="asst-block"><div class="asst-p">${s.followReply.slice(0, chars2)}${cur2}</div></div>`);
+        }
+
+        chatHtml = `<div class="chat-body" style="gap:9px">${blocks.join("")}</div>`;
+      }
+
+      // Action button: Idle -> Active Send -> Streaming Stop + Ambient Spinning Ring / Delivery Capsule
+      let rightActionHtml = "";
+      const angle = (t * 240) % 360;
+      if (isStreaming && hasDraft) {
+        const tapQueue = t >= 11.1 && t < 11.4;
+        rightActionHtml = `
+          <span class="delivery-capsule">
+            <span class="delivery-btn">${s.steer}</span>
+            <span class="mt-sep" style="height:14px"></span>
+            <span class="delivery-btn ${tapQueue ? "delivery-btn-active" : ""}">${s.queue}</span>
+          </span>`;
+      } else if (isStreaming) {
+        rightActionHtml = `
+          <span class="send-ring-wrap">
+            <svg class="thinking-ring-svg" viewBox="0 0 36 36" style="transform:rotate(${angle.toFixed(0)}deg)">
+              <circle cx="18" cy="18" r="16.5" fill="none" stroke="var(--border)" stroke-width="1.6"/>
+              <circle cx="18" cy="18" r="16.5" fill="none" stroke="var(--accent)" stroke-width="1.8"
+                stroke-dasharray="32 76" stroke-linecap="round"/>
+            </svg>
+            <span class="send-btn" style="width:28px;height:28px">${ICONS.stopSq}</span>
+          </span>`;
+      } else if (hasDraft) {
+        const pressing = t >= 2.15 && t < 2.4;
+        rightActionHtml = `<span class="send-btn" style="${pressing ? "transform:scale(0.9)" : ""}">${ICONS.arrowUp}</span>`;
+      } else {
+        rightActionHtml = `<span class="send-btn send-btn-idle">${ICONS.arrowUp}</span>`;
+      }
+
+      document.getElementById("phoneScreen").innerHTML = `
+        <div class="status-bar">
+          <span>09:41</span>
+          <span class="status-cam"></span>
+          <span class="status-icons">${ICONS.wifi}${ICONS.battery}</span>
+        </div>
+        <div class="floating-top-wrap">
+          <div class="capsule capsule-session">
+            ${ICONS.menu}
+            <span class="capsule-session-title">${title}</span>
+            ${ICONS.chevDown}
+          </div>
+          <div class="capsule capsule-actions">
+            <span class="cap-icon-btn">${ICONS.plus}</span>
+            <span class="cap-divider"></span>
+            <span class="cap-icon-btn">${ICONS.kebab}</span>
+          </div>
+        </div>
+        ${chatHtml}
+        <div class="composer-zone">
+          ${queueHtml}
+          <div class="composer-card">
+            <div class="composer-input">${inputHtml}</div>
+            <div class="composer-bar">
+              <div class="composer-left">
+                <span class="composer-plus">${ICONS.plus}</span>
+                <span class="model-think-capsule">
+                  <span>Sonnet 4</span>
+                  ${ICONS.chevDown}
+                  <span class="mt-sep"></span>
+                  <span class="think-dot"></span>
+                  <span>High</span>
+                </span>
+              </div>
+              <div class="composer-right">
+                ${ctxRing(pct)}
+                ${rightActionHtml}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="gesture-bar"><span class="gesture-pill"></span></div>`;
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pi for Android — Asset Stage</title>
+  <link rel="stylesheet" href="/tools/readme-assets/design.css" />
+  <script>
+    window.MathJax = {
+      loader: {
+        paths: {
+          mathjax: "/app/src/main/assets/rich/mathjax",
+          "mathjax-newcm": "/app/src/main/assets/rich/mathjax"
+        },
+        versionWarnings: false
+      },
+      tex: {
+        inlineMath: [["\\(", "\\)"]],
+        displayMath: [["$$", "$$"]],
+        processEnvironments: true
+      },
+      svg: {
+        fontCache: "local",
+        linebreaks: { inline: false },
+        dynamicPrefix: "/app/src/main/assets/rich/mathjax/svg/dynamic"
+      },
+      startup: { typeset: false },
+      options: {
+        enableMenu: false,
+        enableEnrichment: false,
+        enableSpeech: false,
+        enableBraille: false,
+        enableComplexity: false,
+        enableExplorer: false,
+        a11y: { speech: false, braille: false }
+      }
+    };
+  </script>
+  <script src="/app/src/main/assets/rich/mathjax/tex-svg.js"></script>
+  <script src="/app/src/main/assets/rich/mermaid/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="stage" class="stage stage-light"></div>
+  <script src="/tools/readme-assets/scenes.js"></script>
+</body>
+</html>
