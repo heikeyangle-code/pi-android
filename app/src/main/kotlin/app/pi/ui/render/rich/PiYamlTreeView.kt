@@ -180,11 +180,7 @@ private fun YamlNodeRow(
             verticalAlignment = Alignment.Top,
         ) {
             if (node.isContainer) {
-                Text(
-                    text = if (expanded) "▾" else "▸",
-                    style = body.copy(color = palette.dim),
-                    modifier = Modifier.padding(end = 3.dp),
-                )
+                PiTreeChevron(expanded = expanded, color = palette.dim)
             } else {
                 Spacer(Modifier.width(15.dp))
             }

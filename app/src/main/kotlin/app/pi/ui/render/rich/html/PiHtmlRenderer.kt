@@ -543,6 +543,11 @@ private fun HtmlDetails(node: PiHtmlNode.Details, style: TextStyle) {
 @Composable
 private fun HtmlList(node: PiHtmlNode.List, style: TextStyle) {
     val palette = PiTheme.palette
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val lineHeightSp = style.lineHeight.value
+        .takeIf { it.isFinite() && it > 0f }
+        ?: ((style.fontSize.value.takeIf { it.isFinite() && it > 0f } ?: 15f) * 1.48f)
+    val markerHeightDp = with(density) { (lineHeightSp * density.fontScale).dp }
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -552,13 +557,27 @@ private fun HtmlList(node: PiHtmlNode.List, style: TextStyle) {
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Top,
             ) {
-                Text(
-                    text = if (node.ordered) "${node.start.toLong() + index}." else "•",
-                    style = style.copy(color = palette.mdListBullet),
-                    modifier = Modifier
-                        .widthIn(min = 22.dp)
-                        .padding(end = 4.dp),
-                )
+                if (node.ordered) {
+                    Text(
+                        text = "${node.start.toLong() + index}.",
+                        style = style.copy(color = palette.mdListBullet),
+                        modifier = Modifier
+                            .widthIn(min = 22.dp)
+                            .padding(end = 4.dp),
+                    )
+                } else {
+                    androidx.compose.foundation.Canvas(
+                        modifier = Modifier
+                            .width(18.dp)
+                            .height(markerHeightDp),
+                    ) {
+                        drawCircle(
+                            color = palette.mdListBullet,
+                            radius = 2.35.dp.toPx(),
+                            center = androidx.compose.ui.geometry.Offset(6.dp.toPx(), size.height * 0.5f),
+                        )
+                    }
+                }
                 Column(Modifier.weight(1f)) {
                     RenderBlocks(item.children, style)
                 }

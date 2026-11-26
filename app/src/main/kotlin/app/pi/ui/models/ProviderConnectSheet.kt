@@ -24,7 +24,7 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
-import androidx.compose.material3.CircularProgressIndicator
+import app.pi.ui.components.PiSpinner
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -849,9 +849,9 @@ private fun LoginProgress(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(15.dp),
-                    strokeWidth = 2.dp,
+                PiSpinner(
+                    size = 15.dp,
+                    strokeWidth = 1.8.dp,
                     color = palette.accent,
                 )
                 Text(

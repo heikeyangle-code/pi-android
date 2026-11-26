@@ -25,7 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SystemUpdate
-import androidx.compose.material3.CircularProgressIndicator
+import app.pi.ui.components.PiSpinner
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -207,9 +207,9 @@ internal fun AppUpdateSheet(
                     }
                 }
                 if (checking) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
+                    PiSpinner(
+                        size = 20.dp,
+                        strokeWidth = 1.8.dp,
                         color = palette.accent,
                     )
                 } else if (!downloading) {

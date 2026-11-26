@@ -37,9 +37,9 @@ fun MentionPalette(
     val haptic = LocalHapticFeedback.current
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = PiTheme.palette.cardBg,
         shape = PiShapes.card,
-        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
+        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.60f)),
     ) {
         LazyColumn(
             modifier = Modifier

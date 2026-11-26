@@ -39,7 +39,7 @@ fun DateSeparatorBlock(
         Surface(
             modifier = Modifier.padding(horizontal = 10.dp),
             shape = RoundedCornerShape(999.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            color = androidx.compose.ui.graphics.lerp(palette.pageBg, palette.cardBg, 0.72f),
             border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.55f)),
         ) {
             Text(

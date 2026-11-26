@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -295,15 +296,22 @@ internal fun PiTreeRawSource(
 internal fun PiTreeRowMenu(actions: List<Pair<String, () -> Unit>>) {
     if (actions.isEmpty()) return
     var open by remember { mutableStateOf(false) }
+    val dotColor = PiTheme.palette.dim.copy(alpha = 0.72f)
     Box {
-        Text(
-            text = "⋯",
-            style = PiTheme.text.monoSmall,
-            color = PiTheme.palette.dim.copy(alpha = 0.7f),
+        Box(
             modifier = Modifier
                 .clickable(onClickLabel = tr("更多操作", "More actions")) { open = true }
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-        )
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.width(12.dp).height(6.dp)) {
+                val r = 1.15.dp.toPx()
+                val cy = size.height / 2f
+                drawCircle(dotColor, r, Offset(r + 0.5.dp.toPx(), cy))
+                drawCircle(dotColor, r, Offset(size.width / 2f, cy))
+                drawCircle(dotColor, r, Offset(size.width - r - 0.5.dp.toPx(), cy))
+            }
+        }
         PiMenu(
             expanded = open,
             onDismiss = { open = false },
@@ -313,6 +321,52 @@ internal fun PiTreeRowMenu(actions: List<Pair<String, () -> Unit>>) {
                 PiMenuItem(label = label, onSelect = action)
             },
         )
+    }
+}
+
+/**
+ * Custom Canvas-drawn expand/collapse chevron for JSON / XML / YAML trees, replacing
+ * font-dependent Unicode `▸`/`▾` glyphs with crisp vector geometry and smooth 90° rotation.
+ */
+@Composable
+internal fun PiTreeChevron(
+    expanded: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    val angle by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(140),
+        label = "tree-chevron",
+    )
+    Box(
+        modifier = modifier
+            .width(15.dp)
+            .height(18.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        androidx.compose.foundation.Canvas(
+            modifier = Modifier
+                .width(11.dp)
+                .height(11.dp)
+                .graphicsLayer { rotationZ = angle },
+        ) {
+            val stroke = 1.4.dp.toPx()
+            val path = androidx.compose.ui.graphics.Path().apply {
+                moveTo(size.width * 0.34f, size.height * 0.22f)
+                lineTo(size.width * 0.68f, size.height * 0.50f)
+                lineTo(size.width * 0.34f, size.height * 0.78f)
+            }
+            drawPath(
+                path = path,
+                color = color,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(
+                    width = stroke,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                    join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                ),
+            )
+        }
     }
 }
 

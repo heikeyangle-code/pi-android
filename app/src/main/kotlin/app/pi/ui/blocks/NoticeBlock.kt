@@ -36,11 +36,6 @@ fun NoticeBlock(
         Notice.Tone.Warning -> palette.warning
         Notice.Tone.Error -> palette.error
     }
-    val glyph = when (item.tone) {
-        Notice.Tone.Info -> "·"
-        Notice.Tone.Warning -> "!"
-        Notice.Tone.Error -> "✗"
-    }
     val bg = when (item.tone) {
         Notice.Tone.Info -> Color.Transparent
         Notice.Tone.Warning -> palette.warning.copy(alpha = 0.08f)
@@ -76,11 +71,46 @@ fun NoticeBlock(
                         .background(color.copy(alpha = 0.14f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text = glyph,
-                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-                        color = color,
-                    )
+                    androidx.compose.foundation.Canvas(modifier = Modifier.size(10.dp)) {
+                        val stroke = 1.5.dp.toPx()
+                        when (item.tone) {
+                            Notice.Tone.Info -> {
+                                drawCircle(color = color, radius = 2.dp.toPx())
+                            }
+                            Notice.Tone.Warning -> {
+                                val cx = size.width / 2f
+                                drawLine(
+                                    color = color,
+                                    start = androidx.compose.ui.geometry.Offset(cx, size.height * 0.14f),
+                                    end = androidx.compose.ui.geometry.Offset(cx, size.height * 0.62f),
+                                    strokeWidth = stroke,
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                )
+                                drawCircle(
+                                    color = color,
+                                    radius = stroke * 0.58f,
+                                    center = androidx.compose.ui.geometry.Offset(cx, size.height * 0.84f),
+                                )
+                            }
+                            Notice.Tone.Error -> {
+                                val pad = size.width * 0.22f
+                                drawLine(
+                                    color = color,
+                                    start = androidx.compose.ui.geometry.Offset(pad, pad),
+                                    end = androidx.compose.ui.geometry.Offset(size.width - pad, size.height - pad),
+                                    strokeWidth = stroke,
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                )
+                                drawLine(
+                                    color = color,
+                                    start = androidx.compose.ui.geometry.Offset(size.width - pad, pad),
+                                    end = androidx.compose.ui.geometry.Offset(pad, size.height - pad),
+                                    strokeWidth = stroke,
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                )
+                            }
+                        }
+                    }
                 }
                 Text(
                     text = item.text.ifEmpty { tr("（无内容）", "(Empty)") },

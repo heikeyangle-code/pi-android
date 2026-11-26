@@ -1,9 +1,15 @@
 package app.pi.ui.components
 
+import android.animation.ValueAnimator
 import android.view.WindowManager
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -479,5 +485,61 @@ fun ClearDialogPlatformDim() {
                 w.setDimAmount(0f)
             }
         }
+    }
+}
+
+/**
+ * Custom Canvas-drawn studio spinner: hairline tonal track ring + smooth round-capped arc.
+ * Reads animation phase strictly inside draw scope for zero recomposition overhead and respects
+ * Android system animator-duration scale.
+ */
+@Composable
+fun PiSpinner(
+    modifier: Modifier = Modifier,
+    size: Dp = 18.dp,
+    strokeWidth: Dp = 1.8.dp,
+    color: Color = PiTheme.palette.accent,
+) {
+    val animEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
+    val angleState = if (animEnabled) {
+        rememberInfiniteTransition(label = "pi-spinner").animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 860, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "pi-spinner-angle",
+        )
+    } else {
+        null
+    }
+    val trackColor = color.copy(alpha = 0.16f)
+    Canvas(modifier = modifier.size(size)) {
+        val strokePx = strokeWidth.toPx()
+        val inset = strokePx / 2f
+        val arcSize = Size(
+            (this.size.width - strokePx).coerceAtLeast(1f),
+            (this.size.height - strokePx).coerceAtLeast(1f),
+        )
+        val topLeft = Offset(inset, inset)
+        drawArc(
+            color = trackColor,
+            startAngle = 0f,
+            sweepAngle = 360f,
+            useCenter = false,
+            topLeft = topLeft,
+            size = arcSize,
+            style = Stroke(width = strokePx),
+        )
+        drawArc(
+            color = color,
+            startAngle = (angleState?.value ?: -90f) - 90f,
+            sweepAngle = 115f,
+            useCenter = false,
+            topLeft = topLeft,
+            size = arcSize,
+            style = Stroke(width = strokePx, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+        )
     }
 }

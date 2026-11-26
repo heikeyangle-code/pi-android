@@ -1007,8 +1007,8 @@ internal fun formatShellCommandPreview(command: String, maxChars: Int = 120): St
         val rawPath = m.groupValues[2].ifEmpty { m.groupValues[3].ifEmpty { m.groupValues[4] } }
         val sep = m.groupValues[5]
         val rest = m.groupValues[6].trim()
-        if (rawPath.length > 18 && rest.isNotEmpty()) {
-            "cd ${shortenToolPathForPhone(rawPath, maxChars = 18)} $sep $rest"
+        if (rawPath.length > 14 && rest.isNotEmpty()) {
+            "cd ${shortenToolPathForPhone(rawPath, maxChars = 16)} $sep $rest"
         } else {
             collapsed
         }

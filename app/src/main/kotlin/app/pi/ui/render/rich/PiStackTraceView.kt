@@ -135,7 +135,7 @@ fun PiStackTraceCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .background(palette.cardBg)
             .border(0.5.dp, palette.borderMuted.copy(alpha = 0.58f), shape),
     ) {
         PiCardHeader(

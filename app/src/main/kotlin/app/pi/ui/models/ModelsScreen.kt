@@ -23,7 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.CircularProgressIndicator
+import app.pi.ui.components.PiSpinner
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -193,9 +193,9 @@ fun ModelsScreen(
                             modifier = Modifier.size(44.dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
+                            PiSpinner(
+                                size = 18.dp,
+                                strokeWidth = 1.8.dp,
                                 color = PiTheme.palette.accent,
                             )
                         }
@@ -218,9 +218,9 @@ fun ModelsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(28.dp),
-                        strokeWidth = 2.5.dp,
+                    PiSpinner(
+                        size = 26.dp,
+                        strokeWidth = 2.2.dp,
                         color = PiTheme.palette.accent,
                     )
                 }

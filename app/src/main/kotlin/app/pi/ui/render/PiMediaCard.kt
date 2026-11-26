@@ -97,11 +97,39 @@ private fun fmt(ms: Int): String {
 @Composable
 private fun PlayButton(playing: Boolean, size: Int = 40, onClick: () -> Unit) {
     val palette = PiTheme.palette
+    val iconColor = palette.contrastOn(palette.accent)
     Box(
         Modifier.size(size.dp).clip(CircleShape).background(palette.accent).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(if (playing) "❚❚" else "▶", color = palette.contrastOn(palette.accent), style = PiTheme.text.monoSmall)
+        androidx.compose.foundation.Canvas(modifier = Modifier.size((size * 0.42f).dp)) {
+            if (playing) {
+                val barW = this.size.width * 0.27f
+                val barH = this.size.height * 0.78f
+                val top = (this.size.height - barH) / 2f
+                val radius = androidx.compose.ui.geometry.CornerRadius(barW / 2f, barW / 2f)
+                drawRoundRect(
+                    color = iconColor,
+                    topLeft = androidx.compose.ui.geometry.Offset(this.size.width * 0.16f, top),
+                    size = androidx.compose.ui.geometry.Size(barW, barH),
+                    cornerRadius = radius,
+                )
+                drawRoundRect(
+                    color = iconColor,
+                    topLeft = androidx.compose.ui.geometry.Offset(this.size.width * 0.57f, top),
+                    size = androidx.compose.ui.geometry.Size(barW, barH),
+                    cornerRadius = radius,
+                )
+            } else {
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(this@Canvas.size.width * 0.24f, this@Canvas.size.height * 0.14f)
+                    lineTo(this@Canvas.size.width * 0.86f, this@Canvas.size.height * 0.50f)
+                    lineTo(this@Canvas.size.width * 0.24f, this@Canvas.size.height * 0.86f)
+                    close()
+                }
+                drawPath(path = path, color = iconColor)
+            }
+        }
     }
 }
 

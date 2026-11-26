@@ -183,8 +183,14 @@ fun PiCsvTableBody(
                 .fillMaxWidth()
                 .horizontalScroll(scroll),
         ) {
-            val headerBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f)
-            val zebraBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.28f)
+            val palette = PiTheme.palette
+            val darkTheme = remember(palette) { app.pi.ui.theme.PiContrast.luminance(palette.pageBg) < 0.5 }
+            val headerBg = remember(palette, darkTheme) {
+                androidx.compose.ui.graphics.lerp(palette.cardBg, palette.text, if (darkTheme) 0.08f else 0.055f)
+            }
+            val zebraBg = remember(palette, darkTheme) {
+                androidx.compose.ui.graphics.lerp(palette.cardBg, palette.text, if (darkTheme) 0.032f else 0.025f)
+            }
             Column(Modifier.width(tableWidth)) {
                 CsvRow(
                     cells = List(table.columnCount) { table.header.getOrNull(it) ?: "" },

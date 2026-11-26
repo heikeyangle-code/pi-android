@@ -182,7 +182,7 @@ class ActivityGroupProjectorTest {
     @Test
     fun `shell command preview and error snippet avoid blank lines, long cd prefixes, and markdown fences`() {
         assertEquals(
-            "cd …/pi-phone && echo \"hello\"",
+            "cd …/cmp/pi-phone && echo \"hello\"",
             app.pi.ui.blocks.formatShellCommandPreview("\n# setup\nset -euo pipefail\ncd /tmp/cmp/pi-phone && echo \"hello\"\n"),
         )
         assertEquals(

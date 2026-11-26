@@ -32,7 +32,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.CircularProgressIndicator
+import app.pi.ui.components.PiSpinner
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -516,9 +516,9 @@ fun RuntimeEngineScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
+                            PiSpinner(
+                                size = 18.dp,
+                                strokeWidth = 1.8.dp,
                                 color = palette.accent,
                             )
                             Text(
@@ -778,9 +778,9 @@ fun RuntimeEngineScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp,
+                                    PiSpinner(
+                                        size = 16.dp,
+                                        strokeWidth = 1.8.dp,
                                         color = palette.accent,
                                     )
                                     Text(
@@ -832,9 +832,9 @@ fun RuntimeEngineScreen(
                                 )
                             }
                             if (reportBusy) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp,
+                                PiSpinner(
+                                    size = 18.dp,
+                                    strokeWidth = 1.8.dp,
                                     color = palette.accent,
                                 )
                             }

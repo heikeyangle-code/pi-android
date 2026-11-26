@@ -401,7 +401,24 @@ internal fun WsErrBlock(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
             ) {
-                Text("✗", style = PiTheme.text.monoSmall, color = palette.error, maxLines = 1)
+                androidx.compose.foundation.Canvas(modifier = Modifier.size(11.dp)) {
+                    val stroke = 1.5.dp.toPx()
+                    val pad = size.width * 0.2f
+                    drawLine(
+                        color = palette.error,
+                        start = androidx.compose.ui.geometry.Offset(pad, pad),
+                        end = androidx.compose.ui.geometry.Offset(size.width - pad, size.height - pad),
+                        strokeWidth = stroke,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                    )
+                    drawLine(
+                        color = palette.error,
+                        start = androidx.compose.ui.geometry.Offset(size.width - pad, pad),
+                        end = androidx.compose.ui.geometry.Offset(pad, size.height - pad),
+                        strokeWidth = stroke,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                    )
+                }
                 Text(
                     title,
                     // 稿子的标题是 `t12`（`workspace-final.html:1058`）：`✗` + 一句短标题，

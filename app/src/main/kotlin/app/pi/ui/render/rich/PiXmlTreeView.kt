@@ -166,11 +166,7 @@ private fun XmlNodeRow(node: XmlNode, onCopy: (text: String, label: String) -> U
             verticalAlignment = Alignment.Top,
         ) {
             if (hasChildren) {
-                Text(
-                    text = if (expanded) "▾" else "▸",
-                    style = body.copy(color = palette.dim),
-                    modifier = Modifier.padding(end = 3.dp),
-                )
+                PiTreeChevron(expanded = expanded, color = palette.dim)
             } else {
                 Spacer(Modifier.width(15.dp))
             }

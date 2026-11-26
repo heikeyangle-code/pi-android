@@ -246,8 +246,8 @@ internal fun BlockActionMenu(
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.45f)),
+                    color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
+                    border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.48f)),
                 ) {
                     Column {
                         actions.forEachIndexed { index, action ->

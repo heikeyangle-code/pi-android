@@ -43,8 +43,8 @@ fun ArgumentPalette(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = PiShapes.card,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
+        color = PiTheme.palette.cardBg,
+        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.60f)),
     ) {
         Column {
             if (hint != null) {
@@ -114,8 +114,8 @@ fun ExtensionAutocompletePalette(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = PiShapes.card,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
+        color = PiTheme.palette.cardBg,
+        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.60f)),
     ) {
         LazyColumn(Modifier.heightIn(max = 260.dp).padding(vertical = 4.dp)) {
             itemsIndexed(items, key = { idx, it -> "$idx:${it.value}" }) { _, item ->
