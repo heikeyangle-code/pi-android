@@ -5,14 +5,14 @@
 <p>An AI agent on your phone: clean chat, ready to build</p>
 <p><sub>A third-party Android client built on the official Pi SDK (<code>@earendil-works/pi-coding-agent</code>). Not affiliated with the official Pi team.</sub></p>
 <p>
-<a href="https://github.com/heikeyangle-code/pi-android/releases/latest"><img src="https://img.shields.io/github/v/release/heikeyangle-code/pi-android?label=Release&style=flat-square" alt="Latest Release" /></a>
-<a href="https://github.com/heikeyangle-code/pi-android/releases"><img src="https://img.shields.io/github/downloads/heikeyangle-code/pi-android/total?label=Downloads&style=flat-square" alt="Total Downloads" /></a>
-<a href="https://github.com/heikeyangle-code/pi-android/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/heikeyangle-code/pi-android/ci.yml?branch=main&label=CI&style=flat-square" alt="CI Status" /></a>
-<a href="https://github.com/heikeyangle-code/pi-android/stargazers"><img src="https://img.shields.io/github/stars/heikeyangle-code/pi-android?label=Stars&style=flat-square" alt="GitHub Stars" /></a>
-<a href="LICENSE"><img src="https://img.shields.io/github/license/heikeyangle-code/pi-android?label=License&style=flat-square" alt="MIT License" /></a>
+<a href="https://github.com/heikeyangle-code/pi-mobile-agent/releases/latest"><img src="https://img.shields.io/github/v/release/heikeyangle-code/pi-mobile-agent?label=Release&style=flat-square" alt="Latest Release" /></a>
+<a href="https://github.com/heikeyangle-code/pi-mobile-agent/releases"><img src="https://img.shields.io/github/downloads/heikeyangle-code/pi-mobile-agent/total?label=Downloads&style=flat-square" alt="Total Downloads" /></a>
+<a href="https://github.com/heikeyangle-code/pi-mobile-agent/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/heikeyangle-code/pi-mobile-agent/ci.yml?branch=main&label=CI&style=flat-square" alt="CI Status" /></a>
+<a href="https://github.com/heikeyangle-code/pi-mobile-agent/stargazers"><img src="https://img.shields.io/github/stars/heikeyangle-code/pi-mobile-agent?label=Stars&style=flat-square" alt="GitHub Stars" /></a>
+<a href="LICENSE"><img src="https://img.shields.io/github/license/heikeyangle-code/pi-mobile-agent?label=License&style=flat-square" alt="MIT License" /></a>
 <img src="https://img.shields.io/badge/Android-8.0%2B%20%7C%20arm64-4B5563?style=flat-square" alt="Android 8.0+ arm64" />
 </p>
-<p><a href="https://github.com/heikeyangle-code/pi-android/releases/latest"><strong>Download Latest APK</strong></a> · <a href="#installation">Install</a> · <a href="#frequently-asked-questions">FAQ</a></p>
+<p><a href="https://github.com/heikeyangle-code/pi-mobile-agent/releases/latest"><strong>Download Latest APK</strong></a> · <a href="#installation">Install</a> · <a href="#frequently-asked-questions">FAQ</a></p>
 </div>
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-en-dark.webp" /><source media="(prefers-color-scheme: light)" srcset="docs/assets/hero-en-light.webp" /><img src="docs/assets/hero-en-light.webp" alt="Pi for Android chat interface rendering Markdown tables, MathJax equations, Mermaid diagrams, and highlighted code" width="100%" /></picture>
@@ -77,7 +77,7 @@ Many desktop Pi extensions draw text-based panels, progress bars, or status widg
 
 Requirements: Android 8.0 (API 26) or newer on an `arm64-v8a` device. No Root and no Termux required.
 
-1. Download `pi-android-*-sideload28-arm64.apk` from [GitHub Releases](https://github.com/heikeyangle-code/pi-android/releases/latest) and install it.
+1. Download `pi-android-*-sideload28-arm64.apk` from [GitHub Releases](https://github.com/heikeyangle-code/pi-mobile-agent/releases/latest) and install it.
 2. Open the app and wait briefly while the first launch unpacks the bundled runtime.
 3. Open **Settings → Models & Providers**, sign in via OAuth or enter an API key, and start chatting (pick a project folder from the top bar menu whenever you want it to edit code).
 
@@ -194,8 +194,8 @@ flowchart TB
 ### Building from Source
 
 ```bash
-git clone https://github.com/heikeyangle-code/pi-android.git
-cd pi-android
+git clone https://github.com/heikeyangle-code/pi-mobile-agent.git
+cd pi-mobile-agent
 
 # 1. Run SDK host checks, startup guards, and unit tests
 node tools/sdk-host/contract.mjs
@@ -223,8 +223,8 @@ Generator sources live in [tools/readme-assets/](tools/readme-assets/) and write
 
 ## Community and Feedback
 
-- Report bugs or request features in [GitHub Issues](https://github.com/heikeyangle-code/pi-android/issues).
-- Follow releases and changelogs on [GitHub Releases](https://github.com/heikeyangle-code/pi-android/releases).
+- Report bugs or request features in [GitHub Issues](https://github.com/heikeyangle-code/pi-mobile-agent/issues).
+- Follow releases and changelogs on [GitHub Releases](https://github.com/heikeyangle-code/pi-mobile-agent/releases).
 
 ## Contributing
 
