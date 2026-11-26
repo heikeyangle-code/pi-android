@@ -410,6 +410,40 @@ fun rgbToOkhsl(rgb: Rgb): OkHsl {
     return OkHsl(hue, saturation.coerceIn(0.0, 1.0), lightness)
 }
 
+/**
+ * OKLCH to sRGB channels 0-255, reducing chroma at constant lightness and hue until the
+ * point enters the sRGB gamut (`oklchToRgb`, `packages/tui/src/oklab.ts`).
+ */
+fun oklchToRgb(lightness: Double, chroma: Double, hue: Double): Rgb {
+    fun inGamut(linear: DoubleArray): Boolean =
+        linear[0] >= -1e-7 && linear[0] <= 1.0 + 1e-7 &&
+            linear[1] >= -1e-7 && linear[1] <= 1.0 + 1e-7 &&
+            linear[2] >= -1e-7 && linear[2] <= 1.0 + 1e-7
+
+    val angle = (hue * PI) / 180.0
+    val cosH = cos(angle)
+    val sinH = sin(angle)
+    fun atChroma(value: Double): DoubleArray =
+        oklabToLinearSrgb(OkLab(lightness, value * cosH, value * sinH))
+
+    val direct = atChroma(chroma)
+    if (inGamut(direct)) return linearSrgbToRgb(direct)
+    var linear = atChroma(0.0)
+    var low = 0.0
+    var high = chroma
+    for (step in 0 until 20) {
+        val middle = (low + high) / 2.0
+        val candidate = atChroma(middle)
+        if (inGamut(candidate)) {
+            low = middle
+            linear = candidate
+        } else {
+            high = middle
+        }
+    }
+    return linearSrgbToRgb(linear)
+}
+
 // ============================================================================
 // WCAG 2 contrast
 // ============================================================================

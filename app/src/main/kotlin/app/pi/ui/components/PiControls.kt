@@ -322,7 +322,7 @@ fun PiSwitch(
 /**
  * Bespoke Studio slim-track slider (zero Material 3 `Slider`).
  * Supports both linear value tracks (`trackBrush == null`) and full-spectrum gradient tracks
- * (`trackBrush != null`, used in `PiSystemPaletteSheet`).
+ * (`trackBrush != null`).
  */
 @Composable
 fun PiSlider(

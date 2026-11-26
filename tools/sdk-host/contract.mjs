@@ -24,7 +24,7 @@ for (const name of [
   "createAgentSessionRuntime", "createAgentSessionServices", "createAgentSessionFromServices", "createEventBus",
   "ModelRuntime", "SettingsManager", "SessionManager", "ProjectTrustStore", "hasTrustRequiringProjectResources",
   "DefaultPackageManager", "DefaultResourceLoader", "createMcpExtension", "createCodemodeExtension",
-  "createToolSearchExtension", "VERSION",
+  "createToolSearchExtension", "Theme", "initTheme", "getSelectListTheme", "getPackageDir", "VERSION",
 ]) check(`导出 ${name}`, name in sdk);
 
 const proto = sdk.AgentSession?.prototype ?? {};

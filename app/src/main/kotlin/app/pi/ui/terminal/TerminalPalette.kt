@@ -84,45 +84,58 @@ data class TerminalPalette(
     companion object {
         private const val DARK_PAGE_DIM = 0.28f
 
-        // 高质感暗色 16 色 ANSI（柔和护眼同时在深底上具备 AA+ 对比度）
-        private val DARK_ANSI_16 = intArrayOf(
-            0xFF1C1E26.toInt(), // 0 Black
-            0xFFF3707A.toInt(), // 1 Red
-            0xFF7AD696.toInt(), // 2 Green
-            0xFFF2C97D.toInt(), // 3 Yellow
-            0xFF72A7F8.toInt(), // 4 Blue
-            0xFFC792EA.toInt(), // 5 Magenta
-            0xFF6CD4E0.toInt(), // 6 Cyan
-            0xFFD4D8E2.toInt(), // 7 White
-            0xFF5C6378.toInt(), // 8 Bright Black
-            0xFFFF8F98.toInt(), // 9 Bright Red
-            0xFF9AE8B1.toInt(), // 10 Bright Green
-            0xFFFFDF9B.toInt(), // 11 Bright Yellow
-            0xFF94BEFF.toInt(), // 12 Bright Blue
-            0xFFDBB2F8.toInt(), // 13 Bright Magenta
-            0xFF93E6F0.toInt(), // 14 Bright Cyan
-            0xFFF6F8FC.toInt(), // 15 Bright White
-        )
+        /**
+         * Derive a readable, theme-faithful 16-color ANSI table directly from [palette]'s
+         * semantic tokens so custom themes (Dracula / Catppuccin / Solarized / Nord / Light)
+         * style the built-in terminal cohesively while preserving contrast on [bg].
+         */
+        private fun deriveAnsi16(palette: PiPalette, bg: Color, dark: Boolean): IntArray {
+            fun readable(color: Color): Color =
+                app.pi.ui.theme.PiContrast.ensure(color, bg, 3.6)
 
-        // 高质感浅色 16 色 ANSI（白/纸底上清晰利落）
-        private val LIGHT_ANSI_16 = intArrayOf(
-            0xFF23262F.toInt(), // 0 Black
-            0xFFC93441.toInt(), // 1 Red
-            0xFF1E7E45.toInt(), // 2 Green
-            0xFFA66B00.toInt(), // 3 Yellow
-            0xFF1D62C6.toInt(), // 4 Blue
-            0xFF8C3BB8.toInt(), // 5 Magenta
-            0xFF0E7A8C.toInt(), // 6 Cyan
-            0xFF6B7280.toInt(), // 7 White
-            0xFF5A6270.toInt(), // 8 Bright Black
-            0xFFDF4452.toInt(), // 9 Bright Red
-            0xFF259954.toInt(), // 10 Bright Green
-            0xFFC48200.toInt(), // 11 Bright Yellow
-            0xFF2B75E6.toInt(), // 12 Bright Blue
-            0xFFA64FD4.toInt(), // 13 Bright Magenta
-            0xFF1493A8.toInt(), // 14 Bright Cyan
-            0xFF111318.toInt(), // 15 Bright White
-        )
+            fun bright(color: Color): Color = if (dark) {
+                lerp(color, Color.White, 0.22f)
+            } else {
+                lerp(color, Color.Black, 0.18f)
+            }
+
+            val black = if (dark) lerp(bg, Color.White, 0.08f) else lerp(palette.text, bg, 0.10f)
+            val red = readable(palette.error)
+            val green = readable(palette.success)
+            val yellow = readable(palette.warning)
+            val blue = readable(palette.mdLink)
+            val magenta = readable(palette.thinkingHigh)
+            val cyan = readable(palette.syntaxVariable)
+            val white = if (dark) lerp(palette.text, bg, 0.12f) else readable(palette.muted)
+
+            val brightBlack = readable(palette.dim)
+            val brightRed = bright(red)
+            val brightGreen = bright(green)
+            val brightYellow = bright(yellow)
+            val brightBlue = bright(readable(palette.accent))
+            val brightMagenta = bright(readable(palette.thinkingXhigh))
+            val brightCyan = bright(cyan)
+            val brightWhite = if (dark) lerp(palette.text, Color.White, 0.25f) else palette.text
+
+            return intArrayOf(
+                black.toArgb(),         // 0 Black
+                red.toArgb(),           // 1 Red
+                green.toArgb(),         // 2 Green
+                yellow.toArgb(),        // 3 Yellow
+                blue.toArgb(),          // 4 Blue
+                magenta.toArgb(),       // 5 Magenta
+                cyan.toArgb(),          // 6 Cyan
+                white.toArgb(),         // 7 White
+                brightBlack.toArgb(),   // 8 Bright Black
+                brightRed.toArgb(),     // 9 Bright Red
+                brightGreen.toArgb(),   // 10 Bright Green
+                brightYellow.toArgb(),  // 11 Bright Yellow
+                brightBlue.toArgb(),    // 12 Bright Blue
+                brightMagenta.toArgb(), // 13 Bright Magenta
+                brightCyan.toArgb(),    // 14 Bright Cyan
+                brightWhite.toArgb(),   // 15 Bright White
+            )
+        }
 
         fun of(palette: PiPalette): TerminalPalette {
             val dark = palette.pageBg.isDarkSurface()
@@ -133,7 +146,7 @@ data class TerminalPalette(
                 cursor = palette.accent,
                 accent = palette.accent,
                 isDark = dark,
-                ansi16 = if (dark) DARK_ANSI_16 else LIGHT_ANSI_16,
+                ansi16 = deriveAnsi16(palette, bg, dark),
             )
         }
     }

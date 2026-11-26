@@ -1834,7 +1834,7 @@ internal fun ChatBody(
                         ).coerceAtLeast(0.dp)
                     val highlightModifier = when {
                         isCurrentMatch -> Modifier
-                            .border(1.dp, PiTheme.palette.searchMatchText, PiShapes.cardInner)
+                            .border(1.5.dp, PiTheme.palette.borderAccent, PiShapes.cardInner)
                             .background(PiTheme.palette.searchMatchBg, PiShapes.cardInner)
 
                         isMatch -> Modifier.background(PiTheme.palette.searchMatchBg, PiShapes.cardInner)

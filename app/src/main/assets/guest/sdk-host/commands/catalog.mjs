@@ -259,33 +259,15 @@ export function register(reg, { controller }) {
     return withState(controller, { active: s.getActiveToolNames() });
   });
 
-  // 渲染一律交给 pi 官方导出的 `ToolExecutionComponent` / `CustomMessageComponent`：render context、
-  // 状态、回退、`invalidate` 都是它们的实现，宿主不再自己拼（此前自拼漏了 details / 图片块 / executionStarted…）。
-  // 官方组件读的是 pi 的**全局官方主题**，随 App 通过 `ui.palette` 同步的明暗色板自动切 `light`/`dark`。
-  let activeThemeMode = null;
+  // 渲染一律交给 pi 官方导出的 `ToolExecutionComponent` / `CustomMessageComponent`：
+  // 它们读取 Pi 全局主题槽；由 `themeHandle.ensureOfficialTheme(sdk)` 确保该槽始终挂载
+  // Android 通过 `ui.palette` 推送的真实官方 `sdk.Theme` 实例（Studio 浅/深、system 及全部自定义主题）。
   const officialTheme = () => {
-    const wanted = controller.officialThemeMode === "light" ? "light" : "dark";
-    if (activeThemeMode !== wanted) {
-      process.env.COLORTERM ||= "truecolor";
-      controller.sdk.initTheme(wanted);
-      activeThemeMode = wanted;
-    }
+    const synced = controller.themeHandle?.ensureOfficialTheme?.(controller.sdk);
+    if (synced) return synced;
+    process.env.COLORTERM ||= "truecolor";
+    controller.sdk.initTheme("dark");
     return globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
-  };
-  controller.syncOfficialTheme = (mode) => {
-    const next = mode === "light" ? "light" : "dark";
-    const changed = controller.officialThemeMode !== next;
-    controller.officialThemeMode = next;
-    if (changed && controller.sdk) {
-      try {
-        process.env.COLORTERM ||= "truecolor";
-        controller.sdk.initTheme(next);
-        activeThemeMode = next;
-      } catch {
-        // ignore if theme init not ready yet
-      }
-      controller.hub.emit("render.invalidate", { kind: "theme" });
-    }
   };
 
   // 组件异步 `ui.requestRender()`（动画、定时刷新）→ 合并防抖后只通知 App 重取这一张卡。

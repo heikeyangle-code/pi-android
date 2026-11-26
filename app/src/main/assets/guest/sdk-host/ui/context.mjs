@@ -298,9 +298,17 @@ export function createUiContext({ hub, surfaces, theme, themeHandle = null, flag
       return out;
     },
     getTheme(name) {
-      if (!name) return theme;
-      const all = this.getAllThemes();
-      if (all.some((t) => t.name === name) || name === theme.name || name === "app") return theme;
+      if (!name || name === theme.name || name === "app") return theme;
+      try {
+        const themes = sessionHooks.getResourceLoader?.()?.getThemes?.()?.themes ?? [];
+        const matched = themes.find((t) => t?.name === name);
+        if (matched) return matched;
+      } catch {
+        // ignore if resourceLoader unavailable
+      }
+      if (name === "dark" || name === "light" || name === "system") {
+        return themeHandle?.getBuiltinTheme?.(name) ?? theme;
+      }
       return undefined;
     },
     setTheme(themeOrName) {
@@ -430,15 +438,20 @@ export function createUiContext({ hub, surfaces, theme, themeHandle = null, flag
       return { opened: false, reason: "当前没有扩展注册自定义编辑器" };
     }
     await Promise.resolve(lazyLoaders.ensureKeybindings?.());
+    const sdk = sessionHooks.getSdk?.();
+    const selectList =
+      typeof sdk?.getSelectListTheme === "function" && themeHandle?.ensureOfficialTheme?.(sdk)
+        ? sdk.getSelectListTheme()
+        : {
+            selectedPrefix: (s) => theme.fg("accent", s),
+            selectedText: (s) => theme.fg("accent", s),
+            description: (s) => theme.fg("muted", s),
+            scrollInfo: (s) => theme.fg("muted", s),
+            noMatch: (s) => theme.fg("muted", s),
+          };
     const editorTheme = {
-      borderColor: (s) => theme.fg("border", s),
-      selectList: {
-        selectedPrefix: (s) => theme.fg("accent", s),
-        selectedText: (s) => theme.fg("accent", s),
-        description: (s) => theme.fg("muted", s),
-        scrollInfo: (s) => theme.fg("dim", s),
-        noMatch: (s) => theme.fg("muted", s),
-      },
+      borderColor: (s) => theme.fg("borderMuted", s),
+      selectList,
     };
     let compRef = null;
     const syncBack = (explicitText) => {

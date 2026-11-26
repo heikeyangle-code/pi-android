@@ -1,7 +1,6 @@
 package app.pi.ui.settings
 
 import androidx.compose.runtime.Composable
-import app.pi.ui.theme.PiSystemPalettes
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -66,48 +65,31 @@ fun PiSettingEditorSheet(
         PiRowKind.Switch, PiRowKind.Action -> Unit
 
         PiRowKind.Value -> {
-            if (setting.key == PiSystemPalettes.SETTING_KEY) {
-                PiSystemPaletteSheet(
-                    initialBackground = (store.read(PiSystemPalettes.BACKGROUND_KEY) as? JsonPrimitive)
-                        ?.content.orEmpty(),
-                    initialSaturation = (store.read(PiSystemPalettes.SATURATION_KEY) as? JsonPrimitive)
-                        ?.content ?: PiSystemPalettes.saturationWire(1.0),
-                    onApply = { hex, saturationWire ->
-                        store.write(PiSystemPalettes.SETTING_KEY, JsonPrimitive(PiSystemPalettes.CUSTOM_ID))
-                        store.write(PiSystemPalettes.BACKGROUND_KEY, JsonPrimitive("#$hex"))
-                        store.write(PiSystemPalettes.SATURATION_KEY, JsonPrimitive(saturationWire))
-                        store.write("theme", JsonPrimitive("system"))
+            PiOptionPickerSheet(
+                title = setting.title,
+                description = setting.description,
+                options = setting.options,
+                currentWire = setting.textIn(store, ""),
+                allowCustom = setting.allowCustom,
+                onPick = { value ->
+                    store.write(setting.key, setting.wireElement(value))
+                    onWritten(setting)
+                },
+                onDismiss = onDismiss,
+                searchHint = pickerSearchHint,
+                warning = pickerWarning,
+                customCheck = pickerCustomCheck,
+                clearLabel = pickerClearLabel,
+                grouped = pickerGrouped,
+                onClear = if (pickerClearLabel != null) {
+                    {
+                        store.remove(setting.key)
                         onWritten(setting)
-                    },
-                    onDismiss = onDismiss,
-                )
-            } else {
-                PiOptionPickerSheet(
-                    title = setting.title,
-                    description = setting.description,
-                    options = setting.options,
-                    currentWire = setting.textIn(store, ""),
-                    allowCustom = setting.allowCustom,
-                    onPick = { value ->
-                        store.write(setting.key, setting.wireElement(value))
-                        onWritten(setting)
-                    },
-                    onDismiss = onDismiss,
-                    searchHint = pickerSearchHint,
-                    warning = pickerWarning,
-                    customCheck = pickerCustomCheck,
-                    clearLabel = pickerClearLabel,
-                    grouped = pickerGrouped,
-                    onClear = if (pickerClearLabel != null) {
-                        {
-                            store.remove(setting.key)
-                            onWritten(setting)
-                        }
-                    } else {
-                        null
-                    },
-                )
-            }
+                    }
+                } else {
+                    null
+                },
+            )
         }
 
         PiRowKind.Number -> {

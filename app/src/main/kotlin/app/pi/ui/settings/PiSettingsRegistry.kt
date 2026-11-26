@@ -12,7 +12,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
 import app.pi.ui.components.EffectiveKind
-import app.pi.ui.theme.PiSystemPalettes
 import app.pi.ui.theme.PiThinkingLevel
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -719,20 +718,8 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
             kind = PiRowKind.Value,
             group = G_APPEARANCE,
             section = t("外观", "Appearance"),
-            defaultValue = str("dark"),
+            defaultValue = str("light/dark"),
             allowCustom = true,
-            emptyListLabel = emptyDefault,
-        ),
-        PiSetting(
-            key = "app.appearance.systemPalette",
-            title = t("系统主题配色", "System Theme Palette"),
-            description = t("自定义 system 主题的底色：其余颜色按 pi 规则推导。dark / light 与第三方主题不受影响。", "Customize the base background for the derived \"system\" theme."),
-            kind = PiRowKind.Value,
-            group = G_APPEARANCE,
-            section = t("外观", "Appearance"),
-            defaultValue = str(PiSystemPalettes.DEFAULT_ID),
-            options = PiSystemPalettes.presetsFor(zh).map { PiOption(it.id, it.label) } +
-                PiOption(PiSystemPalettes.CUSTOM_ID, t("自定义", "Custom")),
             emptyListLabel = emptyDefault,
         ),
         PiSetting(

@@ -1204,6 +1204,48 @@ try {
       defaultName === "dark" && namedAfter === "catppuccin-latte" && th.theme.name === "tokyo-night",
       JSON.stringify({ defaultName, namedAfter, finalName: th.theme.name }),
     );
+    const { loadSdk } = await import(
+      new URL("../../app/src/main/assets/guest/sdk-host/sdk.mjs", import.meta.url).href
+    );
+    const loadedSdk = await loadSdk(pi);
+    const attached = th.attachSdk(loadedSdk);
+    th.setPalette({ pageBg: "#0e1015", accent: "#12ab34", toolSuccessBg: "#112233" }, "custom-vivid");
+    const globalTheme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
+    const builtinLight = th.getBuiltinTheme("light");
+    expect(
+      "ui/theme.mjs attachSdk 后直接实例化官方 sdk.Theme 并写入全局槽且 getBuiltinTheme 返回独立实例",
+      attached instanceof loadedSdk.Theme &&
+        globalTheme instanceof loadedSdk.Theme &&
+        globalTheme.name === "custom-vivid" &&
+        th.theme.fg("accent", "ok").includes("\x1b[38;2;18;171;52m") &&
+        th.theme.bg("toolSuccessBg", "ok").includes("\x1b[48;2;17;34;51m") &&
+        builtinLight instanceof loadedSdk.Theme &&
+        builtinLight !== globalTheme &&
+        builtinLight.appearance === "light",
+      JSON.stringify({
+        isSdkTheme: globalTheme instanceof loadedSdk.Theme,
+        name: globalTheme?.name,
+        fgAccent: th.theme.fg("accent", "ok"),
+        builtinLightApp: builtinLight?.appearance,
+      }),
+    );
+    // 端到端验证：ui.palette 推送自定义色板后，官方 ToolExecutionComponent (render.tool) 直接用该色板着色
+    await h.call("ui.palette", {
+      name: "custom-probe",
+      palette: { pageBg: "#0e1015", accent: "#12ab34", toolSuccessBg: "#112233", text: "#edf0f5" },
+    });
+    const renderedCustom = await h.call("render.tool", {
+      toolName: "probe_tool",
+      toolCallId: "custom-palette-render-id",
+      args: { q: "color" },
+      width: 50,
+    });
+    const renderedJoined = (renderedCustom.data?.call ?? []).join("\n");
+    expect(
+      "ui.palette 自定义主题色同步到官方 ToolExecutionComponent（不再被 initTheme 覆盖）",
+      renderedCustom.ok && renderedJoined.includes("\x1b[38;2;18;171;52m"),
+      JSON.stringify(renderedCustom.data?.call),
+    );
   }
 
   // ---- 7.9 Pi 1.6.0 扩展元数据、blockedKind 与 JSONL 导出回归检查 --------

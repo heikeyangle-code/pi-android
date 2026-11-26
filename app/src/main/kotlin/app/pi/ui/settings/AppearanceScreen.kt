@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -43,7 +42,7 @@ import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -85,7 +84,6 @@ import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiPlexSansFamily
 import app.pi.ui.theme.PiProseFamily
 import app.pi.ui.theme.PiSpacing
-import app.pi.ui.theme.PiSystemPalettes
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThemeEntry
 import app.pi.ui.theme.PiThemeLoader
@@ -101,10 +99,9 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * 现代 Material 3 外观设置专页：
- * - 顶部实时聊天预览卡（主题、字体、排版密度、字号、行距、时间戳、思考块状态即改即见）；
- * - 主题画廊（可视化色板卡片、跟随系统浅/深配对、一键导入 `.json` / 粘贴 JSON 并自动适配官方 Pi 1.6.0 Schema、自定义主题删除）；
- * - `system` 主题快捷底色圆点与自定义色盘；
- * - 全内联 1-tap 分段控制（阅读字体、排版密度、字号、行距、Mermaid 渲染、界面语言），告别繁琐的逐项弹窗；
+ * - 顶部实时聊天预览卡（主题、字体、排版密度、字号、时间戳、思考块状态即改即见）；
+ * - 主题画廊（可视化色板卡片、默认跟随系统浅/深配对、一键导入 `.json` / 粘贴 JSON 并自动适配官方 Pi 1.6.0 Schema、自定义主题删除）；
+ * - 全内联 1-tap 分段控制（全局字体、排版密度、字号、代码字体、Mermaid 渲染、界面语言），告别繁琐的逐项弹窗；
  * - 彻底去除导入主题时冗长的“不支持字段/颜色回退”大段说明文字。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -133,7 +130,7 @@ fun AppearanceScreen(
     fun readBool(key: String, fallback: Boolean): Boolean =
         (store.read(key) as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: fallback
 
-    val rawTheme = remember(store, freshness) { readStr("theme", "system") }
+    val rawTheme = remember(store, freshness) { readStr("theme", "light/dark") }
     val autoPair = remember(rawTheme) { parseThemePair(rawTheme) }
     val followSystem = autoPair != null
     val lightSlot = autoPair?.first ?: "light"
@@ -141,15 +138,9 @@ fun AppearanceScreen(
     val fixedTheme = if (autoPair == null) rawTheme else if (systemDark) darkSlot else lightSlot
 
     var activePairSlot by remember { mutableStateOf(if (systemDark) PairSlot.Dark else PairSlot.Light) }
+    var showStudioSheet by remember { mutableStateOf(false) }
     var showImportSheet by remember { mutableStateOf(false) }
-    var showSystemPaletteSheet by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<PiThemeEntry?>(null) }
-
-    val systemPaletteId = remember(store, freshness) { readStr(PiSystemPalettes.SETTING_KEY, PiSystemPalettes.DEFAULT_ID) }
-    val systemPaletteBg = remember(store, freshness) { readStr(PiSystemPalettes.BACKGROUND_KEY, "#1E1E1E") }
-    val systemPaletteSat = remember(store, freshness) {
-        readStr(PiSystemPalettes.SATURATION_KEY, PiSystemPalettes.saturationWire(1.0))
-    }
 
     val proseFont = remember(store, freshness) { PiTypographyProfile.proseFontOf(readStr("app.appearance.proseFont", "sans")) }
     val codeFont = remember(store, freshness) { PiTypographyProfile.codeFontOf(readStr("app.appearance.codeFont", "jetbrains")) }
@@ -172,9 +163,9 @@ fun AppearanceScreen(
 
     val themeEntries = remember(knownThemes) {
         buildList {
-            if (knownThemes.none { it.name == "system" }) add(PiThemeEntry("system", null, PiThemeScope.Builtin))
             if (knownThemes.none { it.name == "dark" }) add(PiThemeEntry("dark", null, PiThemeScope.Builtin))
             if (knownThemes.none { it.name == "light" }) add(PiThemeEntry("light", null, PiThemeScope.Builtin))
+            if (knownThemes.none { it.name == "system" }) add(PiThemeEntry("system", null, PiThemeScope.Builtin))
             knownThemes.forEach { entry ->
                 if (none { it.name == entry.name }) add(entry)
             }
@@ -191,12 +182,6 @@ fun AppearanceScreen(
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         store.write(key, JsonPrimitive(value))
         onSettingWritten(key)
-    }
-
-    val usesSystemTheme = if (followSystem) {
-        lightSlot == "system" || darkSlot == "system"
-    } else {
-        fixedTheme == "system"
     }
 
     val activeDisplayTheme = if (followSystem) {
@@ -227,13 +212,22 @@ fun AppearanceScreen(
             onBack = onBack,
             scrolled = scrolled,
             actions = {
-                app.pi.ui.components.PiSecondaryButton(
-                    label = tr("导入", "Import"),
-                    leadingIcon = Icons.Outlined.FileUpload,
-                    compact = true,
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                    onClick = { showImportSheet = true },
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    app.pi.ui.components.PiSecondaryButton(
+                        label = tr("调色", "Studio"),
+                        leadingIcon = Icons.Outlined.Palette,
+                        compact = true,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        onClick = { showStudioSheet = true },
+                    )
+                    app.pi.ui.components.PiSecondaryButton(
+                        label = tr("导入", "Import"),
+                        leadingIcon = Icons.Outlined.FileUpload,
+                        compact = true,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        onClick = { showImportSheet = true },
+                    )
+                }
             },
         )
 
@@ -352,6 +346,9 @@ fun AppearanceScreen(
                                 },
                             )
                         }
+                        item(key = "studio-card") {
+                            CreateThemeGalleryTile(onClick = { showStudioSheet = true })
+                        }
                         item(key = "import-card") {
                             ImportThemeGalleryTile(onClick = { showImportSheet = true })
                         }
@@ -436,22 +433,6 @@ fun AppearanceScreen(
                                 )
                             }
                         }
-
-                        PiSettingsHairline()
-                        SystemPaletteQuickRow(
-                            activePresetId = systemPaletteId,
-                            usesSystemTheme = usesSystemTheme,
-                            onPickPreset = { presetId ->
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                store.write(PiSystemPalettes.SETTING_KEY, JsonPrimitive(presetId))
-                                if (!usesSystemTheme) {
-                                    store.write("theme", JsonPrimitive("system"))
-                                    onSettingWritten("theme")
-                                }
-                                onSettingWritten(PiSystemPalettes.SETTING_KEY)
-                            },
-                            onOpenCustom = { showSystemPaletteSheet = true },
-                        )
                     }
                 }
             }
@@ -722,21 +703,30 @@ fun AppearanceScreen(
         }
     }
 
-    if (showSystemPaletteSheet) {
-        PiSystemPaletteSheet(
-            initialBackground = systemPaletteBg,
-            initialSaturation = systemPaletteSat,
-            onApply = { hex, saturationWire ->
-                store.write(PiSystemPalettes.SETTING_KEY, JsonPrimitive(PiSystemPalettes.CUSTOM_ID))
-                store.write(PiSystemPalettes.BACKGROUND_KEY, JsonPrimitive("#$hex"))
-                store.write(PiSystemPalettes.SATURATION_KEY, JsonPrimitive(saturationWire))
-                if (!usesSystemTheme) {
-                    store.write("theme", JsonPrimitive("system"))
-                    onSettingWritten("theme")
+    if (showStudioSheet) {
+        val initialStudioDark = if (followSystem) {
+            activePairSlot == PairSlot.Dark
+        } else {
+            systemDark
+        }
+        PiThemeStudioSheet(
+            agentDir = agentDir,
+            initialDark = initialStudioDark,
+            onSaved = { saved ->
+                showStudioSheet = false
+                if (followSystem) {
+                    val next = if (saved.dark) {
+                        "$lightSlot/${saved.name}"
+                    } else {
+                        "${saved.name}/$darkSlot"
+                    }
+                    store.write("theme", JsonPrimitive(next))
+                } else {
+                    store.write("theme", JsonPrimitive(saved.name))
                 }
-                onSettingWritten(PiSystemPalettes.SETTING_KEY)
+                onSettingWritten("theme")
             },
-            onDismiss = { showSystemPaletteSheet = false },
+            onDismiss = { showStudioSheet = false },
         )
     }
 
@@ -1317,6 +1307,55 @@ private fun ThemeGalleryCard(
 }
 
 @Composable
+private fun CreateThemeGalleryTile(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .width(104.dp)
+            .height(106.dp),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(PiSpacing.hairline, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.Palette,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = PiTheme.palette.accent,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                tr("主题工坊", "Studio"),
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+            )
+            Text(
+                tr("定制配色", "Customize"),
+                style = PiTheme.text.monoSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
 private fun ImportThemeGalleryTile(onClick: () -> Unit) {
     Surface(
         onClick = onClick,
@@ -1397,85 +1436,6 @@ private fun PairSlotChip(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-        }
-    }
-}
-
-@Composable
-private fun SystemPaletteQuickRow(
-    activePresetId: String,
-    usesSystemTheme: Boolean,
-    onPickPreset: (String) -> Unit,
-    onOpenCustom: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(
-                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                vertical = 11.dp,
-            ),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    tr("system 主题底色", "System Theme Base"),
-                    style = PiType.rowTitle,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    tr("从底色按官方算法自动推导全部 56 个颜色", "Derives all 56 official tokens from one base color"),
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            app.pi.ui.components.PiSecondaryButton(
-                label = tr("调色", "Tune"),
-                leadingIcon = Icons.Outlined.Tune,
-                compact = true,
-                containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                onClick = onOpenCustom,
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            PiSystemPalettes.presets.forEach { preset ->
-                val picked = usesSystemTheme && activePresetId == preset.id
-                val bgColor = Color(0xFF000000L or (preset.background.toLong() and 0xFFFFFFL))
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(bgColor)
-                        .border(
-                            width = if (picked) 2.5.dp else 1.dp,
-                            color = if (picked) PiTheme.palette.accent else MaterialTheme.colorScheme.outline,
-                            shape = CircleShape,
-                        )
-                        .clickable { onPickPreset(preset.id) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (picked) {
-                        Icon(
-                            Icons.Filled.Check,
-                            contentDescription = preset.label,
-                            modifier = Modifier.size(15.dp),
-                            tint = PiTheme.palette.contrastOn(bgColor),
-                        )
-                    }
-                }
-            }
         }
     }
 }

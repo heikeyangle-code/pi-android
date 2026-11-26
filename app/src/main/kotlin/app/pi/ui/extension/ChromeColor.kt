@@ -63,9 +63,9 @@ private const val MAX_TOKEN_DISTANCE = 1000.0
  * pi's declared theme tokens as packed ARGB, in [PiPalette]'s declaration order —
  * the 56 from `theme-schema.json` plus the 3 `export` surfaces.
  *
- * Only the *declared* properties are listed. The palette's five contrast-
+ * Only the *declared* properties are listed. The palette's four contrast-
  * corrected values (`bodyOnTool`, `contextOnTool`, `thinkingBodyOnCanvas`,
- * `metaOnCanvas`, `metaOnCard`) are the app's own derivations, so a span must
+ * `metaOnCanvas`) are the app's own derivations, so a span must
  * never be matched onto one: that would be attributing a colour to pi that pi
  * never emitted.
  *

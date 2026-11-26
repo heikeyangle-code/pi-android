@@ -95,7 +95,7 @@ const themeHandle = createTheme();
 const surfaces = new Surfaces(hub, themeHandle.theme);
 setStdoutHook((text) => surfaces.handleTerminalOutput(text, "stdout"));
 const ui = createUiContext({ hub, surfaces, theme: themeHandle.theme, themeHandle, flags: {} });
-const controller = new Controller({ hub, transport, ui, surfaces, cfg });
+const controller = new Controller({ hub, transport, ui, surfaces, cfg, themeHandle });
 controller.theme = themeHandle.theme;
 
 const reg = new Registry();

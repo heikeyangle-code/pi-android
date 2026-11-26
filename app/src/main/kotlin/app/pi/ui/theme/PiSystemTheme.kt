@@ -938,11 +938,9 @@ fun deriveSystemPalette(base: PiAnsiPalette?, saturation: Double = 1.0): PiPalet
     val tokens = derived.colors
     fun token(value: PiSystemToken): Color = composeColor(tokens.getValue(value))
     val userMessageBg = token(PiSystemToken.USER_MESSAGE_BG)
-    // 画布用**输入底色本身**，不从任何推导出来的 token 反推。pi 的 system 主题里
-    // pageBg/cardBg 不是 token：TUI 直接画在终端底色上，`export` 段那两个面是可选的
-    // 手写值（`theme.ts:920-944`）。之前这里拿 userMessageBg（蓝族的推导结果）缩放，
-    // 于是整页底色被染蓝 —— 用户看到的"背景成蓝的"就是这个，不是推导本身的错。
-    val canvas = canvasSurfaces(composeColor(base?.background ?: DEFAULT_BACKGROUND))
+    val warning = token(PiSystemToken.WARNING)
+    // 画布用输入底色本身，不从蓝族推导的 userMessageBg 反推，避免整页底色泛蓝。
+    val canvas = canvasSurfaces(composeColor(base?.background ?: DEFAULT_BACKGROUND), warning)
     return PiPalette(
         accent = token(PiSystemToken.ACCENT),
         border = token(PiSystemToken.BORDER),
@@ -950,7 +948,7 @@ fun deriveSystemPalette(base: PiAnsiPalette?, saturation: Double = 1.0): PiPalet
         borderMuted = token(PiSystemToken.BORDER_MUTED),
         success = token(PiSystemToken.SUCCESS),
         error = token(PiSystemToken.ERROR),
-        warning = token(PiSystemToken.WARNING),
+        warning = warning,
         muted = token(PiSystemToken.MUTED),
         dim = token(PiSystemToken.DIM),
         text = token(PiSystemToken.TEXT),
@@ -1006,17 +1004,48 @@ fun deriveSystemPalette(base: PiAnsiPalette?, saturation: Double = 1.0): PiPalet
     )
 }
 
+/**
+ * Tango 16-color terminal palette used for Android's `system` theme derivation.
+ * Modern desktop terminals ship softened ANSI blues (`#3465A4`) instead of DOS `#0000FF`,
+ * keeping pi's `system-theme.ts` derivation crisp and readable in both light and dark modes.
+ */
+private val SOFT_SYSTEM_ANSI: IntArray = intArrayOf(
+    0x2E3436, 0xCC0000, 0x4E9A06, 0xC4A000, 0x3465A4, 0x75507B, 0x06989A, 0xD3D7CF,
+    0x555753, 0xEF2929, 0x8AE234, 0xFCE94F, 0x729FCF, 0xAD7FA8, 0x34E2E2, 0xEEEEEC,
+)
+
+private val cachedDarkSystemPalette: PiPalette by lazy {
+    deriveSystemPalette(
+        base = PiAnsiPalette(background = DEFAULT_BACKGROUND, ansi = SOFT_SYSTEM_ANSI.copyOf()),
+        saturation = 0.9,
+    )
+}
+
+private val cachedLightSystemPalette: PiPalette by lazy {
+    deriveSystemPalette(
+        base = PiAnsiPalette(
+            background = 0xF5F5F5,
+            ansi = SOFT_SYSTEM_ANSI.copyOf(),
+            foreground = DEFAULT_BACKGROUND,
+        ),
+        saturation = 0.9,
+    )
+}
+
+/**
+ * Resolve pi's built-in `system` theme for the phone's current light/dark mode using the
+ * exact official `system-theme.ts` solver. Cached per polarity so recompositions cost zero.
+ */
+internal fun resolveSystemTheme(systemDark: Boolean): PiPalette =
+    if (systemDark) cachedDarkSystemPalette else cachedLightSystemPalette
+
 private class PiCanvasSurfaces(val pageBg: Color, val cardBg: Color, val infoBg: Color)
 
 /**
- * The three tokens pi's HTML exporter derives from `userMessageBg`
- * (`deriveExportColors`, `core/export-html/index.ts:81-105`)，但输入是**终端底色本身**：
- * 页面就是底色，卡片向白混一点点（亮/暗两档的比例对齐 pi 的 `#EFEEEE/#F7F6F6` 与
- * `#21252C/#282C34` 的差值），信息面按深浅偏向 pi 的暖色。之前这里用
- * `userMessageBg`（蓝族推导结果）缩放 —— 那会把整页染蓝，是这轮修掉的 bug。
+ * The three canvas surfaces (`pageBg`, `cardBg`, `infoBg`) derived directly from the input
+ * background and derived `warning` token so `infoBg` harmonizes with the active palette.
  */
-private fun canvasSurfaces(background: Color): PiCanvasSurfaces {
-    /** `background` 向 [toward] 混 [amount]（0..1）。只用于"卡片比页面亮一点点"这种面差。 */
+private fun canvasSurfaces(background: Color, warning: Color): PiCanvasSurfaces {
     fun blend(toward: Color, amount: Float): Color = Color(
         red = background.red + (toward.red - background.red) * amount,
         green = background.green + (toward.green - background.green) * amount,
@@ -1024,18 +1053,16 @@ private fun canvasSurfaces(background: Color): PiCanvasSurfaces {
     )
     val light = !isDarkSurface(background)
     return if (light) {
-        // 对应 pi light 的 `pageBg #EFEEEE` / `cardBg #F7F6F6`：卡片比页面更白一点。
         PiCanvasSurfaces(
             pageBg = background,
             cardBg = blend(Color.White, 0.35f),
-            infoBg = blend(Color(0xFFEDE3DD), 0.6f),
+            infoBg = blend(warning, 0.12f),
         )
     } else {
-        // 对应 pi dark 的 `#21252C` / `#282C34`：卡片比页面亮约 6%，与 pi 的差值同级。
         PiCanvasSurfaces(
             pageBg = background,
             cardBg = blend(Color.White, 0.06f),
-            infoBg = blend(Color(0xFF4E2F1B), 0.75f),
+            infoBg = blend(warning, 0.14f),
         )
     }
 }

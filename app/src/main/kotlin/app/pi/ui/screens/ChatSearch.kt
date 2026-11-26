@@ -207,12 +207,9 @@ internal fun scanChatRowSearchHits(
  * unchanged and is still pi's: the query is the same string, the two arrows move
  * `searchCursor`, and the count keeps pi's `cursor / total` reading.
  *
- * What is deliberately *not* v2 is the colouring of the hits themselves: the current
- * match is filled with pi's `searchMatchBg` and ringed in `searchMatchText`, the
- * others carry `searchMatchBg` alone (`ui/screens/ChatScreen.kt`, the row modifier in
- * the transcript). Those two are pi's own search tokens and 09's highlight-fidelity
- * record settled them; v2's prototype stands in `selectedBg`/`surf-high` there, which
- * the parent's ruling keeps out. This bar therefore borrows v2's *structure* only.
+ * Hit rows are filled with pi's `searchMatchBg`, and the active match carries a
+ * `borderAccent` ring (`ui/screens/ChatScreen.kt`) so it stays clearly legible even on
+ * themes whose `searchMatchText` foreground token resolves to low-contrast `muted`.
  *
  * The trailing sentence is v2's, verbatim (`direction-b-v2.html:2766`).
  */

@@ -104,8 +104,6 @@ import app.pi.ui.settings.PiSettingsStore
 import app.pi.ui.settings.RuntimeSwitchAction
 import app.pi.ui.settings.boolIn
 import app.pi.ui.theme.PiResolvedTheme
-import app.pi.ui.theme.PiSystemPaletteSource
-import app.pi.ui.theme.PiSystemPalettes
 import app.pi.ui.theme.PiThemeEntry
 import app.pi.ui.theme.PiThemeLoader
 import app.pi.ui.theme.PiTypographyProfile

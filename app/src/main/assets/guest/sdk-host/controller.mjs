@@ -99,12 +99,13 @@ export class Controller {
   /**
    * @param {{hub: import("./hub.mjs").Hub, transport: any, ui: any, surfaces: any, cfg: any}} deps
    */
-  constructor({ hub, transport, ui, surfaces, cfg }) {
+  constructor({ hub, transport, ui, surfaces, cfg, themeHandle = null }) {
     this.hub = hub;
     this.transport = transport;
     this.ui = ui;
     this.surfaces = surfaces;
     this.cfg = cfg;
+    this.themeHandle = themeHandle;
     this.sdk = null;
     this.runtime = null;
     this.bus = null;
@@ -130,6 +131,7 @@ export class Controller {
       ensureFooterData: () => this.ensureFooterData(),
     });
     this.ui.setSessionHooks?.({
+      getSdk: () => this.sdk,
       getResourceLoader: () => this.session?.resourceLoader ?? null,
       getSettingsManager: () => this.session?.settingsManager ?? null,
       emitThemeChanged: (name) => this.hub.emit("settings.changed", { key: "theme", value: name }),
@@ -289,6 +291,7 @@ export class Controller {
     this.opened = true;
     this.lastOpenArgs = args;
     const sdk = (this.sdk = await loadSdk(this.cfg.piDir));
+    this.themeHandle?.attachSdk?.(sdk);
     const { cwd, agentDir } = this.cfg;
     const sessionDir = args.sessionDir ?? this.cfg.sessionDir ?? join(agentDir, "sessions");
     /** 实际生效的会话目录（平铺：会话文件直接放在里面）。列表、搜索、路径校验都以它为准。 */
