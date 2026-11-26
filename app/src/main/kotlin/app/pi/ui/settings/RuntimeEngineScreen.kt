@@ -11,19 +11,25 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -31,15 +37,15 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.foundation.text.selection.SelectionContainer
-import app.pi.ui.components.PiSpinner
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -49,8 +55,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -70,6 +78,7 @@ import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeSelection
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
+import app.pi.ui.components.PiSpinner
 import app.pi.ui.models.ModelsCard
 import app.pi.ui.models.ModelsCardPadding
 import app.pi.ui.models.ModelsDivider
@@ -77,6 +86,7 @@ import app.pi.ui.models.ModelsSectionLabel
 import app.pi.ui.models.TagPill
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.contrastOn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -84,24 +94,21 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import java.io.File
 import java.util.Locale
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 
 /**
- * 全新重构的「引擎与运行环境」专页：统一承载引擎实时状态、容器运行时切换（proot / proroot / tawcroot）、
- * 后台保活控制、异常与工具链自检、脱敏诊断报告预览导出、以及安全缓存清理与环境修复。
- *
- * 设计原则：
- *  1. 彻底移除旧版 `G_RUNTIME` 设置注册表行与 `AppOnlySettingsStore` 假键值映射；
- *  2. 引擎已退出或启动失败时，本页所有只读状态、崩溃诊断、工具链自检与导出报告依然可用；
- *  3. 重度操作（完整诊断报告、实时工具链探针、缓存清理）全部按需在 `Dispatchers.IO` 异步执行，进页零卡顿。
+ * 「引擎与运行环境」专页：
+ *  1. 实时引擎状态主卡（毫秒级快读，绝不被磁盘扫描阻塞）；
+ *  2. 独立「存储与环境占用」可视化分解卡（单次硬链接去重遍历，分离系统/引擎/用户数据/可清理缓存，一键无损清缓存）；
+ *  3. 容器运行时三选一（proot / proroot / tawcroot）与逐阶段探针日志；
+ *  4. 后台保活与设备环境参数；
+ *  5. 崩溃取证、rg/fd 工具链实测、脱敏诊断报告导出、安全无损修复与重建。
  */
 @Composable
 fun RuntimeEngineScreen(
     contentPadding: PaddingValues,
     onBack: () -> Unit,
     store: PiSettingsStore,
+    freshness: Int = 0,
     onSettingWritten: (String) -> Unit,
     activeEngine: () -> GuestEngine?,
     engineState: () -> PiEngineSession.EngineState?,
@@ -118,6 +125,7 @@ fun RuntimeEngineScreen(
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val palette = PiTheme.palette
 
@@ -130,13 +138,16 @@ fun RuntimeEngineScreen(
     val runtimePrefs = remember(context) { RuntimePreferences.get(context) }
     val runtimeSelection = remember(paths, runtimePrefs) { RuntimeSelection(paths, runtimePrefs) }
 
-    var refreshEpoch by remember { mutableStateOf(0) }
-    var snapshot by remember { mutableStateOf<RuntimeFacts.Snapshot?>(null) }
-    var selectedEngine by remember { mutableStateOf(runtimeSelection.selectedEngine) }
+    var refreshEpoch by remember { mutableIntStateOf(0) }
+    var storageEpoch by remember { mutableIntStateOf(0) }
+
+    var fastFacts by remember { mutableStateOf<RuntimeFacts.FastSnapshot?>(null) }
+    var storage by remember { mutableStateOf<RuntimeFacts.StorageBreakdown?>(null) }
+    var storageScanning by remember { mutableStateOf(true) }
+
+    var selectedEngine by remember { mutableStateOf(GuestEngine.Proot) }
     var statuses by remember { mutableStateOf<Map<GuestEngine, RuntimeSelection.Status>>(emptyMap()) }
-    var keepAlive by remember {
-        mutableStateOf((store.read("app.runtime.keepAlive") as? JsonPrimitive)?.booleanOrNull ?: true)
-    }
+    var keepAlive by remember { mutableStateOf(true) }
 
     var bannerText by remember { mutableStateOf<String?>(null) }
     var bannerIsWarning by remember { mutableStateOf(false) }
@@ -159,18 +170,29 @@ fun RuntimeEngineScreen(
     var confirmRepair by remember { mutableStateOf(false) }
     var confirmRebuild by remember { mutableStateOf(false) }
 
-    // 进页与切换结束时在 IO 线程读取文件系统事实与各运行时缓存状态（绝不阻塞主线程）。
-    LaunchedEffect(refreshEpoch, runtimeSwitch, PiLocale.isZh) {
+    // 1) 快路径元数据（< 5ms）：绝不等待 3 万文件遍历，进页立刻渲染版本、服务状态、运行时与保活开关。
+    LaunchedEffect(refreshEpoch, runtimeSwitch, freshness, PiLocale.isZh) {
         val loaded = withContext(Dispatchers.IO) {
-            val facts = RuntimeFacts(paths).read()
+            val fast = RuntimeFacts(paths).readFast()
             val sel = runtimeSelection.selectedEngine
             val map = GuestEngine.entries.associateWith { runtimeSelection.statusFor(it) }
-            Triple(facts, sel, map)
+            val keep = (store.read("app.runtime.keepAlive") as? JsonPrimitive)?.booleanOrNull ?: true
+            FastLoadResult(fast, sel, map, keep)
         }
-        snapshot = loaded.first
-        selectedEngine = loaded.second
-        statuses = loaded.third
-        keepAlive = (store.read("app.runtime.keepAlive") as? JsonPrimitive)?.booleanOrNull ?: true
+        fastFacts = loaded.fast
+        selectedEngine = loaded.selected
+        statuses = loaded.statuses
+        keepAlive = loaded.keepAlive
+    }
+
+    // 2) 异步单遍硬链接去重磁盘统计：独立协程运行，仅更新「存储与环境占用」卡。
+    LaunchedEffect(storageEpoch, refreshEpoch, runtimeSwitch) {
+        storageScanning = true
+        val measured = withContext(Dispatchers.IO) {
+            runCatching { RuntimeFacts(paths).measureStorage(context.cacheDir) }.getOrNull()
+        }
+        if (measured != null) storage = measured
+        storageScanning = false
     }
 
     val liveState = engineState()
@@ -184,6 +206,17 @@ fun RuntimeEngineScreen(
         bannerIsWarning = warning
     }
 
+    fun toggleKeepAlive(next: Boolean) {
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        keepAlive = next
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                store.write("app.runtime.keepAlive", JsonPrimitive(next))
+            }
+            onSettingWritten("app.runtime.keepAlive")
+        }
+    }
+
     fun runRestart(allowInterrupt: Boolean) {
         val handler = restartEngine
         if (handler == null) {
@@ -193,6 +226,7 @@ fun RuntimeEngineScreen(
             )
             return
         }
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         restarting = true
         scope.launch {
             val outcome = handler(tr("在引擎与运行环境页手动重启", "Manual restart from Engine & Runtime"), allowInterrupt)
@@ -210,6 +244,7 @@ fun RuntimeEngineScreen(
 
     fun runToolSelfCheck() {
         if (toolProbeRunning) return
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         val target = liveEngine ?: statuses[selectedEngine]?.engine ?: GuestEngine.Proot
         toolProbeRunning = true
         toolProbeEngine = target
@@ -250,28 +285,29 @@ fun RuntimeEngineScreen(
 
     fun clearRuntimeCaches() {
         if (clearingCache) return
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         clearingCache = true
         scope.launch {
-            val (freedBytes, deletedConfigs) = withContext(Dispatchers.IO) {
-                var bytes = 0L
-                val compileCache = File(paths.rootfs, RuntimeFacts.COMPILE_CACHE_REL)
-                if (compileCache.exists()) {
-                    bytes += dirBytes(compileCache)
-                    compileCache.deleteRecursively()
-                }
-                val sweep = runCatching { runtimeSelection.sweepProrootConfigs() }.getOrNull()
-                runCatching { paths.clearProrootProbeCache() }
-                runCatching { paths.clearTawcrootProbeCache() }
-                bytes to (sweep?.dead ?: 0)
+            val res = withContext(Dispatchers.IO) {
+                RuntimeFacts(paths).clearSafeCaches(
+                    appCacheDir = context.cacheDir,
+                    sweepProrootConfigs = { runCatching { runtimeSelection.sweepProrootConfigs().dead }.getOrDefault(0) },
+                )
             }
             clearingCache = false
             reportText = null
+            storageEpoch++
             refreshEpoch++
-            val freedText = if (freedBytes > 0L) RuntimeFacts.formatBytes(freedBytes) else "0 B"
+            val freedText = if (res.freedBytes > 0L) RuntimeFacts.formatBytes(res.freedBytes) else "0 B"
+            val extras = buildList {
+                if (res.removedConfigs > 0) add(tr("${res.removedConfigs} 份过期配置", "${res.removedConfigs} stale configs"))
+                if (res.removedProotTmp > 0) add(tr("${res.removedProotTmp} 项临时残留", "${res.removedProotTmp} temp entries"))
+            }
+            val extraSuffix = if (extras.isEmpty()) "" else tr("，以及 ${extras.joinToString("、")}", ", plus ${extras.joinToString(", ")}")
             setNotice(
                 tr(
-                    "已清理编译缓存（释放 $freedText）、$deletedConfigs 份过期配置与探针缓存。",
-                    "Cleared compile cache ($freedText freed), $deletedConfigs stale configs, and probe caches.",
+                    "已安全清理缓存（释放 $freedText$extraSuffix），并重置探针缓存。",
+                    "Cleared caches ($freedText freed$extraSuffix) and reset probe caches.",
                 ),
             )
         }
@@ -279,7 +315,7 @@ fun RuntimeEngineScreen(
 
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scrolled by remember(listState) {
-        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+        derivedStateOf { listState.canScrollBackward }
     }
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
@@ -291,8 +327,10 @@ fun RuntimeEngineScreen(
                     icon = Icons.Filled.Refresh,
                     contentDescription = tr("刷新状态", "Refresh status"),
                     onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         reportText = null
                         refreshEpoch++
+                        storageEpoch++
                     },
                 )
             },
@@ -317,8 +355,8 @@ fun RuntimeEngineScreen(
                             .fillMaxWidth()
                             .padding(horizontal = PiSettingsMetrics.pageHorizontal),
                         shape = RoundedCornerShape(12.dp),
-                        color = tone.copy(alpha = 0.12f),
-                        border = BorderStroke(1.dp, tone.copy(alpha = 0.30f)),
+                        color = tone.copy(alpha = 0.10f),
+                        border = BorderStroke(0.5.dp, tone.copy(alpha = 0.30f)),
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -343,7 +381,7 @@ fun RuntimeEngineScreen(
             }
 
             // ------------------------------------------------------------------
-            // 1. 实时引擎状态主卡
+            // 1. 实时引擎状态主卡（毫秒级快读，绝不阻塞）
             // ------------------------------------------------------------------
             item(key = "hero") {
                 val isHealthy = liveState == PiEngineSession.EngineState.Ready ||
@@ -369,14 +407,19 @@ fun RuntimeEngineScreen(
                     entryLabel.contains("dist/index.js") -> "dist"
                     else -> null
                 }
-                val startupText = formatStartupMs(snapshot?.engineStartupMs)
+                val startupText = formatStartupMs(fastFacts?.engineStartupMs)
                 val serviceText = when {
-                    snapshot == null -> "…"
-                    snapshot!!.serviceRunning && snapshot!!.wakeLockHeld ->
+                    fastFacts == null -> "…"
+                    fastFacts!!.serviceRunning && fastFacts!!.wakeLockHeld ->
                         tr("运行中 · 唤醒锁", "Active · WakeLock")
-                    snapshot!!.serviceRunning ->
+                    fastFacts!!.serviceRunning ->
                         tr("运行中 · 待机", "Active · Idle")
                     else -> tr("未启动", "Stopped")
+                }
+                val revText = when {
+                    fastFacts == null -> "…"
+                    !fastFacts!!.runtimeUnpacked -> tr("未解包", "Not unpacked")
+                    else -> fastFacts!!.stampRevision?.take(8) ?: tr("已解包", "Unpacked")
                 }
 
                 ModelsCard(accent = isHealthy) {
@@ -409,7 +452,7 @@ fun RuntimeEngineScreen(
                             }
                         }
 
-                        // 2x2 环境关键指标
+                        // 2×2 即时遥测指标（全快读，0ms 阻塞）
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -417,14 +460,14 @@ fun RuntimeEngineScreen(
                             MetricTile(
                                 label = "Pi SDK",
                                 value = buildString {
-                                    append(snapshot?.piVersion ?: "—")
+                                    append(fastFacts?.piVersion ?: "—")
                                     if (entryShort != null) append(" · $entryShort")
                                 },
                                 modifier = Modifier.weight(1f),
                             )
                             MetricTile(
                                 label = "Node.js",
-                                value = snapshot?.nodeVersion ?: "—",
+                                value = fastFacts?.nodeVersion ?: "—",
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -433,13 +476,13 @@ fun RuntimeEngineScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             MetricTile(
-                                label = tr("环境占用", "Runtime Disk"),
-                                value = snapshot?.runtimeUsage ?: "—",
+                                label = tr("前台服务", "Background Service"),
+                                value = serviceText,
                                 modifier = Modifier.weight(1f),
                             )
                             MetricTile(
-                                label = tr("前台服务", "Background Service"),
-                                value = serviceText,
+                                label = tr("运行载荷版本", "Runtime Revision"),
+                                value = revText,
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -452,7 +495,7 @@ fun RuntimeEngineScreen(
                             val canStartOnly = liveState == null ||
                                 liveState == PiEngineSession.EngineState.Stopped ||
                                 liveState == PiEngineSession.EngineState.Failed
-                            ActionPillButton(
+                            RuntimeActionButton(
                                 icon = if (canStartOnly) Icons.Filled.PlayArrow else Icons.Filled.Refresh,
                                 text = when {
                                     restarting -> tr("正在重启…", "Restarting…")
@@ -463,6 +506,7 @@ fun RuntimeEngineScreen(
                                 enabled = !restarting && !runtimeSwitch.inFlight,
                                 onClick = {
                                     if (canStartOnly) {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         onStartEngine()
                                         setNotice(tr("已触发引擎启动。", "Engine startup requested."))
                                     } else if (isTurnRunning()) {
@@ -473,7 +517,7 @@ fun RuntimeEngineScreen(
                                 },
                                 modifier = Modifier.weight(1f),
                             )
-                            ActionPillButton(
+                            RuntimeActionButton(
                                 icon = Icons.Filled.Build,
                                 text = if (toolProbeRunning) {
                                     tr("自检中…", "Checking…")
@@ -491,7 +535,27 @@ fun RuntimeEngineScreen(
             }
 
             // ------------------------------------------------------------------
-            // 2. 容器运行时选择（三张交互式单选卡）
+            // 2. 存储与环境占用（全新重做：单遍硬链接去重 + 4 项可视化拆解 + 一键清缓存）
+            // ------------------------------------------------------------------
+            item(key = "label:storage") {
+                ModelsSectionLabel(tr("存储与环境占用", "Storage & Disk Usage"), Modifier.padding(top = 10.dp))
+            }
+            item(key = "storage-card") {
+                RuntimeStorageCard(
+                    breakdown = storage,
+                    scanning = storageScanning,
+                    clearingCache = clearingCache,
+                    runtimeUnpacked = fastFacts?.runtimeUnpacked != false,
+                    onRescan = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        storageEpoch++
+                    },
+                    onClearCaches = ::clearRuntimeCaches,
+                )
+            }
+
+            // ------------------------------------------------------------------
+            // 3. 容器运行时选择（三张交互式单选卡）
             // ------------------------------------------------------------------
             item(key = "label:runtime") {
                 ModelsSectionLabel(tr("容器运行时", "Container Runtime"), Modifier.padding(top = 10.dp))
@@ -499,17 +563,22 @@ fun RuntimeEngineScreen(
 
             if (runtimeSwitch.inFlight) {
                 item(key = "switch-progress") {
-                    val stepText = RuntimeSwitchAction.statusLine(
-                        runtimeSwitch,
-                        RuntimeSwitchAction.Target.valueOf(selectedEngine.name),
-                    ) ?: tr("正在切换运行时…", "Switching runtime…")
+                    val switchTarget = when (runtimeSwitch) {
+                        RuntimeSwitchAction.Step.RestartingToProot -> RuntimeSwitchAction.Target.Proot
+                        RuntimeSwitchAction.Step.RestartingToProroot -> RuntimeSwitchAction.Target.Proroot
+                        RuntimeSwitchAction.Step.RestartingToTawcroot -> RuntimeSwitchAction.Target.Tawcroot
+                        else -> runCatching { RuntimeSwitchAction.Target.valueOf(selectedEngine.name) }
+                            .getOrDefault(RuntimeSwitchAction.Target.Proot)
+                    }
+                    val stepText = RuntimeSwitchAction.statusLine(runtimeSwitch, switchTarget)
+                        ?: tr("正在切换运行时…", "Switching runtime…")
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = PiSettingsMetrics.pageHorizontal),
                         shape = RoundedCornerShape(12.dp),
                         color = palette.accent.copy(alpha = 0.10f),
-                        border = BorderStroke(1.dp, palette.accent.copy(alpha = 0.28f)),
+                        border = BorderStroke(0.5.dp, palette.accent.copy(alpha = 0.28f)),
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -549,8 +618,9 @@ fun RuntimeEngineScreen(
                                 expanded = expanded,
                                 onSelect = {
                                     if (!runtimeSwitch.inFlight) {
-                                        selectedEngine = engine
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         onSelectEngine(engine)
+                                        refreshEpoch++
                                     }
                                 },
                                 onToggleDetail = {
@@ -558,8 +628,9 @@ fun RuntimeEngineScreen(
                                 },
                                 onReprobe = {
                                     if (!runtimeSwitch.inFlight) {
-                                        selectedEngine = engine
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         onSelectEngine(engine)
+                                        refreshEpoch++
                                     }
                                 },
                             )
@@ -569,7 +640,7 @@ fun RuntimeEngineScreen(
             }
 
             // ------------------------------------------------------------------
-            // 3. 进程与保活设置
+            // 4. 进程与保活设置
             // ------------------------------------------------------------------
             item(key = "label:process") {
                 ModelsSectionLabel(tr("进程与设备环境", "Process & Environment"), Modifier.padding(top = 10.dp))
@@ -580,12 +651,7 @@ fun RuntimeEngineScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    val next = !keepAlive
-                                    keepAlive = next
-                                    store.write("app.runtime.keepAlive", JsonPrimitive(next))
-                                    onSettingWritten("app.runtime.keepAlive")
-                                }
+                                .clickable { toggleKeepAlive(!keepAlive) }
                                 .padding(horizontal = ModelsCardPadding, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -610,11 +676,7 @@ fun RuntimeEngineScreen(
                             }
                             PiSettingsSwitch(
                                 checked = keepAlive,
-                                onCheckedChange = { next ->
-                                    keepAlive = next
-                                    store.write("app.runtime.keepAlive", JsonPrimitive(next))
-                                    onSettingWritten("app.runtime.keepAlive")
-                                },
+                                onCheckedChange = ::toggleKeepAlive,
                             )
                         }
                         ModelsDivider()
@@ -629,15 +691,15 @@ fun RuntimeEngineScreen(
                         )
                         ModelsDivider()
                         InfoFactRow(
-                            label = tr("运行时修订", "Runtime Revision"),
-                            value = snapshot?.stampRevision ?: tr("未解包", "Not unpacked"),
+                            label = tr("完整修订号", "Full Revision"),
+                            value = fastFacts?.stampRevision ?: tr("未解包", "Not unpacked"),
                         )
                     }
                 }
             }
 
             // ------------------------------------------------------------------
-            // 4. 诊断与日志（引擎退出后依然完整可用）
+            // 5. 诊断与日志（引擎退出后依然完整可用）
             // ------------------------------------------------------------------
             item(key = "label:diag") {
                 ModelsSectionLabel(tr("诊断与排障", "Diagnostics & Troubleshooting"), Modifier.padding(top = 10.dp))
@@ -728,7 +790,7 @@ fun RuntimeEngineScreen(
                                         shape = RoundedCornerShape(10.dp),
                                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                     ) {
-                                        androidx.compose.foundation.text.selection.SelectionContainer {
+                                        SelectionContainer {
                                             Text(
                                                 stderrText.takeLast(3000),
                                                 modifier = Modifier
@@ -849,6 +911,7 @@ fun RuntimeEngineScreen(
                                 label = tr("复制", "Copy"),
                                 enabled = !reportBusy,
                                 onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     scope.launch {
                                         val text = ensureReport()
                                         clipboard.setText(AnnotatedString(text))
@@ -862,6 +925,7 @@ fun RuntimeEngineScreen(
                                 label = tr("分享", "Share"),
                                 enabled = !reportBusy,
                                 onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     scope.launch {
                                         val text = ensureReport()
                                         val name = DiagnosticsExport.fileName()
@@ -891,13 +955,13 @@ fun RuntimeEngineScreen(
                             )
                         }
 
-                        // 保存到 Download 单独快捷行，避免按钮文字拥挤
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                                 .clickable(enabled = !reportBusy) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     scope.launch {
                                         val text = ensureReport()
                                         val name = DiagnosticsExport.fileName()
@@ -940,7 +1004,7 @@ fun RuntimeEngineScreen(
             }
 
             // ------------------------------------------------------------------
-            // 5. 安全维护与修复
+            // 6. 安全维护与修复（克制单色图标井 + 仅高危项用红）
             // ------------------------------------------------------------------
             item(key = "label:maintenance") {
                 ModelsSectionLabel(tr("维护与修复", "Maintenance & Repair"), Modifier.padding(top = 10.dp))
@@ -949,31 +1013,11 @@ fun RuntimeEngineScreen(
                 ModelsCard {
                     Column(Modifier.fillMaxWidth()) {
                         MaintenanceActionRow(
-                            icon = Icons.Filled.Delete,
-                            tint = palette.accent,
-                            title = tr("清理编译缓存与探针缓存", "Clear Compile & Probe Caches"),
-                            subtitle = buildString {
-                                append(
-                                    tr(
-                                        "清理 V8 编译缓存、过期配置表与探针结论；不影响项目、会话、设置或已安装的包。",
-                                        "Removes V8 compile cache, stale configs, and probe caches. Keeps projects, sessions, settings & packages.",
-                                    ),
-                                )
-                                snapshot?.compileCacheUsage?.let { size ->
-                                    append(tr("（当前缓存约 $size）", " (cache ~$size)"))
-                                }
-                            },
-                            enabled = !clearingCache,
-                            onClick = ::clearRuntimeCaches,
-                        )
-                        ModelsDivider()
-                        MaintenanceActionRow(
                             icon = Icons.Filled.Build,
-                            tint = palette.warning,
                             title = tr("修复内置运行载荷（无损）", "Repair Built-in Payloads (Safe)"),
                             subtitle = tr(
-                                "重新解包随 App 内置的 Node、Pi 与基础工具，保留你自己安装的 apt / npm 包与全部用户数据。",
-                                "Re-extracts bundled Node, Pi & core tools while preserving your apt/npm packages and all user data.",
+                                "停止当前引擎并重新解包内置 Node、Pi 与基础工具，保留你自己安装的 apt / npm 包与全部用户数据。",
+                                "Stops the engine and re-extracts bundled Node, Pi & core tools while keeping your apt/npm packages and user data.",
                             ),
                             enabled = !runtimeSwitch.inFlight,
                             onClick = { confirmRepair = true },
@@ -981,11 +1025,10 @@ fun RuntimeEngineScreen(
                         ModelsDivider()
                         MaintenanceActionRow(
                             icon = Icons.Filled.Warning,
-                            tint = palette.error,
                             title = tr("重建 Linux 运行环境", "Rebuild Linux Runtime"),
                             subtitle = tr(
-                                "清空并重建 Linux 系统树（会重置自行安装的 apt/npm 全局包）；项目、对话、设置与 API Key 均保留。",
-                                "Wipes and rebuilds the Linux rootfs (resets custom apt/npm packages); projects, chats, settings & keys are preserved.",
+                                "停止当前引擎并清空重建 Linux 系统树（重置自行安装的 apt/npm 全局包）；项目、对话、设置与凭证均保留。",
+                                "Stops the engine and rebuilds the Linux rootfs (resets custom apt/npm packages); projects, chats, settings & keys are preserved.",
                             ),
                             dangerous = true,
                             enabled = !runtimeSwitch.inFlight,
@@ -1017,18 +1060,31 @@ fun RuntimeEngineScreen(
     }
 
     if (confirmRepair) {
+        val runningTurn = isTurnRunning()
         PiSettingsDialog(
             onDismissRequest = { confirmRepair = false },
             title = tr("修复内置运行载荷", "Repair Built-in Payloads"),
-            body = tr(
-                "将重新解包内置的 Linux / Node / Pi 载荷并重启引擎。这个操作不会清空你安装的 apt/npm 包，也不会删除项目、会话、设置或凭证。",
-                "Re-extracts bundled Linux / Node / Pi payloads and restarts the engine. Your apt/npm packages, projects, sessions, settings, and credentials stay intact.",
-            ),
+            body = buildString {
+                if (runningTurn) {
+                    append(
+                        tr(
+                            "注意：当前有对话回合正在运行，修复会先安全停止当前引擎。\n\n",
+                            "Note: A turn is currently running and will be stopped before repair.\n\n",
+                        ),
+                    )
+                }
+                append(
+                    tr(
+                        "将重新解包内置的 Linux / Node / Pi 载荷并重启引擎。这个操作不会清空你安装的 apt/npm 包，也不会删除项目、会话、设置或凭证。",
+                        "Re-extracts bundled Linux / Node / Pi payloads and restarts the engine. Your apt/npm packages, projects, sessions, settings, and credentials stay intact.",
+                    ),
+                )
+            },
             confirmationLabel = tr("开始修复", "Repair"),
             onConfirm = {
                 confirmRepair = false
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onRepairRuntime()
-                setNotice(tr("已开始修复内置运行载荷，请稍候…", "Repairing built-in runtime payloads…"))
             },
             dismissalLabel = tr("取消", "Cancel"),
             onDismissButton = { confirmRepair = false },
@@ -1036,26 +1092,354 @@ fun RuntimeEngineScreen(
     }
 
     if (confirmRebuild) {
+        val runningTurn = isTurnRunning()
         PiSettingsDialog(
             onDismissRequest = { confirmRebuild = false },
             title = tr("重建 Linux 运行环境", "Rebuild Linux Runtime"),
-            body = tr(
-                "会删除整个易失 Linux 系统目录并重新解包（耗时约 1~2 分钟）。\n\n" +
-                    "• 会清空：在终端里自行安装的 apt / pip / npm -g 系统工具\n" +
-                    "• 完整保留：全部项目文件、所有对话会话、设置与 API Key / 登录凭证",
-                "Deletes and re-extracts the Linux rootfs (~1–2 minutes).\n\n" +
-                    "• Reset: custom apt / pip / global npm packages\n" +
-                    "• Preserved: all projects, sessions, settings, and API keys / logins",
-            ),
+            body = buildString {
+                if (runningTurn) {
+                    append(
+                        tr(
+                            "注意：当前有对话回合正在运行，重建会先安全停止当前引擎。\n\n",
+                            "Note: A turn is currently running and will be stopped before rebuilding.\n\n",
+                        ),
+                    )
+                }
+                append(
+                    tr(
+                        "会安全停止引擎后清空易失 Linux 系统目录并重新解包（耗时约 1~2 分钟）。\n\n" +
+                            "• 会清空：在终端里自行安装的 apt / pip / npm -g 系统工具\n" +
+                            "• 完整保留：全部项目文件、所有对话会话、设置与 API Key / 登录凭证",
+                        "Stops the engine, resets the volatile Linux rootfs, and re-extracts (~1–2 minutes).\n\n" +
+                            "• Reset: custom apt / pip / global npm packages\n" +
+                            "• Preserved: all projects, sessions, settings, and API keys / logins",
+                    ),
+                )
+            },
             confirmationLabel = tr("确认重建", "Rebuild"),
             confirmationTone = palette.error,
             onConfirm = {
                 confirmRebuild = false
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 onRebuildRuntime()
-                setNotice(tr("已开始重建 Linux 运行环境，请回到对话页查看进度。", "Rebuilding Linux runtime…"))
             },
             dismissalLabel = tr("取消", "Cancel"),
             onDismissButton = { confirmRebuild = false },
+        )
+    }
+}
+
+private data class FastLoadResult(
+    val fast: RuntimeFacts.FastSnapshot,
+    val selected: GuestEngine,
+    val statuses: Map<GuestEngine, RuntimeSelection.Status>,
+    val keepAlive: Boolean,
+)
+
+@Composable
+private fun RuntimeStorageCard(
+    breakdown: RuntimeFacts.StorageBreakdown?,
+    scanning: Boolean,
+    clearingCache: Boolean,
+    runtimeUnpacked: Boolean,
+    onRescan: () -> Unit,
+    onClearCaches: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    val linuxColor = palette.accent
+    val engineColor = palette.success
+    val userColor = palette.warning
+    val cacheColor = palette.muted
+
+    ModelsCard {
+        Column(
+            modifier = Modifier.padding(ModelsCardPadding),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // 顶部总占用 + 扫描状态/重测
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = when {
+                            breakdown != null -> RuntimeFacts.formatBytes(breakdown.totalBytes)
+                            !runtimeUnpacked -> tr("未解包", "Not unpacked")
+                            else -> tr("正在统计…", "Calculating…")
+                        },
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                        color = palette.text,
+                    )
+                    Text(
+                        text = tr(
+                            "按实际物理块去重统计（与 du 一致，不重复计硬链接）",
+                            "Allocated blocks with hardlink deduplication (matches du)",
+                        ),
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                    )
+                }
+                if (scanning) {
+                    PiSpinner(size = 16.dp, strokeWidth = 1.8.dp, color = palette.accent)
+                } else {
+                    Surface(
+                        onClick = onRescan,
+                        shape = RoundedCornerShape(999.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                Icons.Filled.Refresh,
+                                contentDescription = null,
+                                tint = palette.muted,
+                                modifier = Modifier.size(13.dp),
+                            )
+                            Text(
+                                tr("重测", "Rescan"),
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                color = palette.text,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 4 段比例可视化进度条
+            val total = (breakdown?.totalBytes ?: 0L).coerceAtLeast(1L)
+            val segments = remember(breakdown, linuxColor, engineColor, userColor, cacheColor) {
+                if (breakdown == null || breakdown.totalBytes <= 0L) {
+                    emptyList()
+                } else {
+                    listOf(
+                        breakdown.linuxSystemBytes to linuxColor,
+                        breakdown.engineRuntimeBytes to engineColor,
+                        breakdown.userDataBytes to userColor,
+                        breakdown.cleanableCacheBytes to cacheColor,
+                    ).filter { it.first > 0L }
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            ) {
+                if (segments.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        segments.forEach { (bytes, color) ->
+                            val weight = (bytes.toFloat() / total.toFloat()).coerceAtLeast(0.025f)
+                            Box(
+                                modifier = Modifier
+                                    .weight(weight)
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(color),
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 4 类明细分项
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                StorageBreakdownRow(
+                    dotColor = linuxColor,
+                    title = tr("Linux 基础系统", "Linux Base System"),
+                    subtitle = tr("Ubuntu 用户态、Git 与终端工具", "Ubuntu userland, Git & CLI tools"),
+                    sizeText = breakdown?.let { RuntimeFacts.formatBytes(it.linuxSystemBytes) } ?: "—",
+                )
+                StorageBreakdownRow(
+                    dotColor = engineColor,
+                    title = tr("Node.js 与 Pi 引擎", "Node.js & Pi Engine"),
+                    subtitle = tr("/opt/node 运行时与内置 Pi SDK", "/opt/node runtime & bundled Pi SDK"),
+                    sizeText = breakdown?.let { RuntimeFacts.formatBytes(it.engineRuntimeBytes) } ?: "—",
+                )
+                StorageBreakdownRow(
+                    dotColor = userColor,
+                    title = tr("用户数据与项目", "User Data & Projects"),
+                    subtitle = tr("会话记录、设置、扩展与本地项目目录", "Sessions, settings, extensions & projects"),
+                    badge = tr("重建保留", "Preserved"),
+                    sizeText = breakdown?.let { RuntimeFacts.formatBytes(it.userDataBytes) } ?: "—",
+                )
+                StorageBreakdownRow(
+                    dotColor = cacheColor,
+                    title = tr("可清理缓存", "Cleanable Caches"),
+                    subtitle = buildCacheSubtitle(breakdown),
+                    sizeText = breakdown?.let { RuntimeFacts.formatBytes(it.cleanableCacheBytes) } ?: "—",
+                )
+            }
+
+            if (breakdown != null && !breakdown.complete) {
+                Text(
+                    text = buildString {
+                        append(tr("注：", "Note: "))
+                        val parts = buildList {
+                            if (breakdown.unmeasured > 0) {
+                                add(tr("${breakdown.unmeasured} 项无法读取块信息", "${breakdown.unmeasured} entries unmeasured"))
+                            }
+                            if (breakdown.unreadableDirectories > 0) {
+                                add(tr("${breakdown.unreadableDirectories} 个目录无权限枚举", "${breakdown.unreadableDirectories} unreadable dirs"))
+                            }
+                        }
+                        append(parts.joinToString(tr("；", "; ")))
+                    },
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
+                )
+            }
+
+            ModelsDivider()
+
+            // 底部：设备可用空间 + 一键清理缓存
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text(
+                        tr("设备可用存储", "Device Free Space"),
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                    )
+                    Text(
+                        text = if (breakdown != null && breakdown.deviceAvailableBytes > 0L) {
+                            val free = RuntimeFacts.formatBytes(breakdown.deviceAvailableBytes)
+                            if (breakdown.deviceTotalBytes > 0L) {
+                                "$free / ${RuntimeFacts.formatBytes(breakdown.deviceTotalBytes)}"
+                            } else {
+                                free
+                            }
+                        } else {
+                            "—"
+                        },
+                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+                        color = palette.text,
+                    )
+                }
+
+                val cacheBytes = breakdown?.cleanableCacheBytes ?: 0L
+                val cleanLabel = when {
+                    clearingCache -> tr("清理中…", "Cleaning…")
+                    cacheBytes >= 1024L -> tr("清理缓存 (${RuntimeFacts.formatBytes(cacheBytes)})", "Clear (${RuntimeFacts.formatBytes(cacheBytes)})")
+                    else -> tr("清理缓存", "Clear Caches")
+                }
+                Surface(
+                    onClick = onClearCaches,
+                    enabled = !clearingCache,
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        if (clearingCache) {
+                            PiSpinner(size = 14.dp, strokeWidth = 1.6.dp, color = palette.accent)
+                        } else {
+                            Icon(
+                                Icons.Filled.CleaningServices,
+                                contentDescription = null,
+                                tint = palette.text,
+                                modifier = Modifier.size(15.dp),
+                            )
+                        }
+                        Text(
+                            cleanLabel,
+                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                            color = if (clearingCache) palette.muted else palette.text,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun buildCacheSubtitle(breakdown: RuntimeFacts.StorageBreakdown?): String {
+    if (breakdown == null || breakdown.cleanableCacheBytes <= 0L) {
+        return tr(
+            "V8 编译缓存、apt/npm 缓存、临时目录与更新安装包",
+            "V8 compile cache, apt/npm caches, tmp & update APKs",
+        )
+    }
+    val parts = buildList {
+        if (breakdown.compileCacheBytes > 0L) {
+            add(tr("编译 ${RuntimeFacts.formatBytes(breakdown.compileCacheBytes)}", "V8 ${RuntimeFacts.formatBytes(breakdown.compileCacheBytes)}"))
+        }
+        if (breakdown.pkgCacheBytes > 0L) {
+            add(tr("包缓存 ${RuntimeFacts.formatBytes(breakdown.pkgCacheBytes)}", "pkgs ${RuntimeFacts.formatBytes(breakdown.pkgCacheBytes)}"))
+        }
+        if (breakdown.scratchCacheBytes > 0L) {
+            add(tr("临时 ${RuntimeFacts.formatBytes(breakdown.scratchCacheBytes)}", "tmp ${RuntimeFacts.formatBytes(breakdown.scratchCacheBytes)}"))
+        }
+    }
+    return parts.joinToString(" · ")
+}
+
+@Composable
+private fun StorageBreakdownRow(
+    dotColor: Color,
+    title: String,
+    subtitle: String,
+    sizeText: String,
+    badge: String? = null,
+) {
+    val palette = PiTheme.palette
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(dotColor),
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    title,
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                    color = palette.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (badge != null) {
+                    TagPill(badge, tone = palette.muted)
+                }
+            }
+            Text(
+                subtitle,
+                style = PiTheme.text.meta,
+                color = palette.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            sizeText,
+            style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+            color = palette.text,
+            maxLines = 1,
         )
     }
 }
@@ -1070,7 +1454,7 @@ private fun MetricTile(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.7f))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f))
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -1092,7 +1476,7 @@ private fun MetricTile(
 }
 
 @Composable
-private fun ActionPillButton(
+private fun RuntimeActionButton(
     icon: ImageVector,
     text: String,
     primary: Boolean,
@@ -1100,34 +1484,41 @@ private fun ActionPillButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val palette = PiTheme.palette
     val bg = when {
         !enabled -> MaterialTheme.colorScheme.surfaceContainerHigh
-        primary -> MaterialTheme.colorScheme.primary
+        primary -> palette.accent
         else -> MaterialTheme.colorScheme.surfaceContainerHigh
     }
     val fg = when {
-        !enabled -> PiTheme.palette.muted
-        primary -> MaterialTheme.colorScheme.onPrimary
-        else -> PiTheme.palette.text
+        !enabled -> palette.muted
+        primary -> palette.contrastOn(palette.accent)
+        else -> palette.text
     }
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(bg)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
+    val border = if (!primary || !enabled) BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant) else null
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = bg,
+        border = border,
     ) {
-        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text,
-            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-            color = fg,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text,
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = fg,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -1140,24 +1531,29 @@ private fun SmallActionChip(
     modifier: Modifier = Modifier,
 ) {
     val fg = if (enabled) PiTheme.palette.text else PiTheme.palette.muted
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(15.dp))
-        Spacer(Modifier.width(5.dp))
-        Text(
-            label,
-            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-            color = fg,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(
+                label,
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = fg,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -1226,7 +1622,6 @@ private fun RuntimeEngineOptionRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // Radio dot
             Box(
                 modifier = Modifier
                     .size(20.dp)
@@ -1379,7 +1774,6 @@ private fun InfoFactRow(
 @Composable
 private fun MaintenanceActionRow(
     icon: ImageVector,
-    tint: Color,
     title: String,
     subtitle: String,
     dangerous: Boolean = false,
@@ -1387,6 +1781,11 @@ private fun MaintenanceActionRow(
     onClick: () -> Unit,
 ) {
     val palette = PiTheme.palette
+    val iconColor = when {
+        !enabled -> palette.muted
+        dangerous -> palette.error
+        else -> palette.text
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1398,12 +1797,21 @@ private fun MaintenanceActionRow(
         Box(
             modifier = Modifier
                 .padding(top = 2.dp)
-                .size(32.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(tint.copy(alpha = 0.13f)),
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(
+                    if (dangerous) palette.error.copy(alpha = 0.10f)
+                    else MaterialTheme.colorScheme.surfaceContainerHigh,
+                )
+                .border(
+                    width = 0.5.dp,
+                    color = if (dangerous) palette.error.copy(alpha = 0.28f)
+                    else MaterialTheme.colorScheme.outlineVariant,
+                    shape = RoundedCornerShape(10.dp),
+                ),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+            Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(17.dp))
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
@@ -1424,12 +1832,4 @@ private fun formatStartupMs(ms: Long?): String? = when {
     ms == null -> null
     ms < 1000L -> "${ms}ms"
     else -> String.format(Locale.US, "%.1fs", ms / 1000.0)
-}
-
-private fun dirBytes(file: File): Long {
-    if (!file.exists()) return 0L
-    if (file.isFile) return file.length()
-    var sum = 0L
-    file.listFiles()?.forEach { child -> sum += dirBytes(child) }
-    return sum
 }

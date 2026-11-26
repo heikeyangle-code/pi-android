@@ -49,8 +49,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object DeviceShizuku {
 
-    /** The Shizuku manager app. Sui (the Magisk module) is reached through it. */
-    const val MANAGER_PACKAGE = "moe.shizuku.manager"
+    /** Modern official Shizuku app package id (v4+). */
+    const val MANAGER_PACKAGE = "moe.shizuku.privileged.api"
+
+    /** Modern + legacy Shizuku manager package ids checked in preference order. */
+    val MANAGER_PACKAGES: List<String> = listOf(
+        MANAGER_PACKAGE,
+        "moe.shizuku.manager",
+    )
 
     /** Arbitrary; only echoed back to the result listener. */
     private const val PERMISSION_REQUEST_CODE = 0x7069
@@ -64,11 +70,23 @@ object DeviceShizuku {
     /** Whether `Shizuku.pingBinder()` is true right now. Never throws. */
     fun binderAlive(): Boolean = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
 
-    /** Whether the manager app is installed (package visibility is declared for it). */
-    fun isInstalled(context: Context): Boolean = runCatching {
-        context.packageManager.getPackageInfo(MANAGER_PACKAGE, 0)
-        true
-    }.getOrDefault(false)
+    /** The installed Shizuku manager package id, or null if none is installed. */
+    fun installedManagerPackage(context: Context): String? = MANAGER_PACKAGES.firstOrNull { pkg ->
+        runCatching {
+            context.packageManager.getPackageInfo(pkg, 0)
+            true
+        }.getOrDefault(false)
+    }
+
+    /** Whether the manager app is installed (package visibility is declared for both ids). */
+    fun isInstalled(context: Context): Boolean = installedManagerPackage(context) != null
+
+    /** Launch intent for the installed Shizuku manager app, if launchable. */
+    fun launchManagerIntent(context: Context): android.content.Intent? {
+        val pkg = installedManagerPackage(context) ?: return null
+        return context.packageManager.getLaunchIntentForPackage(pkg)
+            ?.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
 
     /** Shizuku's own version, or -1 when the binder is not there. */
     fun version(): Int = if (!binderAlive()) -1 else runCatching { Shizuku.getVersion() }.getOrDefault(-1)
@@ -132,17 +150,19 @@ object DeviceShizuku {
         val alive = binderAlive()
         val granted = permissionGranted()
         val id = if (alive) uid() else -1
-        put("installed", isInstalled(context))
+        val installedPkg = installedManagerPackage(context)
+        val installed = installedPkg != null
+        put("installed", installed)
         put("binderAlive", alive)
         put("preV11", preV11())
         put("permissionGranted", granted)
         put("ready", alive && granted && !preV11())
         put("uid", id)
         put("version", version())
-        put("managerPackage", MANAGER_PACKAGE)
+        put("managerPackage", installedPkg ?: MANAGER_PACKAGE)
         put("backendLabel", ShizukuShellBackend.label)
         put("note", when {
-            !alive && !isInstalled(context) ->
+            !alive && !installed ->
                 "没有安装 Shizuku。装好并启动它（Android 11+ 可以用系统「无线调试」在手机上直接启动），" +
                     "再回到这里授权，Shell 就会以 ADB 身份（uid=2000）运行。"
 
@@ -152,11 +172,11 @@ object DeviceShizuku {
 
             preV11() -> "Shizuku 是 v11 之前的版本，API 不支持。"
 
-            !granted -> "Shizuku 在运行，但本应用还没有获得它的授权。点「请求 Shizuku 授权」即可。"
+            !granted -> "Shizuku 在运行，但本应用还没有获得它的授权。点「Shizuku 提权」即可请求授权。"
 
-            id == 0 -> "Shizuku 已就绪，且是以 root（uid=0）启动的：Shell 会拿到完整 root 权限，硬性禁用清单仍然生效。"
+            id == 0 -> "Shizuku 已就绪，且是以 root（uid=0）启动的：设备 Shell 拥有完整 root 权限，请谨慎使用。"
 
-            else -> "Shizuku 已就绪：Shell 以 ADB 身份（uid=$id）运行。"
+            else -> "Shizuku 已就绪：设备 Shell 以 ADB 身份（uid=$id）运行。"
         })
     }
 

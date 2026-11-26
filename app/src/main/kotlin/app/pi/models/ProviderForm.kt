@@ -1,20 +1,22 @@
 package app.pi.models
 
+import app.pi.i18n.tr
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 
 /**
- * 自定义供应商（`models.json` 的一个 provider）与表单之间的纯转换。
+ * 自定义供应商（`models.json` 的一个 provider）与表单之间的纯转换（对齐 Pi 1.6.1 `ModelConfig` schema）。
  *
- * 这里**不校验**：校验是 SDK 的事——`models.config.setProvider` 把整份配置交给 `ModelRuntime`
- * 当校验器，非法就回滚并带回字段精确的原话（`providers.mine.baseUrl: must be string`）。
+ * 这里**不替 SDK 越权校验**：完整 schema 校验由 SDK `models.config.setProvider` / `ModelRuntime`
+ * 执行，非法就回滚并带回字段精确的原话（如 `providers.mine.baseUrl: must be string`）。
  * 表单只负责三件事：
- *  1. 读出已有配置时**不丢字段**：认不得的键（`compat`、`cost`、`headers` 的别的写法…）原样放进 [extra]，
- *     保存时原样写回——我们没有做界面的字段，不应该被一次保存悄悄删掉；
+ *  1. 读出已有配置时**不丢字段**：认不得的键（`modelOverrides`、`oauth`、`samplingParams`、`compat` 其余高级项…）
+ *     原样保留在 [extra] / [CompatForm.extra] / [ModelForm.costExtra]，保存时原样写回；
  *  2. 空的就不写（不写 `""`，不写 `NaN`）；
- *  3. 数字字段写不成数字时，告诉用户是哪一个，而不是写出垃圾让 SDK 去报。
+ *  3. 数字或请求头明显不合法时就地给出明确提示。
  */
 data class ProviderForm(
     val id: String = "",
@@ -31,12 +33,73 @@ data class ProviderForm(
     val authHeader: Boolean = false,
     /** 每行 `名称: 值`。 */
     val headersText: String = "",
+    /** OpenAI 兼容参数（`compat`）；未设的字段不写出，保留由 SDK 按 URL 自动探测。 */
+    val compat: CompatForm = CompatForm(),
     val models: List<ModelForm> = emptyList(),
     val extra: JsonObject = JsonObject(emptyMap()),
 ) {
+    /**
+     * OpenAI / 兼容中转常用 `compat` 参数（对齐 `@earendil-works/pi-ai/providers/compat-schema`）。
+     * 布尔项为三态：`null` = 自动探测（不写），`true` / `false` = 显式覆盖。
+     * 表单未覆盖的高级 `compat` 键（如 `openRouterRouting`、`chatTemplateKwargs`）全部保留在 [extra]。
+     */
+    data class CompatForm(
+        val thinkingFormat: String = "",
+        val maxTokensField: String = "",
+        val supportsDeveloperRole: Boolean? = null,
+        val supportsReasoningEffort: Boolean? = null,
+        val supportsStore: Boolean? = null,
+        val extra: JsonObject = JsonObject(emptyMap()),
+    ) {
+        val hasUiFields: Boolean
+            get() = thinkingFormat.isNotBlank() || maxTokensField.isNotBlank() ||
+                supportsDeveloperRole != null || supportsReasoningEffort != null || supportsStore != null
+        val isEmpty: Boolean get() = !hasUiFields && extra.isEmpty()
+
+        fun toJsonObject(): JsonObject? {
+            if (isEmpty) return null
+            val out = LinkedHashMap<String, JsonElement>(extra)
+            put(out, "thinkingFormat", thinkingFormat)
+            put(out, "maxTokensField", maxTokensField)
+            if (supportsDeveloperRole != null) out["supportsDeveloperRole"] = JsonPrimitive(supportsDeveloperRole)
+            else out.remove("supportsDeveloperRole")
+            if (supportsReasoningEffort != null) out["supportsReasoningEffort"] = JsonPrimitive(supportsReasoningEffort)
+            else out.remove("supportsReasoningEffort")
+            if (supportsStore != null) out["supportsStore"] = JsonPrimitive(supportsStore)
+            else out.remove("supportsStore")
+            return if (out.isEmpty()) null else JsonObject(out)
+        }
+
+        companion object {
+            private val KNOWN_KEYS = setOf(
+                "thinkingFormat",
+                "maxTokensField",
+                "supportsDeveloperRole",
+                "supportsReasoningEffort",
+                "supportsStore",
+            )
+
+            fun from(obj: JsonObject?): CompatForm {
+                if (obj == null) return CompatForm()
+                return CompatForm(
+                    thinkingFormat = str(obj["thinkingFormat"]),
+                    maxTokensField = str(obj["maxTokensField"]),
+                    supportsDeveloperRole = (obj["supportsDeveloperRole"] as? JsonPrimitive)?.booleanOrNull,
+                    supportsReasoningEffort = (obj["supportsReasoningEffort"] as? JsonPrimitive)?.booleanOrNull,
+                    supportsStore = (obj["supportsStore"] as? JsonPrimitive)?.booleanOrNull,
+                    extra = JsonObject(obj.filterKeys { it !in KNOWN_KEYS }),
+                )
+            }
+        }
+    }
+
     data class ModelForm(
         val id: String = "",
         val name: String = "",
+        /** 可选单模型协议覆盖（留空则沿用供应商 `api`）。 */
+        val api: String = "",
+        /** 可选单模型地址覆盖（留空则沿用供应商 `baseUrl`）。 */
+        val baseUrl: String = "",
         val reasoning: Boolean = false,
         val acceptsImages: Boolean = false,
         val contextWindow: String = "",
@@ -51,10 +114,16 @@ data class ProviderForm(
         val costCacheWrite: String = "",
         /** `cost` 里表单没有界面的字段（`tiers` 分档价），原样带回。 */
         val costExtra: JsonObject = JsonObject(emptyMap()),
+        /** 单模型级 `compat` 覆盖。 */
+        val compat: CompatForm = CompatForm(),
         val extra: JsonObject = JsonObject(emptyMap()),
     ) {
         val hasCost: Boolean get() = listOf(costInput, costOutput, costCacheRead, costCacheWrite).any { it.isNotBlank() }
     }
+
+    /** 若该 provider 在 `models.json` 里配置了 `modelOverrides`（用于覆盖内置模型参数），返回覆盖条数。 */
+    val modelOverridesCount: Int
+        get() = (extra["modelOverrides"] as? JsonObject)?.size ?: 0
 
     sealed interface Result {
         data class Ok(val json: JsonObject) : Result
@@ -62,10 +131,13 @@ data class ProviderForm(
     }
 
     fun toJson(): Result {
-        if (models.any { it.id.isBlank() }) return Result.Invalid("有模型没有填 ID。")
+        if (models.any { it.id.isBlank() }) return Result.Invalid(tr("有模型没有填 ID。", "A model is missing its ID."))
         val ids = models.map { it.id.trim() }
-        ids.firstOrNull { id -> ids.count { it == id } > 1 }?.let { return Result.Invalid("模型 ID 重复：$it") }
-        val headers = parseHeaders(headersText) ?: return Result.Invalid("请求头每行要写成「名称: 值」。")
+        ids.firstOrNull { id -> ids.count { it == id } > 1 }?.let {
+            return Result.Invalid(tr("模型 ID 重复：$it", "Duplicate model ID: $it"))
+        }
+        val headers = parseHeaders(headersText)
+            ?: return Result.Invalid(tr("请求头每行要写成「名称: 值」。", "Headers must be written as \"Name: Value\" per line."))
         val out = LinkedHashMap<String, JsonElement>(extra)
         put(out, "name", name)
         put(out, "baseUrl", baseUrl)
@@ -73,20 +145,30 @@ data class ProviderForm(
         put(out, "apiKey", apiKey)
         if (authHeader) out["authHeader"] = JsonPrimitive(true) else out.remove("authHeader")
         if (headers.isEmpty()) out.remove("headers") else out["headers"] = JsonObject(headers.mapValues { JsonPrimitive(it.value) })
+        if (!extra.containsKey("compat")) {
+            val c = compat.toJsonObject()
+            if (c == null) out.remove("compat") else out["compat"] = c
+        }
         val modelJson = ArrayList<JsonElement>()
         for (m in models) {
             val o = LinkedHashMap<String, JsonElement>(m.extra)
             o["id"] = JsonPrimitive(m.id.trim())
             put(o, "name", m.name)
+            put(o, "api", m.api)
+            put(o, "baseUrl", m.baseUrl)
             if (m.reasoning) o["reasoning"] = JsonPrimitive(true) else o.remove("reasoning")
             // extra 里有 input = 它有表单表达不了的取值：整个原样留着，开关不再碰它。
             if (!m.extra.containsKey("input")) {
                 if (m.acceptsImages) o["input"] = JsonArray(listOf(JsonPrimitive("text"), JsonPrimitive("image"))) else o.remove("input")
             }
-            for ((key, label, text) in listOf(Triple("contextWindow", "上下文窗口", m.contextWindow), Triple("maxTokens", "最大输出", m.maxTokens))) {
+            for ((key, label, text) in listOf(
+                Triple("contextWindow", tr("上下文窗口", "Context Window"), m.contextWindow),
+                Triple("maxTokens", tr("最大输出", "Max Output"), m.maxTokens),
+            )) {
                 val t = text.trim()
                 if (t.isEmpty()) { o.remove(key); continue }
-                val n = t.toLongOrNull()?.takeIf { it > 0 } ?: return Result.Invalid("「${m.id}」的$label 要是正整数。")
+                val n = t.toLongOrNull()?.takeIf { it > 0 }
+                    ?: return Result.Invalid(tr("「${m.id}」的$label 要是正整数。", "$label for \"${m.id}\" must be a positive integer."))
                 o[key] = JsonPrimitive(n)
             }
             // extra 里有 cost = 它不是对象（表单表达不了）：原样留着，不再碰。
@@ -96,6 +178,10 @@ data class ProviderForm(
                     is CostResult.None -> o.remove("cost")
                     is CostResult.Value -> o["cost"] = cost.json
                 }
+            }
+            if (!m.extra.containsKey("compat")) {
+                val mc = m.compat.toJsonObject()
+                if (mc == null) o.remove("compat") else o["compat"] = mc
             }
             modelJson += JsonObject(o)
         }
@@ -116,19 +202,24 @@ data class ProviderForm(
             val t = text.trim()
             if (t.isEmpty()) return null
             val d = t.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
-                ?: return CostResult.Invalid("「$label」的$what 要是不小于 0 的数字。")
+                ?: return CostResult.Invalid(tr("「$label」的$what 要是不小于 0 的数字。", "$what for \"$label\" must be a number >= 0."))
             return d
         }
         val parsed = listOf(
-            "input" to parse(m.costInput, "输入价格"),
-            "output" to parse(m.costOutput, "输出价格"),
-            "cacheRead" to parse(m.costCacheRead, "缓存读取价格"),
-            "cacheWrite" to parse(m.costCacheWrite, "缓存写入价格"),
+            "input" to parse(m.costInput, tr("输入价格", "Input price")),
+            "output" to parse(m.costOutput, tr("输出价格", "Output price")),
+            "cacheRead" to parse(m.costCacheRead, tr("缓存读取价格", "Cache read price")),
+            "cacheWrite" to parse(m.costCacheWrite, tr("缓存写入价格", "Cache write price")),
         )
         parsed.forEach { (_, v) -> if (v is CostResult.Invalid) return v }
         val byKey = parsed.associate { (k, v) -> k to (v as Double?) }
         if (byKey["input"] == null || byKey["output"] == null) {
-            return CostResult.Invalid("「$label」的价格要同时填输入和输出（缓存读写不填按 0）。")
+            return CostResult.Invalid(
+                tr(
+                    "「$label」的价格要同时填输入和输出（缓存读写不填按 0）。",
+                    "Pricing for \"$label\" requires both input and output rates (cache rates default to 0).",
+                ),
+            )
         }
         val out = LinkedHashMap<String, JsonElement>(m.costExtra)
         for (key in listOf("input", "output", "cacheRead", "cacheWrite")) out[key] = number(byKey[key] ?: 0.0)
@@ -142,13 +233,14 @@ data class ProviderForm(
 
         /** 已有 provider → 表单。认得的字段进表单，其余进 extra。 */
         fun from(id: String, provider: JsonObject): ProviderForm {
-            val known = setOf("name", "baseUrl", "api", "apiKey", "authHeader", "headers", "models")
+            val known = setOf("name", "baseUrl", "api", "apiKey", "authHeader", "headers", "compat", "models")
+            val compatObj = provider["compat"] as? JsonObject
             val headers = (provider["headers"] as? JsonObject)?.entries
                 ?.joinToString("\n") { (k, v) -> "$k: ${(v as? JsonPrimitive)?.content ?: v}" }.orEmpty()
             val models = (provider["models"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.map { m ->
-                val knownModel = setOf("id", "name", "reasoning", "input", "contextWindow", "maxTokens", "cost")
-                // cost 不是对象时留在 extra（原样往返），是对象时拆进四个价格字段。
+                val knownModel = setOf("id", "name", "api", "baseUrl", "reasoning", "input", "contextWindow", "maxTokens", "cost", "compat")
                 val costObj = m["cost"] as? JsonObject
+                val mCompatObj = m["compat"] as? JsonObject
                 val costKeys = setOf("input", "output", "cacheRead", "cacheWrite")
                 val input = (m["input"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
                 // input 里除了 text/image 还有别的值时，原样留在 extra，不被「只认图片」吞掉。
@@ -156,6 +248,8 @@ data class ProviderForm(
                 ModelForm(
                     id = str(m["id"]),
                     name = str(m["name"]),
+                    api = str(m["api"]),
+                    baseUrl = str(m["baseUrl"]),
                     reasoning = (m["reasoning"] as? JsonPrimitive)?.content == "true",
                     acceptsImages = "image" in input,
                     contextWindow = str(m["contextWindow"]),
@@ -165,9 +259,13 @@ data class ProviderForm(
                     costCacheRead = str(costObj?.get("cacheRead")),
                     costCacheWrite = str(costObj?.get("cacheWrite")),
                     costExtra = JsonObject(costObj?.filterKeys { it !in costKeys }.orEmpty()),
+                    compat = CompatForm.from(mCompatObj),
                     extra = JsonObject(
                         m.filterKeys {
-                            it !in knownModel || (it == "input" && !inputIsPlain) || (it == "cost" && costObj == null)
+                            it !in knownModel ||
+                                (it == "input" && !inputIsPlain) ||
+                                (it == "cost" && costObj == null) ||
+                                (it == "compat" && mCompatObj == null)
                         },
                     ),
                 )
@@ -180,8 +278,13 @@ data class ProviderForm(
                 apiKey = str(provider["apiKey"]),
                 authHeader = (provider["authHeader"] as? JsonPrimitive)?.content == "true",
                 headersText = headers,
+                compat = CompatForm.from(compatObj),
                 models = models,
-                extra = JsonObject(provider.filterKeys { it !in known }),
+                extra = JsonObject(
+                    provider.filterKeys {
+                        it !in known || (it == "compat" && compatObj == null)
+                    },
+                ),
             )
         }
 

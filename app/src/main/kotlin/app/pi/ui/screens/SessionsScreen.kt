@@ -129,6 +129,7 @@ import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
 import app.pi.ui.components.PiSheet
+import app.pi.ui.components.PiSheetChromeMetrics
 import app.pi.ui.components.PiType
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.settingsPageTopInset
@@ -756,61 +757,64 @@ fun SessionsScreen(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Column(
+            val isDark = PiTheme.isDark
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = PiSettingsMetrics.pageHorizontal)
-                    .padding(bottom = 16.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                    .padding(bottom = 16.dp),
+                shape = RoundedCornerShape(PiSettingsMetrics.cardRadius),
+                color = PiSheetChromeMetrics.sheetCardBg,
+                border = BorderStroke(
+                    PiSpacing.hairlineThin,
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.45f else 0.70f),
+                ),
             ) {
-                SessionActionRow(
-                    icon = Icons.Filled.Edit,
-                    label = tr("重命名", "Rename"),
-                    subtitle = null,
-                    tone = MaterialTheme.colorScheme.onSurface,
-                    iconTint = PiTheme.palette.accent,
-                ) {
-                    actions = null
-                    renaming = acting
-                }
-                if (acting.file.isFile || acting.messageCount > 0) {
+                Column(Modifier.fillMaxWidth()) {
+                    SessionActionRow(
+                        icon = Icons.Filled.Edit,
+                        label = tr("重命名", "Rename"),
+                        subtitle = null,
+                        destructive = false,
+                    ) {
+                        actions = null
+                        renaming = acting
+                    }
+                    if (acting.file.isFile || acting.messageCount > 0) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = 58.dp),
+                            thickness = PiSpacing.hairlineThin,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                        )
+                        SessionActionRow(
+                            icon = Icons.Filled.AccountTree,
+                            label = if (isOtherProject) tr("分支到当前项目", "Fork into current project") else tr("分支为新会话", "Fork as new session"),
+                            subtitle = if (isOtherProject) {
+                                tr("保留历史上下文，以当前项目目录继续对话", "Keep history and branch into the current project directory")
+                            } else {
+                                tr("从当前历史分出一条独立新会话", "Start an independent session from this history")
+                            },
+                            destructive = false,
+                        ) {
+                            actions = null
+                            session.forkSessionToCurrentWorkspace(acting)
+                            onOpenChat()
+                        }
+                    }
                     HorizontalDivider(
-                        modifier = Modifier.padding(start = 56.dp),
+                        modifier = Modifier.padding(start = 58.dp),
                         thickness = PiSpacing.hairlineThin,
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
                     )
                     SessionActionRow(
-                        icon = Icons.Filled.AccountTree,
-                        label = if (isOtherProject) tr("分支到当前项目", "Fork into current project") else tr("分支为新会话", "Fork as new session"),
-                        subtitle = if (isOtherProject) {
-                            tr("保留历史上下文，以当前项目目录继续对话", "Keep history and branch into the current project directory")
-                        } else {
-                            tr("从当前历史分出一条独立新会话", "Start an independent session from this history")
-                        },
-                        tone = MaterialTheme.colorScheme.onSurface,
-                        iconTint = PiTheme.palette.success,
+                        icon = Icons.Filled.Delete,
+                        label = tr("删除会话", "Delete session"),
+                        subtitle = if (actingIsCurrent) tr("将自动新建对话并删除当前会话", "Starts a new chat and deletes this active session") else null,
+                        destructive = true,
                     ) {
                         actions = null
-                        session.forkSessionToCurrentWorkspace(acting)
-                        onOpenChat()
+                        confirming = acting
                     }
-                }
-                HorizontalDivider(
-                    modifier = Modifier.padding(start = 56.dp),
-                    thickness = PiSpacing.hairlineThin,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
-                )
-                SessionActionRow(
-                    icon = Icons.Filled.Delete,
-                    label = tr("删除会话", "Delete session"),
-                    subtitle = if (actingIsCurrent) tr("将自动新建对话并删除当前会话", "Starts a new chat and deletes this active session") else null,
-                    tone = PiTheme.palette.error,
-                    iconTint = PiTheme.palette.error,
-                    enabled = true,
-                ) {
-                    actions = null
-                    confirming = acting
                 }
             }
         }
@@ -938,6 +942,7 @@ private fun SessionsEmpty(
 @Composable
 private fun SessionSearchField(query: String, loading: Boolean, onChange: (String) -> Unit, error: String?) {
     val focus = remember { FocusRequester() }
+    val isDark = PiTheme.isDark
     // 本地独立状态：避免后台全文索引回流触发重组时打断中文拼音 IME 组合态。
     var localInput by remember { mutableStateOf(query) }
     LaunchedEffect(query) {
@@ -957,8 +962,15 @@ private fun SessionSearchField(query: String, loading: Boolean, onChange: (Strin
         Surface(
             modifier = Modifier.fillMaxWidth().height(40.dp),
             shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            border = if (error != null) BorderStroke(1.dp, PiTheme.palette.error.copy(alpha = 0.6f)) else null,
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = if (error != null) {
+                BorderStroke(1.dp, PiTheme.palette.error.copy(alpha = 0.65f))
+            } else {
+                BorderStroke(
+                    PiSpacing.hairlineThin,
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.75f),
+                )
+            },
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 12.dp),
@@ -1065,7 +1077,7 @@ private fun SessionListRow(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (active) Modifier.background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.055f)) else Modifier)
+                .then(if (active) Modifier.background(accent.copy(alpha = 0.055f)) else Modifier)
                 .drawBehind {
                     val unit = SESSIONS_TREE_UNIT.toPx()
                     val stroke = 1.2.dp.toPx()
@@ -1095,8 +1107,8 @@ private fun SessionListRow(
                         }
                     }
                     if (active) {
-                        val inset = 10.dp.toPx()
-                        val width = 3.dp.toPx()
+                        val inset = 11.dp.toPx()
+                        val width = 2.5.dp.toPx()
                         drawRoundRect(
                             color = accent,
                             topLeft = Offset(0f, inset),
@@ -1108,7 +1120,7 @@ private fun SessionListRow(
                 .combinedClickable(onClick = onOpen, onLongClick = onLongPress)
                 .padding(
                     start = PiSettingsMetrics.rowPaddingHorizontal + SESSIONS_TREE_UNIT * levels,
-                    end = 6.dp,
+                    end = 8.dp,
                     top = 11.dp,
                     bottom = 11.dp,
                 ),
@@ -1127,7 +1139,7 @@ private fun SessionListRow(
                             Icon(
                                 imageVector = Icons.Filled.Bookmark,
                                 contentDescription = tr("已命名", "Named"),
-                                tint = if (active) accent else accent.copy(alpha = 0.78f),
+                                tint = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(13.dp),
                             )
                         }
@@ -1156,8 +1168,8 @@ private fun SessionListRow(
                             Text(
                                 text = tr("当前", "Active"),
                                 modifier = Modifier
-                                    .clip(PiShapes.tag)
-                                    .background(accent.copy(alpha = 0.14f))
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(accent.copy(alpha = 0.13f))
                                     .padding(horizontal = 6.dp, vertical = 1.dp),
                                 style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                                 color = accent,
@@ -1187,7 +1199,7 @@ private fun SessionListRow(
                 }
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
                         .clickable(onClickLabel = tr("会话操作", "Session actions"), onClick = onLongPress),
                     contentAlignment = Alignment.Center,
@@ -1288,14 +1300,14 @@ private fun WorkspaceGroupHeader(
                 modifier = Modifier
                     .size(28.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (current) accent.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceContainerHighest),
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     Icons.Filled.FolderOpen,
                     contentDescription = null,
                     modifier = Modifier.size(15.dp),
-                    tint = if (current) accent else PiTheme.palette.muted,
+                    tint = if (current) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f) else PiTheme.palette.muted,
                 )
             }
             Row(
@@ -1312,16 +1324,27 @@ private fun WorkspaceGroupHeader(
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (current) {
-                    Text(
-                        tr("当前项目", "Active"),
+                    Row(
                         modifier = Modifier
-                            .clip(PiShapes.tag)
-                            .border(0.5.dp, PiTheme.palette.borderMuted.copy(alpha = 0.72f), PiShapes.tag)
-                            .padding(horizontal = 6.dp, vertical = 1.dp),
-                        style = PiTheme.text.meta,
-                        color = PiTheme.palette.muted,
-                        maxLines = 1,
-                    )
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .padding(horizontal = 7.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(5.dp)
+                                .clip(CircleShape)
+                                .background(accent),
+                        )
+                        Text(
+                            tr("当前", "Active"),
+                            style = PiTheme.text.meta,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
             Text(
@@ -1345,7 +1368,7 @@ private fun WorkspaceGroupHeader(
     }
 }
 
-/** 极简克制筛选片：中性高对比激活态 + 物理弹簧色彩过渡 + 轻触觉反馈。 */
+/** 极简克制筛选胶囊：非选中细描边轻悬浮面、选中高对比反白 + 轻触觉反馈。 */
 @Composable
 private fun SessionFilterPill(
     text: String,
@@ -1354,9 +1377,10 @@ private fun SessionFilterPill(
     onClick: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(10.dp)
+    val isDark = PiTheme.isDark
+    val shape = RoundedCornerShape(999.dp)
     val bg by animateColorAsState(
-        targetValue = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerHigh,
+        targetValue = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerLow,
         animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "pill-bg",
     )
@@ -1365,33 +1389,43 @@ private fun SessionFilterPill(
         animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "pill-fg",
     )
-    Row(
-        modifier = Modifier
-            .heightIn(min = 32.dp)
-            .clip(shape)
-            .background(bg)
-            .clickable {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onClick()
-            }
-            .padding(horizontal = 11.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    Surface(
+        modifier = Modifier.heightIn(min = 30.dp),
+        shape = shape,
+        color = bg,
+        border = if (!active) {
+            BorderStroke(
+                PiSpacing.hairlineThin,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f),
+            )
+        } else {
+            null
+        },
+        onClick = {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onClick()
+        },
     ) {
-        if (icon != null) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(14.dp),
-                tint = fg,
+        Row(
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            if (icon != null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = fg,
+                )
+            }
+            Text(
+                text = text,
+                style = PiTheme.text.meta.copy(fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium),
+                color = fg,
+                maxLines = 1,
             )
         }
-        Text(
-            text = text,
-            style = PiTheme.text.meta.copy(fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium),
-            color = fg,
-            maxLines = 1,
-        )
     }
 }
 
@@ -1415,7 +1449,12 @@ private fun SessionTag(text: String, modifier: Modifier = Modifier) {
         text = text,
         modifier = modifier
             .clip(PiShapes.tag)
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(
+                PiSpacing.hairlineThin,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                PiShapes.tag,
+            )
             .padding(horizontal = 6.dp, vertical = 1.dp),
         style = PiTheme.text.meta,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1429,15 +1468,29 @@ private fun SessionActionRow(
     icon: ImageVector,
     label: String,
     subtitle: String?,
-    tone: Color,
-    iconTint: Color,
+    destructive: Boolean = false,
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
+    val haptics = LocalHapticFeedback.current
+    val tone = if (destructive) PiTheme.palette.error else MaterialTheme.colorScheme.onSurface
+    val iconWellBg = if (destructive) {
+        PiTheme.palette.error.copy(alpha = if (enabled) 0.12f else 0.06f)
+    } else {
+        PiSheetChromeMetrics.sheetControlBg
+    }
+    val iconTint = if (destructive) {
+        PiTheme.palette.error
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled) {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1446,7 +1499,7 @@ private fun SessionActionRow(
             modifier = Modifier
                 .size(32.dp)
                 .clip(RoundedCornerShape(9.dp))
-                .background(iconTint.copy(alpha = if (enabled) 0.14f else 0.08f)),
+                .background(iconWellBg),
             contentAlignment = Alignment.Center,
         ) {
             Icon(

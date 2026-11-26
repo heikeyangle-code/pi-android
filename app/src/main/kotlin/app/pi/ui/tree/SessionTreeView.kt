@@ -384,9 +384,10 @@ private fun localizedTypeTitle(raw: String): String = when (raw) {
 @Composable
 private fun TreeFilterPill(text: String, active: Boolean, onClick: () -> Unit) {
     val haptics = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(10.dp)
+    val isDark = PiTheme.isDark
+    val shape = RoundedCornerShape(999.dp)
     val bg by animateColorAsState(
-        targetValue = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerHigh,
+        targetValue = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerLow,
         animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "tree-pill-bg",
     )
@@ -395,44 +396,58 @@ private fun TreeFilterPill(text: String, active: Boolean, onClick: () -> Unit) {
         animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "tree-pill-fg",
     )
-    Box(
-        modifier = Modifier
-            .heightIn(min = 32.dp)
-            .clip(shape)
-            .background(bg)
-            .clickable {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onClick()
-            }
-            .padding(horizontal = 11.dp, vertical = 5.dp),
-        contentAlignment = Alignment.Center,
+    val borderColor = if (active) {
+        Color.Transparent
+    } else {
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f)
+    }
+    Surface(
+        modifier = Modifier.heightIn(min = 30.dp),
+        shape = shape,
+        color = bg,
+        border = if (!active) androidx.compose.foundation.BorderStroke(PiSpacing.hairlineThin, borderColor) else null,
+        onClick = {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onClick()
+        },
     ) {
-        Text(
-            text = text,
-            style = PiTheme.text.meta.copy(fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium),
-            color = fg,
-            maxLines = 1,
-        )
+        Box(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = text,
+                style = PiTheme.text.meta.copy(fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium),
+                color = fg,
+                maxLines = 1,
+            )
+        }
     }
 }
 
 @Composable
 private fun MiniJumpIcon(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(26.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .clickable(onClickLabel = contentDescription, onClick = onClick),
-        contentAlignment = Alignment.Center,
+    val isDark = PiTheme.isDark
+    Surface(
+        modifier = Modifier.size(26.dp),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = androidx.compose.foundation.BorderStroke(
+            PiSpacing.hairlineThin,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.50f else 0.70f),
+        ),
+        onClick = onClick,
     ) {
-        Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(16.dp), tint = PiTheme.palette.muted)
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(16.dp), tint = PiTheme.palette.muted)
+        }
     }
 }
 
 @Composable
 private fun TreeSearchField(query: String, onQuery: (String) -> Unit) {
     val focus = remember { FocusRequester() }
+    val isDark = PiTheme.isDark
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Surface(
         modifier = Modifier
@@ -440,7 +455,11 @@ private fun TreeSearchField(query: String, onQuery: (String) -> Unit) {
             .padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp)
             .height(40.dp),
         shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = androidx.compose.foundation.BorderStroke(
+            PiSpacing.hairlineThin,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.75f),
+        ),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp),
@@ -993,9 +1012,16 @@ private fun ActionRow(
     title: String,
     hint: String?,
     icon: ImageVector? = null,
-    tint: Color = PiTheme.palette.accent,
+    tint: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
     onClick: () -> Unit,
 ) {
+    val isWarningOrError = tint == PiTheme.palette.error || tint == PiTheme.palette.warning
+    val iconWellBg = if (isWarningOrError) {
+        tint.copy(alpha = 0.13f)
+    } else {
+        app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg
+    }
+    val resolvedTint = if (isWarningOrError) tint else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1009,13 +1035,13 @@ private fun ActionRow(
                 modifier = Modifier
                     .size(30.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(tint.copy(alpha = 0.14f)),
+                    .background(iconWellBg),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = tint,
+                    tint = resolvedTint,
                     modifier = Modifier.size(16.dp),
                 )
             }

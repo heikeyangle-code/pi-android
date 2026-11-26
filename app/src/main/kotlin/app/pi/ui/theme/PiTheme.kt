@@ -105,27 +105,18 @@ object PiSpacing {
     val composerChipGap = 4.dp
     val composerChipSendGap = 8.dp
 
-    // ------------------------------------------------------ 对话页顶栏
-    //
-    // 用户 2026-10-26 的裁决：56 高（标准顶栏）、页面同色不透明、滚动后才出现
-    // 0.5dp 发丝线；右侧图标 24dp 字形 / 48dp 热区；标题前状态点 7dp；顶栏下 12dp
-    // 页面底色渐隐。模型 chip 已移到输入框工具行，顶栏不再有它。
+    // ------------------------------------------------------ 通用顶栏图标 / 状态点（文件查看器等共用）
 
-    val chatTopBarHeight = 56.dp
     val chatTopBarAction = 44.dp
     val chatTopBarGlyph = 22.dp
     val chatTopBarStatusDot = 7.dp
-    val chatTopBarFade = 12.dp
-
-    /** 列表最后一行与输入框之间的呼吸空间。 */
-    val composerListClearance = 24.dp
 
     /** 转录回到底部按钮：视觉圆 36，点击框 48。 */
     val scrollArrowVisual = 36.dp
     val scrollArrowTap = 48.dp
 
-    /** 输入框上方 / 下方渐隐带的长度（透明 → 页面底色 → 透明）。 */
-    val composerGradientFade = 24.dp
+    /** 顶部悬浮胶囊与底部悬浮工作台共用的渐隐羽化带长度（上下镜像对称）。 */
+    val composerGradientFade = 18.dp
 
     /** 工具行圆形热区；30 统一 `/`、回形针、⋮、引导 / 后续和环。 */
     val composerToolSize = 30.dp

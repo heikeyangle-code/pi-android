@@ -182,12 +182,9 @@ export interface HealthPayload {
 	screenshotSupported: boolean;
 	locationPermissionGranted: boolean;
 	notificationPermissionGranted: boolean;
+	cameraPermissionGranted?: boolean;
 	vibratePermissionGranted: boolean;
-	/**
-	 * The pre-API-29 storage path. Reported so a model can explain why
-	 * `android_files(action="export")` fails on an old device instead of guessing.
-	 */
-	legacyStoragePermissionGranted?: boolean;
+	notificationListenerState?: string;
 	/**
 	 * The active project directory on host (`shellPath`) and inside the Linux guest (`guestPath`).
 	 * Engine, terminal, and file manager all share the exact same `guestPath`.
@@ -208,19 +205,8 @@ export interface HealthPayload {
 		backendLabel: string;
 		note: string;
 	};
-	/** What the permission gate last reported doing (display only). */
-	gate?: {
-		reported: boolean;
-		sessionGrants?: string[];
-		counts?: Record<string, number>;
-		note?: string;
-	};
-	/** Granted SAF directories (the storage group). */
-	saf?: { count: number; roots: string[] };
 	/**
-	 * The shell policy. It is short because there is one rule left and it is empty:
-	 * `enforced:false` says the guard refuses nothing by command text, and `blocked`
-	 * is the (empty) hard-block list.
+	 * The shell policy: `enforced:false` means commands are not blocked by text matching.
 	 */
 	shellPolicy?: {
 		enforced: boolean;

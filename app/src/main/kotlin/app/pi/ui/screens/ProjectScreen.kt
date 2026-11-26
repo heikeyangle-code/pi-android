@@ -269,10 +269,17 @@ fun ProjectScreen(
     var listedDir by remember { mutableStateOf<String?>(null) }
     var filterText by remember(currentDir.absolutePath) { mutableStateOf("") }
     var filterOpen by remember(currentDir.absolutePath) { mutableStateOf(false) }
+    var selectionMode by remember(currentDir.absolutePath) { mutableStateOf(false) }
+    var selectedPaths by remember(currentDir.absolutePath) { mutableStateOf<Set<String>>(emptySet()) }
+    var clipboard by remember { mutableStateOf<WorkspaceClipboard?>(null) }
 
-    // Gesture back: close search -> step up inside project -> return home if outside project -> exit to Chat.
+    // Gesture back: exit multi-select -> close search -> step up inside project -> return home -> exit to Chat.
     BackHandler(enabled = true) {
         when {
+            selectionMode -> {
+                selectionMode = false
+                selectedPaths = emptySet()
+            }
             filterOpen -> {
                 filterOpen = false
                 filterText = ""
@@ -282,35 +289,55 @@ fun ProjectScreen(
             else -> onBack()
         }
     }
-    var searchWholeProject by rememberSaveable { mutableStateOf(false) }
+    var searchScopeOrdinal by rememberSaveable { mutableIntStateOf(WorkspaceSearchScope.Folder.ordinal) }
+    val searchScope = WorkspaceSearchScope.entries[searchScopeOrdinal.coerceIn(0, WorkspaceSearchScope.entries.lastIndex)]
     var recursiveHits by remember { mutableStateOf<List<WorkspaceEntry>>(emptyList()) }
+    var contentHits by remember { mutableStateOf<List<ContentHit>>(emptyList()) }
     var recursiveSearching by remember { mutableStateOf(false) }
     var sortIndex by rememberSaveable { mutableIntStateOf(WorkspaceSort.Newest.ordinal) }
     var sortMenu by remember { mutableStateOf(false) }
     var showIgnored by rememberSaveable { mutableStateOf(false) }
     var hideDotFiles by rememberSaveable { mutableStateOf(false) }
     val sortMode = WorkspaceSort.entries[sortIndex.coerceIn(0, WorkspaceSort.entries.lastIndex)]
-    val sortedEntries = remember(listing, sortMode, filterText, showIgnored, hideDotFiles) {
+    val sortedEntries = remember(listing, sortMode, filterText, searchScope, showIgnored, hideDotFiles) {
         val all = listing.orEmpty().filter { entry ->
             val keepIgnored = showIgnored || !(entry.isDirectory && entry.name in PI_IGNORED_DIRS)
             val keepDot = !hideDotFiles || !entry.name.startsWith(".")
             keepIgnored && keepDot
         }
         val q = filterText.trim()
-        val filtered = if (q.isEmpty()) all else all.filter { it.name.contains(q, ignoreCase = true) }
+        val filtered = if (q.isEmpty() || searchScope != WorkspaceSearchScope.Folder) {
+            all
+        } else {
+            all.filter { it.name.contains(q, ignoreCase = true) }
+        }
         filtered.sortedWith(sortMode.comparator)
     }
-    LaunchedEffect(searchWholeProject, filterText, showIgnored, workspace.absolutePath, refreshTick) {
+    val searchRoot = if (insideWorkspace) workspace else currentDir
+    LaunchedEffect(searchScope, filterText, showIgnored, searchRoot.absolutePath, refreshTick) {
         val q = filterText.trim()
-        if (!searchWholeProject || q.isEmpty()) {
+        if (searchScope == WorkspaceSearchScope.Folder || q.isEmpty()) {
             recursiveHits = emptyList()
+            contentHits = emptyList()
             recursiveSearching = false
             return@LaunchedEffect
         }
         recursiveSearching = true
-        delay(140)
-        recursiveHits = withContext(Dispatchers.IO) {
-            WorkspaceFiles.searchRecursive(workspace, q, includeIgnored = showIgnored, limit = 120)
+        delay(160)
+        when (searchScope) {
+            WorkspaceSearchScope.Names -> {
+                contentHits = emptyList()
+                recursiveHits = withContext(Dispatchers.IO) {
+                    WorkspaceFiles.searchRecursive(searchRoot, q, includeIgnored = showIgnored, limit = 120)
+                }
+            }
+            WorkspaceSearchScope.Content -> {
+                recursiveHits = emptyList()
+                contentHits = withContext(Dispatchers.IO) {
+                    WorkspaceFiles.searchContent(searchRoot, q, includeIgnored = showIgnored, maxHits = 80)
+                }
+            }
+            WorkspaceSearchScope.Folder -> Unit
         }
         recursiveSearching = false
     }
@@ -394,6 +421,8 @@ fun ProjectScreen(
     var newSheet by remember { mutableStateOf(false) }
     var inputDialog by remember { mutableStateOf<WorkspaceInputDialog?>(null) }
     var deleteFor by remember { mutableStateOf<WorkspaceMenuTarget?>(null) }
+    var batchDeleteConfirm by remember { mutableStateOf<List<File>?>(null) }
+    var propertiesFor by remember { mutableStateOf<File?>(null) }
     var snack by remember { mutableStateOf<WorkspaceSnack?>(null) }
     /** 切换面板里某个工作区行尾 ⋮ 选中的那一行（重命名 / 删除）。 */
     var workspaceMenuFor by remember { mutableStateOf<WorkspaceStore.Entry?>(null) }
@@ -404,6 +433,44 @@ fun ProjectScreen(
 
     fun say(text: String, tone: StateTone = StateTone.Muted) {
         snack = WorkspaceSnack(text, tone)
+    }
+
+    fun pasteClipboard() {
+        val clip = clipboard ?: return
+        val destDir = currentDir
+        scope.launch {
+            var okCount = 0
+            var firstErr: String? = null
+            withContext(Dispatchers.IO) {
+                for (src in clip.files) {
+                    val res = when (clip.mode) {
+                        WorkspaceClipboardMode.Copy -> WorkspaceFiles.copyTo(src, destDir)
+                        WorkspaceClipboardMode.Cut -> WorkspaceFiles.moveTo(src, destDir)
+                    }
+                    res.fold(
+                        onSuccess = { okCount++ },
+                        onFailure = { if (firstErr == null) firstErr = it.message ?: it::class.java.simpleName },
+                    )
+                }
+            }
+            if (okCount > 0) {
+                refreshTick++
+                if (clip.mode == WorkspaceClipboardMode.Cut && firstErr == null) {
+                    clipboard = null
+                }
+                val verb = if (clip.mode == WorkspaceClipboardMode.Copy) tr("复制", "Copied") else tr("移动", "Moved")
+                say(
+                    if (firstErr == null) {
+                        tr("已$verb $okCount 项到当前目录", "$verb $okCount ${if (okCount == 1) "item" else "items"} here")
+                    } else {
+                        tr("已$verb $okCount 项，部分失败：$firstErr", "$verb $okCount, some failed: $firstErr")
+                    },
+                    if (firstErr == null) StateTone.Muted else StateTone.Warning,
+                )
+            } else if (firstErr != null) {
+                say(tr("粘贴失败：$firstErr", "Paste failed: $firstErr"), StateTone.Error)
+            }
+        }
     }
 
     val importFilesLauncher = rememberLauncherForActivityResult(
@@ -790,10 +857,25 @@ fun ProjectScreen(
                     }
                 },
             )
+            val hasFloatingDock = selectionMode || clipboard != null
+            val isNamesSearchActive = searchScope == WorkspaceSearchScope.Names && filterText.isNotBlank()
+            val isContentSearchActive = searchScope == WorkspaceSearchScope.Content && filterText.isNotBlank()
+            val selectableFiles = remember(isNamesSearchActive, recursiveHits, sortedEntries, searchRoot.absolutePath, currentDir.absolutePath) {
+                if (isNamesSearchActive) {
+                    recursiveHits.map { File(searchRoot, it.path) }
+                } else {
+                    sortedEntries.map { File(currentDir, it.name) }
+                }
+            }
+            val allSelected = selectableFiles.isNotEmpty() && selectableFiles.all { it.absolutePath in selectedPaths }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + PiSpacing.scrollBottom),
+                contentPadding = PaddingValues(
+                    bottom = contentPadding.calculateBottomPadding() +
+                        PiSpacing.scrollBottom +
+                        if (hasFloatingDock) 76.dp else 0.dp,
+                ),
             ) {
                 run {
                     if (engineDown) {
@@ -922,7 +1004,12 @@ fun ProjectScreen(
 
                     item(key = "files-bar") {
                         WorkspaceInlineSearchSortBar(
-                            fileCount = if (listingError != null) null else sortedEntries.size,
+                            fileCount = when {
+                                listingError != null -> null
+                                isContentSearchActive -> contentHits.size
+                                isNamesSearchActive -> recursiveHits.size
+                                else -> sortedEntries.size
+                            },
                             sortMode = sortMode,
                             sortMenuExpanded = sortMenu,
                             onSortMenuToggle = { sortMenu = it },
@@ -936,6 +1023,24 @@ fun ProjectScreen(
                             onToggleFilter = {
                                 filterOpen = !filterOpen
                                 if (!filterOpen) filterText = ""
+                            },
+                            selectionMode = selectionMode,
+                            selectedCount = selectedPaths.size,
+                            allSelected = allSelected,
+                            onToggleSelectionMode = if (isContentSearchActive) {
+                                null
+                            } else {
+                                {
+                                    selectionMode = !selectionMode
+                                    if (!selectionMode) selectedPaths = emptySet()
+                                }
+                            },
+                            onSelectAll = {
+                                selectedPaths = if (allSelected) {
+                                    emptySet()
+                                } else {
+                                    selectableFiles.map { it.absolutePath }.toSet()
+                                }
                             },
                         )
                     }
@@ -1022,124 +1127,201 @@ fun ProjectScreen(
                             }
                         }
                     } else {
-                        // 就地筛选框：支持「当前目录」与「全项目（递归）」两种范围一键切换。
+                        // 就地搜索框：支持「当前层 / 文件名 / 搜内容」三档一键切换。
                         val filtering = filterOpen || filterText.isNotEmpty()
                         if (filtering) {
                             item(key = "entry-filter") {
                                 WorkspaceFilterField(
                                     value = filterText,
                                     onChange = { filterText = it },
-                                    wholeProject = searchWholeProject,
-                                    onToggleWholeProject = { searchWholeProject = !searchWholeProject },
-                                )
-                            }
-                        }
-                        val isRecursiveActive = searchWholeProject && filterText.isNotBlank()
-                        val shown = if (isRecursiveActive) recursiveHits else sortedEntries
-                        if (isRecursiveActive && recursiveSearching) {
-                            item(key = "entry-recursive-loading") {
-                                Text(
-                                    tr("正在全项目搜索「${filterText.trim()}」…", "Searching project for \"${filterText.trim()}\"…"),
-                                    modifier = Modifier.padding(
-                                        horizontal = PiSettingsMetrics.pageHorizontal,
-                                        vertical = 14.dp,
-                                    ),
-                                    style = PiTheme.text.meta,
-                                    color = PiTheme.palette.muted,
-                                )
-                            }
-                        } else if (shown.isEmpty()) {
-                            item(key = "entry-filter-empty") {
-                                Text(
-                                    tr("没有名字里带「${filterText.trim()}」的项。", "No items matching \"${filterText.trim()}\"."),
-                                    modifier = Modifier.padding(
-                                        horizontal = PiSettingsMetrics.pageHorizontal,
-                                        vertical = 16.dp,
-                                    ),
-                                    style = PiTheme.text.meta,
-                                    color = PiTheme.palette.muted,
-                                )
-                            }
-                        }
-                        shown.forEachIndexed { index, entry ->
-                            val itemKey = if (isRecursiveActive) "rec:${entry.path}" else "entry:${entry.path}"
-                            item(key = itemKey) {
-                              Box(Modifier.animateItem()) {
-                                val entryFile = if (isRecursiveActive) File(workspace, entry.path) else File(currentDir, entry.name)
-                                val displayPath = remember(workspace.absolutePath, entryFile.absolutePath, guestRootfs.absolutePath) {
-                                    workspaceDisplayPath(workspace, entryFile, guestRootfs)
-                                }
-                                // 这一行的**工作区相对**路径，与「本次会话」徽标比对用。
-                                val entryRelative = remember(isRecursiveActive, entry.path, entry.name, currentCanonicalDirPath, workspaceCanonicalPath) {
-                                    if (isRecursiveActive) {
-                                        entry.path
-                                    } else {
-                                        val candidate = if (currentCanonicalDirPath == "/") {
-                                            "/${entry.name}"
-                                        } else {
-                                            "$currentCanonicalDirPath/${entry.name}"
+                                    searchScope = searchScope,
+                                    onSelectScope = { nextScope ->
+                                        searchScopeOrdinal = nextScope.ordinal
+                                        if (selectionMode) {
+                                            selectionMode = false
+                                            selectedPaths = emptySet()
                                         }
-                                        val prefix = "$workspaceCanonicalPath/"
-                                        if (candidate.startsWith(prefix)) candidate.removePrefix(prefix) else null
-                                    }
-                                }
-                                val matched = if (engineDown || entryRelative == null) {
-                                    null
-                                } else {
-                                    changedPaths.firstOrNull {
-                                        WorkspaceFiles.sameFile(entryRelative, it, guestWorkspace)
-                                    }
-                                }
-                                val entryDiff = matched?.let { path ->
-                                    remember(state.transcript, path) { diffFor(state.transcript, path) }
-                                }
-                                WsCardSlice(
-                                    index = index,
-                                    lastIndex = shown.lastIndex,
-                                    hairlineStart = WsIconHairlineStart,
-                                ) {
-                                    WorkspaceEntryRow(
-                                        entry = entry,
-                                        sessionChanged = matched,
-                                        diff = entryDiff,
-                                        subtitlePrefix = if (isRecursiveActive) entry.path.substringBeforeLast('/', "").ifEmpty { null } else null,
-                                        onOpen = {
-                                            if (entry.isDirectory) {
-                                                if (isRecursiveActive) {
-                                                    val segs = entry.path.split('/').filter { it.isNotEmpty() }
-                                                    browsingHostFs = !workspaceInRootfs
-                                                    crumbs = homeCrumbs + segs
-                                                    filterText = ""
-                                                    filterOpen = false
-                                                } else {
-                                                    crumbs = crumbs + entry.name
-                                                }
-                                            } else {
-                                                openRelative(displayPath, entryFile)
-                                            }
-                                        },
-                                        onMenu = {
-                                            menuFor = menuTargetFor(
-                                                path = displayPath,
-                                                file = entryFile,
-                                                fromSession = false,
-                                            )
-                                        },
-                                    )
-                                }
-                              }
+                                    },
+                                )
                             }
                         }
-                        // 收起了东西就当面说出来、一点就开：文件管理不能让人找不到文件。
-                        val foldedAway = if (showIgnored) 0 else entries.count { it.isDirectory && it.name in PI_IGNORED_DIRS }
-                        if (foldedAway > 0 && filterText.isBlank()) {
-                            item(key = "folded-ignored") {
-                                WsCardSlice(index = 0, lastIndex = 0) {
-                                    WsRow(
-                                        title = tr("已收起 $foldedAway 项（.git / node_modules，pi 的文件发现也不列）", "$foldedAway hidden (.git / node_modules, also excluded by pi file discovery)"),
-                                        trail = { Text(tr("显示", "Show"), style = PiTheme.text.meta, color = PiTheme.palette.accent) },
-                                        onClick = { showIgnored = true },
+                        if (isContentSearchActive) {
+                            if (recursiveSearching) {
+                                item(key = "entry-content-loading") {
+                                    Text(
+                                        tr("正在全文检索「${filterText.trim()}」…", "Searching file contents for \"${filterText.trim()}\"…"),
+                                        modifier = Modifier.padding(
+                                            horizontal = PiSettingsMetrics.pageHorizontal,
+                                            vertical = 14.dp,
+                                        ),
+                                        style = PiTheme.text.meta,
+                                        color = PiTheme.palette.muted,
                                     )
+                                }
+                            } else if (contentHits.isEmpty()) {
+                                item(key = "entry-content-empty") {
+                                    Text(
+                                        tr("没有包含「${filterText.trim()}」的文本内容。", "No file contents matching \"${filterText.trim()}\"."),
+                                        modifier = Modifier.padding(
+                                            horizontal = PiSettingsMetrics.pageHorizontal,
+                                            vertical = 16.dp,
+                                        ),
+                                        style = PiTheme.text.meta,
+                                        color = PiTheme.palette.muted,
+                                    )
+                                }
+                            } else {
+                                contentHits.forEachIndexed { index, hit ->
+                                    item(key = "hit:${hit.path}:${hit.lineNumber}:$index") {
+                                        Box(Modifier.animateItem()) {
+                                            val hitFile = File(searchRoot, hit.path)
+                                            val displayPath = remember(workspace.absolutePath, hitFile.absolutePath, guestRootfs.absolutePath) {
+                                                workspaceDisplayPath(workspace, hitFile, guestRootfs)
+                                            }
+                                            WsCardSlice(
+                                                index = index,
+                                                lastIndex = contentHits.lastIndex,
+                                                hairlineStart = WsIconHairlineStart,
+                                            ) {
+                                                ContentSearchHitRow(
+                                                    hit = hit,
+                                                    onOpen = { openRelative(displayPath, hitFile) },
+                                                    onMenu = {
+                                                        menuFor = menuTargetFor(
+                                                            path = displayPath,
+                                                            file = hitFile,
+                                                            fromSession = false,
+                                                        )
+                                                    },
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            val shown = if (isNamesSearchActive) recursiveHits else sortedEntries
+                            if (isNamesSearchActive && recursiveSearching) {
+                                item(key = "entry-recursive-loading") {
+                                    Text(
+                                        tr("正在搜索文件名「${filterText.trim()}」…", "Searching file names for \"${filterText.trim()}\"…"),
+                                        modifier = Modifier.padding(
+                                            horizontal = PiSettingsMetrics.pageHorizontal,
+                                            vertical = 14.dp,
+                                        ),
+                                        style = PiTheme.text.meta,
+                                        color = PiTheme.palette.muted,
+                                    )
+                                }
+                            } else if (shown.isEmpty()) {
+                                item(key = "entry-filter-empty") {
+                                    Text(
+                                        tr("没有名字里带「${filterText.trim()}」的项。", "No items matching \"${filterText.trim()}\"."),
+                                        modifier = Modifier.padding(
+                                            horizontal = PiSettingsMetrics.pageHorizontal,
+                                            vertical = 16.dp,
+                                        ),
+                                        style = PiTheme.text.meta,
+                                        color = PiTheme.palette.muted,
+                                    )
+                                }
+                            }
+                            shown.forEachIndexed { index, entry ->
+                                val itemKey = if (isNamesSearchActive) "rec:${entry.path}" else "entry:${entry.path}"
+                                item(key = itemKey) {
+                                  Box(Modifier.animateItem()) {
+                                    val entryFile = if (isNamesSearchActive) File(searchRoot, entry.path) else File(currentDir, entry.name)
+                                    val displayPath = remember(workspace.absolutePath, entryFile.absolutePath, guestRootfs.absolutePath) {
+                                        workspaceDisplayPath(workspace, entryFile, guestRootfs)
+                                    }
+                                    val entryRelative = remember(isNamesSearchActive, entry.path, entry.name, currentCanonicalDirPath, workspaceCanonicalPath, insideWorkspace) {
+                                        if (isNamesSearchActive && insideWorkspace) {
+                                            entry.path
+                                        } else {
+                                            val candidate = if (currentCanonicalDirPath == "/") {
+                                                "/${entry.name}"
+                                            } else {
+                                                "$currentCanonicalDirPath/${entry.name}"
+                                            }
+                                            val prefix = "$workspaceCanonicalPath/"
+                                            if (candidate.startsWith(prefix)) candidate.removePrefix(prefix) else null
+                                        }
+                                    }
+                                    val matched = if (engineDown || entryRelative == null) {
+                                        null
+                                    } else {
+                                        changedPaths.firstOrNull {
+                                            WorkspaceFiles.sameFile(entryRelative, it, guestWorkspace)
+                                        }
+                                    }
+                                    val entryDiff = matched?.let { path ->
+                                        remember(state.transcript, path) { diffFor(state.transcript, path) }
+                                    }
+                                    val isSelected = entryFile.absolutePath in selectedPaths
+                                    WsCardSlice(
+                                        index = index,
+                                        lastIndex = shown.lastIndex,
+                                        hairlineStart = WsIconHairlineStart,
+                                    ) {
+                                        WorkspaceEntryRow(
+                                            entry = entry,
+                                            sessionChanged = matched,
+                                            diff = entryDiff,
+                                            subtitlePrefix = if (isNamesSearchActive) entry.path.substringBeforeLast('/', "").ifEmpty { null } else null,
+                                            selectionMode = selectionMode,
+                                            selected = isSelected,
+                                            onOpen = {
+                                                if (selectionMode) {
+                                                    selectedPaths = if (isSelected) {
+                                                        selectedPaths - entryFile.absolutePath
+                                                    } else {
+                                                        selectedPaths + entryFile.absolutePath
+                                                    }
+                                                } else if (entry.isDirectory) {
+                                                    if (isNamesSearchActive) {
+                                                        val segs = entry.path.split('/').filter { it.isNotEmpty() }
+                                                        if (insideWorkspace) {
+                                                            browsingHostFs = !workspaceInRootfs
+                                                            crumbs = homeCrumbs + segs
+                                                        } else {
+                                                            crumbs = crumbs + segs
+                                                        }
+                                                        filterText = ""
+                                                        filterOpen = false
+                                                    } else {
+                                                        crumbs = crumbs + entry.name
+                                                    }
+                                                } else {
+                                                    openRelative(displayPath, entryFile)
+                                                }
+                                            },
+                                            onMenu = {
+                                                menuFor = menuTargetFor(
+                                                    path = displayPath,
+                                                    file = entryFile,
+                                                    fromSession = false,
+                                                )
+                                            },
+                                            onLongPress = {
+                                                selectionMode = true
+                                                selectedPaths = selectedPaths + entryFile.absolutePath
+                                            },
+                                        )
+                                    }
+                                  }
+                                }
+                            }
+                            // 收起了东西就当面说出来、一点就开：文件管理不能让人找不到文件。
+                            val foldedAway = if (showIgnored) 0 else entries.count { it.isDirectory && it.name in PI_IGNORED_DIRS }
+                            if (foldedAway > 0 && filterText.isBlank()) {
+                                item(key = "folded-ignored") {
+                                    WsCardSlice(index = 0, lastIndex = 0) {
+                                        WsRow(
+                                            title = tr("已收起 $foldedAway 项（.git / node_modules，pi 的文件发现也不列）", "$foldedAway hidden (.git / node_modules, also excluded by pi file discovery)"),
+                                            trail = { Text(tr("显示", "Show"), style = PiTheme.text.meta, color = PiTheme.palette.accent) },
+                                            onClick = { showIgnored = true },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1172,18 +1354,93 @@ fun ProjectScreen(
             }
         }
 
+        val dockBottomPadding = contentPadding.calculateBottomPadding() + 10.dp
+        if (selectionMode) {
+            val selectedFiles = remember(selectedPaths) { selectedPaths.map(::File) }
+            WorkspaceBatchActionBar(
+                selectedCount = selectedFiles.size,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = dockBottomPadding),
+                onMentionAll = {
+                    if (selectedFiles.isNotEmpty()) {
+                        val tokens = selectedFiles.joinToString(" ") { f ->
+                            val disp = workspaceDisplayPath(workspace, f, guestRootfs)
+                            app.pi.ui.chat.PiFileMentions.buildCompletionValue(
+                                disp + if (f.isDirectory) "/" else "",
+                                quoted = false,
+                            )
+                        }
+                        val draft = session.composerDraft.text
+                        draft.value = if (draft.value.isBlank()) "$tokens " else draft.value.trimEnd() + " $tokens "
+                        selectionMode = false
+                        selectedPaths = emptySet()
+                        session.requestNav(NavRequest.Chat)
+                    }
+                },
+                onCopy = {
+                    if (selectedFiles.isNotEmpty()) {
+                        clipboard = WorkspaceClipboard(WorkspaceClipboardMode.Copy, selectedFiles)
+                        selectionMode = false
+                        selectedPaths = emptySet()
+                        say(tr("已复制 ${selectedFiles.size} 项，前往目标目录粘贴", "Copied ${selectedFiles.size} items — navigate and tap Paste"))
+                    }
+                },
+                onCut = {
+                    if (selectedFiles.isNotEmpty()) {
+                        clipboard = WorkspaceClipboard(WorkspaceClipboardMode.Cut, selectedFiles)
+                        selectionMode = false
+                        selectedPaths = emptySet()
+                        say(tr("已剪切 ${selectedFiles.size} 项，前往目标目录粘贴", "Cut ${selectedFiles.size} items — navigate and tap Paste"))
+                    }
+                },
+                onCompress = {
+                    if (selectedFiles.isNotEmpty()) {
+                        val defaultName = if (selectedFiles.size == 1) {
+                            "${selectedFiles.first().nameWithoutExtension.ifEmpty { selectedFiles.first().name }}.zip"
+                        } else {
+                            "archive.zip"
+                        }
+                        inputDialog = WorkspaceInputDialog(
+                            kind = WorkspaceInputKind.CompressZip,
+                            title = tr("压缩为 ZIP", "Compress to ZIP"),
+                            where = whereLabel,
+                            relativeParent = parentRelative,
+                            absoluteParent = currentDir,
+                            initial = defaultName,
+                            dialogSub = tr("将 ${selectedFiles.size} 个条目打包到当前目录", "Archive ${selectedFiles.size} items into current folder"),
+                            compressSources = selectedFiles,
+                        )
+                    }
+                },
+                onDelete = {
+                    if (selectedFiles.isNotEmpty()) {
+                        batchDeleteConfirm = selectedFiles
+                    }
+                },
+            )
+        } else {
+            clipboard?.let { clip ->
+                WorkspaceClipboardBar(
+                    clipboard = clip,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = dockBottomPadding),
+                    onPaste = { pasteClipboard() },
+                    onCancel = { clipboard = null },
+                )
+            }
+        }
+
         snack?.let { message ->
             WorkspaceSnackBar(
                 message = message,
-                // **必须让开系统导航条。** 这一段挂在下面那个 `Box` 的直接子级上，
-                // 而那个 `Box` **没有**吃 `contentPadding`（吃它的是上面那根页面 Column），
-                // 于是 `BottomCenter` 指的是**屏幕**底边 —— 手势条会压住这条提示的下沿
-                // （用户看到的就是「底部出现个框，看不清说的啥」，而且它 2600ms 就没了）。
-                // 内边距用**同一个** `contentPadding`，页面与这条提示因此永远对齐；再加 8dp
-                // 是稿子里那条「提示在底边上方留一线」的间距。
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = contentPadding.calculateBottomPadding() + 8.dp),
+                    .padding(
+                        bottom = contentPadding.calculateBottomPadding() +
+                            if (selectionMode || clipboard != null) 78.dp else 8.dp,
+                    ),
             )
         }
     }
@@ -1385,12 +1642,57 @@ fun ProjectScreen(
                     say(result.sentence, if (result.ok) StateTone.Muted else StateTone.Warning)
                 }
             },
+            onCopy = {
+                menuFor = null
+                clipboard = WorkspaceClipboard(WorkspaceClipboardMode.Copy, listOf(target.file))
+                say(tr("已复制 · ${target.file.name}，前往目标目录粘贴", "Copied · ${target.file.name} — navigate and tap Paste"))
+            },
+            onCut = {
+                menuFor = null
+                clipboard = WorkspaceClipboard(WorkspaceClipboardMode.Cut, listOf(target.file))
+                say(tr("已剪切 · ${target.file.name}，前往目标目录粘贴", "Cut · ${target.file.name} — navigate and tap Paste"))
+            },
             onDuplicate = {
                 menuFor = null
                 val source = target.file
                 runFileOp(tr("已创建副本 · ${source.name}", "Duplicated · ${source.name}")) {
                     WorkspaceFiles.duplicate(source)
                 }
+            },
+            onCompress = {
+                menuFor = null
+                val stem = target.file.nameWithoutExtension.ifEmpty { target.file.name }
+                inputDialog = WorkspaceInputDialog(
+                    kind = WorkspaceInputKind.CompressZip,
+                    title = tr("压缩为 ZIP", "Compress to ZIP"),
+                    where = whereLabel,
+                    relativeParent = parentRelative,
+                    absoluteParent = target.file.parentFile ?: currentDir,
+                    initial = "$stem.zip",
+                    dialogSub = target.path,
+                    compressSources = listOf(target.file),
+                )
+            },
+            onExtractZip = if (!target.isDirectory && WorkspaceFiles.isZipFile(target.file)) {
+                {
+                    menuFor = null
+                    val zip = target.file
+                    val dest = zip.parentFile ?: currentDir
+                    scope.launch {
+                        val res = withContext(Dispatchers.IO) { WorkspaceFiles.unzipTo(zip, dest) }
+                        res.fold(
+                            onSuccess = { count ->
+                                refreshTick++
+                                say(tr("已解压 $count 项到当前目录", "Extracted $count ${if (count == 1) "item" else "items"} here"))
+                            },
+                            onFailure = { err ->
+                                say(tr("解压失败：", "Extract failed: ") + (err.message ?: err::class.java.simpleName), StateTone.Error)
+                            },
+                        )
+                    }
+                }
+            } else {
+                null
             },
             onExport = {
                 menuFor = null
@@ -1402,9 +1704,14 @@ fun ProjectScreen(
             },
             onEnter = {
                 menuFor = null
-                if (searchWholeProject && filterText.isNotBlank()) {
-                    browsingHostFs = !workspaceInRootfs
-                    crumbs = homeCrumbs + target.path.split('/').filter { it.isNotEmpty() }
+                if (searchScope == WorkspaceSearchScope.Names && filterText.isNotBlank()) {
+                    val segs = target.path.split('/').filter { it.isNotEmpty() }
+                    if (insideWorkspace) {
+                        browsingHostFs = !workspaceInRootfs
+                        crumbs = homeCrumbs + segs
+                    } else {
+                        crumbs = crumbs + segs
+                    }
                     filterText = ""
                     filterOpen = false
                 } else {
@@ -1451,10 +1758,12 @@ fun ProjectScreen(
                     if (copied) StateTone.Muted else StateTone.Warning,
                 )
             },
+            onProperties = {
+                menuFor = null
+                propertiesFor = target.file
+            },
             onMention = {
                 menuFor = null
-                // pi 的「引用文件」手势就是输入框里的 `@路径`（`PiFileMentions`）：写进草稿再切到对话，
-                // 用户接着打字就行。路径是相对项目的，与 `@` 补全给出的同一个写法。
                 val token = app.pi.ui.chat.PiFileMentions.buildCompletionValue(
                     target.path + if (target.isDirectory) "/" else "",
                     quoted = false,
@@ -1527,12 +1836,9 @@ fun ProjectScreen(
                 externalPicker = true
             },
             onSubmit = { typed ->
-                // 工作区显示名不是文件名：它可以是带空格的一句话，`nameProblem` 那套规矩
-                // （不许 `/`、不许 `..`、不许为空…）在这里不适用，交给 `renameWorkspace`
-                // 裁决 —— 它的 `Failed.message` 就是给人看的那句话。
                 val problem = if (dialog.kind == WorkspaceInputKind.RenameWorkspace ||
                     dialog.kind == WorkspaceInputKind.NewWorkspace
-                ) { // 新建项目的名字在对话框里已按目录名规则当场检查过，这里不再重复
+                ) {
                     null
                 } else {
                     WorkspaceFiles.nameProblem(typed)
@@ -1547,7 +1853,6 @@ fun ProjectScreen(
                             runFileOp(
                                 what = tr("已新建文件 · $typed", "Created file · $typed"),
                                 onDone = { ok ->
-                                    // 稿子：「建完直接进编辑态，写什么由你。」
                                     if (ok) {
                                         openRelative(display, created, startInEdit = true)
                                     }
@@ -1581,6 +1886,27 @@ fun ProjectScreen(
                             ) { WorkspaceFiles.rename(target, typed) }
                         }
 
+                        WorkspaceInputKind.CompressZip -> {
+                            val dest = dialog.absoluteParent ?: currentDir
+                            val sources = dialog.compressSources
+                            scope.launch {
+                                val res = withContext(Dispatchers.IO) {
+                                    WorkspaceFiles.zipEntries(sources, dest, typed)
+                                }
+                                res.fold(
+                                    onSuccess = { outFile ->
+                                        refreshTick++
+                                        selectionMode = false
+                                        selectedPaths = emptySet()
+                                        say(tr("已压缩 · ${outFile.name}", "Compressed · ${outFile.name}"))
+                                    },
+                                    onFailure = { err ->
+                                        say(tr("压缩失败：", "Compress failed: ") + (err.message ?: err::class.java.simpleName), StateTone.Error)
+                                    },
+                                )
+                            }
+                        }
+
                         WorkspaceInputKind.RenameWorkspace -> dialog.workspaceName?.let { target ->
                             renameWorkspaceTo(target, typed)
                         }
@@ -1592,6 +1918,78 @@ fun ProjectScreen(
                 }
             },
         )
+    }
+
+    // ------------------------------------------------------------ 浮层：文件属性详情
+    propertiesFor?.let { targetFile ->
+        WorkspacePropertiesSheet(
+            file = targetFile,
+            guestRootfs = guestRootfs,
+            onClose = { propertiesFor = null },
+            onCopyText = { copiedPath ->
+                val ok = copyToClipboard(context, copiedPath)
+                say(
+                    if (ok) tr("已复制路径 · $copiedPath", "Copied · $copiedPath") else tr("剪贴板不可用", "Clipboard unavailable"),
+                    if (ok) StateTone.Muted else StateTone.Warning,
+                )
+            },
+        )
+    }
+
+    // ------------------------------------------------------------ 浮层：批量删除确认
+    batchDeleteConfirm?.let { victims ->
+        PiDialog(onDismissRequest = { batchDeleteConfirm = null }) {
+            PiDialogTitle(
+                title = tr("批量删除", "Delete Selected"),
+                glyph = "!",
+                glyphTone = PiTheme.palette.error,
+            )
+            PiDialogBody(
+                tr(
+                    "永久删除选中的 ${victims.size} 个项目？文件与文件夹会从磁盘永久删除，无法恢复。",
+                    "Permanently delete ${victims.size} selected ${if (victims.size == 1) "item" else "items"}? Files and folders cannot be recovered.",
+                ),
+            )
+            PiDialogActions {
+                PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = { batchDeleteConfirm = null })
+                PiDialogAction(
+                    label = tr("永久删除", "Delete Permanently"),
+                    primary = true,
+                    tone = PiTheme.palette.error,
+                    onClick = {
+                        val targets = victims
+                        batchDeleteConfirm = null
+                        scope.launch {
+                            var deleted = 0
+                            var firstErr: String? = null
+                            withContext(Dispatchers.IO) {
+                                for (f in targets) {
+                                    WorkspaceFiles.delete(f).fold(
+                                        onSuccess = { deleted++ },
+                                        onFailure = { if (firstErr == null) firstErr = it.message ?: it::class.java.simpleName },
+                                    )
+                                }
+                            }
+                            selectionMode = false
+                            selectedPaths = emptySet()
+                            refreshTick++
+                            if (deleted > 0) {
+                                say(
+                                    if (firstErr == null) {
+                                        tr("已删除 $deleted 项", "Deleted $deleted ${if (deleted == 1) "item" else "items"}")
+                                    } else {
+                                        tr("已删除 $deleted 项，部分失败：$firstErr", "Deleted $deleted, some failed: $firstErr")
+                                    },
+                                    if (firstErr == null) StateTone.Muted else StateTone.Warning,
+                                )
+                            } else if (firstErr != null) {
+                                say(tr("删除失败：$firstErr", "Delete failed: $firstErr"), StateTone.Error)
+                            }
+                        }
+                    },
+                )
+            }
+        }
     }
 
     // ------------------------------------------------------------ 浮层：删除确认

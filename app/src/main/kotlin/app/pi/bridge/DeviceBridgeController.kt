@@ -182,6 +182,21 @@ object DeviceBridgeController {
         }
     }
 
+    /**
+     * Re-publish `device-bridge.json` with the latest `usableCapabilities` snapshot while keeping
+     * the active bearer token unchanged. Keeps `/reload` and new sessions in sync with UI toggles
+     * at 0 HTTP cost without restarting the HTTP bridge.
+     */
+    fun refreshTokenSnapshot(context: Context) {
+        val currentToken = token ?: return
+        val appContext = context.applicationContext
+        val paths = PiPaths(
+            filesDir = appContext.filesDir,
+            nativeLibDir = File(appContext.applicationInfo.nativeLibraryDir),
+        )
+        runCatching { publishTokenFile(appContext, paths, currentToken) }
+    }
+
     // ------------------------------------------------------------- internals ----
 
     private fun mintToken(): String {
@@ -247,8 +262,9 @@ object DeviceBridgeController {
      * Nothing is copied any more: the only Android extension, `pi-android-bridge`, is
      * precompiled into `host.bundle.mjs` as the official `builtin:pi-android-bridge`
      * factory. What is left is a one-time upgrade cleanup of the copies older builds
-     * wrote (`agent/extensions`, the rootfs copy, `opt/pi/android-extensions`, and the
-     * patched terminal `pi` wrapper), skipped in O(1) while the APK stamp is unchanged.
+     * wrote (`agent/extensions`, the legacy auto-generated `skills/pi-android-device`
+     * directory, `opt/pi/android-extensions`, and the patched terminal `pi` wrapper),
+     * skipped in O(1) while the APK stamp is unchanged.
      *
      * @return a short description, e.g. `已是最新…` / `已清理旧版扩展副本…` / `清理旧版扩展失败: …`
      */
@@ -258,14 +274,23 @@ object DeviceBridgeController {
             nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
         )
         // App 的 SDK 引擎（host.bundle.mjs）已将唯一的 Android 扩展 `pi-android-bridge` 预编译为官方
-        // `builtin:pi-android-bridge` 工厂，零 jiti / 零 Babel 冷启动；不再往磁盘拷 .ts 副本，也不再改写
-        // 终端 `/opt/pi/bin/pi` 包装脚本。这里只做一次性的旧版升级清理（并按 APK stamp 缓存零 I/O 跳过）。
+        // `builtin:pi-android-bridge` 工厂，零 jiti / 零 Babel 冷启动；不再往磁盘拷 .ts 副本，也不再生成
+        // 冗余的 `pi-android-device` 技能目录或改写终端 `/opt/pi/bin/pi` 包装脚本。这里只做一次性的旧版升级清理
+        // （并按 APK stamp 缓存零 I/O 跳过）。
         val legacyRoots = linkedMapOf<String, File>().apply {
             val agentExt = File(paths.agentDir, "extensions")
             put(runCatching { agentExt.canonicalPath }.getOrDefault(agentExt.absolutePath), agentExt)
             if (paths.rootfs.isDirectory) {
                 val rootfsExt = File(paths.rootfs, "root/.pi/agent/extensions")
                 put(runCatching { rootfsExt.canonicalPath }.getOrDefault(rootfsExt.absolutePath), rootfsExt)
+            }
+        }.values.toList()
+        val legacySkillDirs = linkedMapOf<String, File>().apply {
+            val agentSkill = File(paths.agentDir, "skills/pi-android-device")
+            put(runCatching { agentSkill.canonicalPath }.getOrDefault(agentSkill.absolutePath), agentSkill)
+            if (paths.rootfs.isDirectory) {
+                val rootfsSkill = File(paths.rootfs, "root/.pi/agent/skills/pi-android-device")
+                put(runCatching { rootfsSkill.canonicalPath }.getOrDefault(rootfsSkill.absolutePath), rootfsSkill)
             }
         }.values.toList()
         val legacyCliExtRoot = if (paths.rootfs.isDirectory) {
@@ -292,7 +317,7 @@ object DeviceBridgeController {
                 !root.isDirectory || !File(root, "pi-android-bridge").exists() &&
                     !File(root, "pi-android-permission-gate.ts").exists() &&
                     !File(root, "pi-highlight").exists()
-            } && (legacyCliExtRoot == null || !legacyCliExtRoot.exists())
+            } && legacySkillDirs.none { it.exists() } && (legacyCliExtRoot == null || !legacyCliExtRoot.exists())
             if (apkStamp != null && legacyClean && apkMarker.isFile &&
                 runCatching { apkMarker.readText().trim() == apkStamp }.getOrDefault(false)
             ) {
@@ -305,6 +330,9 @@ object DeviceBridgeController {
                     if (f.exists()) f.deleteRecursively()
                 }
             }
+            for (skillDir in legacySkillDirs) {
+                if (skillDir.exists()) skillDir.deleteRecursively()
+            }
             if (legacyCliExtRoot != null && legacyCliExtRoot.exists()) {
                 legacyCliExtRoot.deleteRecursively()
             }
@@ -315,7 +343,7 @@ object DeviceBridgeController {
                     apkMarker.writeText(apkStamp)
                 }
             }
-            "已清理旧版扩展副本（builtin:pi-android-bridge 预编译内置）"
+            "已清理旧版扩展与技能副本（builtin:pi-android-bridge 预编译内置）"
         } catch (error: Exception) {
             "清理旧版扩展失败: ${error::class.java.simpleName}: ${error.message}"
         }

@@ -27,11 +27,18 @@ object PiMcpStatus {
         fun of(name: String): Server? = servers.firstOrNull { it.name == name }
     }
 
-    /** 给人看的一个词。 */
+    /** 给人看的状态摘要（含工具数与 MCP 资源能力）。 */
     fun stateLabel(server: Server): String = when {
-        !server.enabled || server.state == "disabled" -> "已停用"
-        server.connected -> "已连接 · ${server.tools.size} 个工具"
-        server.needsAuth -> "需要登录"
-        else -> "连接失败"
+        !server.enabled || server.state == "disabled" -> app.pi.i18n.tr("已停用", "Disabled")
+        server.connected -> {
+            val toolsPart = app.pi.i18n.tr("已连接 · ${server.tools.size} 个工具", "Connected · ${server.tools.size} tools")
+            if (server.resources) {
+                toolsPart + app.pi.i18n.tr(" · 支持资源", " · Resources")
+            } else {
+                toolsPart
+            }
+        }
+        server.needsAuth -> app.pi.i18n.tr("需要登录授权", "Sign-in required")
+        else -> app.pi.i18n.tr("连接失败", "Connection failed")
     }
 }

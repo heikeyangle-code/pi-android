@@ -33,10 +33,7 @@ import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
-import app.pi.ui.models.ModelsCard
 import app.pi.ui.models.ModelsCardPadding
-import app.pi.ui.models.ModelsDivider
-import app.pi.ui.models.ModelsSectionLabel
 import app.pi.ui.models.TagPill
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -136,11 +133,33 @@ internal fun ToolsScreen(
     }
     val codemodeActive = list.any { it.name == "codemode" && it.active }
 
-    val codemodeModeSetting = remember(freshness, PiLocale.isZh) { PiSettingsCatalog.byKey["codemode.mode"] }
-    val codemodeBudgetSetting = remember(freshness, PiLocale.isZh) { PiSettingsCatalog.byKey["codemode.inlineBudget"] }
-    val shellPathSetting = remember(freshness, PiLocale.isZh) { PiSettingsCatalog.byKey["shellPath"] }
-    val shellPrefixSetting = remember(freshness, PiLocale.isZh) { PiSettingsCatalog.byKey["shellCommandPrefix"] }
-    val expandDefaultSetting = remember(freshness, PiLocale.isZh) { PiSettingsCatalog.byKey["app.tools.expandByDefault"] }
+    val codemodeModeSetting = remember(PiLocale.isZh) { PiSettingsCatalog.byKey["codemode.mode"] }
+    val codemodeBudgetSetting = remember(PiLocale.isZh) { PiSettingsCatalog.byKey["codemode.inlineBudget"] }
+    val shellPathSetting = remember(PiLocale.isZh) { PiSettingsCatalog.byKey["shellPath"] }
+    val shellPrefixSetting = remember(PiLocale.isZh) { PiSettingsCatalog.byKey["shellCommandPrefix"] }
+    val expandDefaultSetting = remember(PiLocale.isZh) { PiSettingsCatalog.byKey["app.tools.expandByDefault"] }
+
+    // Hoist all store reads keyed on `(store, freshness)` outside LazyColumn item lambdas so
+    // Compose Strong Skipping always observes setting updates (previously reading `store` directly
+    // inside `item {}` skipped recomposition after the first tap once `pendingReload` was already true).
+    val codemodeMode = remember(store, freshness, codemodeModeSetting) {
+        codemodeModeSetting?.textIn(store, "on") ?: "on"
+    }
+    val codemodeBudget = remember(store, freshness, codemodeBudgetSetting) {
+        codemodeBudgetSetting?.intIn(store, 3_000) ?: 3_000
+    }
+    val shellPathDisplay = remember(store, freshness, shellPathSetting, PiLocale.isZh) {
+        shellPathSetting?.let { it.display(it.current(store)) }.orEmpty()
+    }
+    val shellPrefixDisplay = remember(store, freshness, shellPrefixSetting, PiLocale.isZh) {
+        shellPrefixSetting?.let { it.display(it.current(store)) }.orEmpty()
+    }
+    val expandDefaultChecked = remember(store, freshness, expandDefaultSetting) {
+        expandDefaultSetting?.boolIn(store, false) ?: false
+    }
+    val expandDefaultDisplay = remember(store, freshness, expandDefaultSetting, PiLocale.isZh) {
+        expandDefaultSetting?.let { it.display(it.current(store)) }.orEmpty()
+    }
 
     fun toggleTool(target: HostAdvanced.ToolDetail, enable: Boolean) {
         val api = advanced() ?: return
@@ -231,19 +250,24 @@ internal fun ToolsScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(palette.accent.copy(alpha = 0.08f))
                                 .padding(
                                     horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                                    vertical = PiSettingsMetrics.rowPaddingVertical,
+                                    vertical = 12.dp,
                                 ),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
                         ) {
-                            Column(Modifier.weight(1f)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(palette.accent),
+                            )
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
                                     tr("配置已保存，尚未重载", "Saved — Pending Reload"),
                                     style = app.pi.ui.components.PiType.rowTitle,
-                                    color = palette.accent,
+                                    color = palette.text,
                                 )
                                 Text(
                                     tr("Codemode 与 Shell 配置需重载后在当前会话生效", "Reload to apply Codemode or Shell changes to the active session"),
@@ -251,10 +275,10 @@ internal fun ToolsScreen(
                                     color = palette.muted,
                                 )
                             }
-                            PiSettingsChip(
-                                text = if (reloadingResources) tr("重载中…", "Reloading…") else tr("立即重载", "Reload"),
-                                active = true,
+                            app.pi.ui.components.PiPrimaryButton(
+                                label = if (reloadingResources) tr("重载中…", "Reloading…") else tr("立即重载", "Reload"),
                                 enabled = !reloadingResources,
+                                compact = true,
                                 onClick = { triggerReload() },
                             )
                         }
@@ -265,27 +289,16 @@ internal fun ToolsScreen(
             // 1. 当前会话与默认工具总开关
             item(key = "tools-header") {
                 Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        val countLabel = if (tools == null) {
+                    PiSettingsSectionHeader(
+                        title = if (tools == null) {
                             tr("正在读取工具…", "Loading tools…")
                         } else {
                             tr(
                                 "全部工具 · ${list.count { it.active }} / ${list.size} 已启用",
                                 "All Tools · ${list.count { it.active }} / ${list.size} Active",
                             )
-                        }
-                        Text(
-                            countLabel,
-                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                            color = palette.muted,
-                        )
-                    }
+                        },
+                    )
                     if (list.size > 8) {
                         PiEditorField(
                             value = query,
@@ -350,32 +363,23 @@ internal fun ToolsScreen(
                 }
             }
 
-            // 2. Codemode 工具编排（Pi 1.6.0 官方 SDK 设置）
+            // 2. Codemode 工具编排（Pi 1.6.1 官方 SDK 设置）
             if (codemodeModeSetting != null || codemodeBudgetSetting != null) {
                 item(key = "codemode-section") {
-                    Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = PiSettingsMetrics.pageHorizontal),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text(
-                                tr("Codemode 脚本工具编排", "Codemode Tool Orchestration"),
-                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                                color = palette.muted,
-                            )
-                            TagPill(
-                                text = if (codemodeActive) tr("codemode 已启用", "codemode active") else tr("codemode 未启用", "codemode off"),
-                                tone = if (codemodeActive) palette.success else palette.muted,
-                            )
-                        }
+                    Column(verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupHeaderGap)) {
+                        PiSettingsSectionHeader(
+                            title = tr("Codemode 脚本工具编排", "Codemode Tool Orchestration"),
+                            trailing = {
+                                PiSettingsBadge(
+                                    label = if (codemodeActive) tr("codemode 已启用", "codemode active") else tr("codemode 未启用", "codemode off"),
+                                    tone = if (codemodeActive) palette.success else palette.muted,
+                                )
+                            },
+                        )
                         PiSettingsCard {
                             var first = true
                             codemodeModeSetting?.let { setting ->
                                 first = false
-                                val mode = setting.textIn(store, "on")
                                 PiInlineSegmentRow(
                                     title = setting.title,
                                     description = setting.description,
@@ -383,36 +387,39 @@ internal fun ToolsScreen(
                                         "on" to tr("on（保留直调）", "on (direct + script)"),
                                         "only" to tr("only（仅脚本）", "only (script only)"),
                                     ),
-                                    selected = mode,
+                                    selected = codemodeMode,
                                     effective = setting.effective,
                                     onExplainEffect = { explainingSetting = setting },
                                     onSelect = { next ->
-                                        store.write(setting.key, JsonPrimitive(next))
-                                        onSettingWritten(setting.key)
-                                        pendingReload = true
+                                        if (next != codemodeMode) {
+                                            store.write(setting.key, JsonPrimitive(next))
+                                            onSettingWritten(setting.key)
+                                            pendingReload = true
+                                        }
                                     },
                                 )
                             }
                             codemodeBudgetSetting?.let { setting ->
                                 if (!first) PiSettingsHairline()
-                                val budget = setting.intIn(store, 3_000)
                                 PiInlinePresetRow(
                                     title = setting.title,
                                     description = setting.description,
-                                    valueText = formatTokenCount(budget),
+                                    valueText = formatTokenCount(codemodeBudget),
                                     presets = listOf(
                                         1_500 to "1.5K",
                                         3_000 to "3K",
                                         6_000 to "6K",
                                         12_000 to "12K",
                                     ),
-                                    selected = budget,
+                                    selected = codemodeBudget,
                                     effective = setting.effective,
                                     onExplainEffect = { explainingSetting = setting },
                                     onSelect = { next ->
-                                        store.write(setting.key, JsonPrimitive(next))
-                                        onSettingWritten(setting.key)
-                                        pendingReload = true
+                                        if (next != codemodeBudget) {
+                                            store.write(setting.key, JsonPrimitive(next))
+                                            onSettingWritten(setting.key)
+                                            pendingReload = true
+                                        }
                                     },
                                     onCustomClick = { editingSetting = setting },
                                 )
@@ -422,17 +429,17 @@ internal fun ToolsScreen(
                 }
             }
 
-            // 3. Shell 与工具卡显示（Pi 1.6.0 官方 shellPath / shellCommandPrefix + 展开行为）
+            // 3. Shell 与工具卡显示（Pi 1.6.1 官方 shellPath / shellCommandPrefix + 展开行为）
             item(key = "shell-display") {
-                Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    ModelsSectionLabel(tr("Shell 与显示", "Shell & Display"))
+                Column(verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupHeaderGap)) {
+                    PiSettingsSectionHeader(tr("Shell 与显示", "Shell & Display"))
                     PiSettingsCard {
                         var first = true
                         shellPathSetting?.let { setting ->
                             first = false
                             PiSettingRow(
                                 setting = setting,
-                                valueText = setting.display(setting.current(store)),
+                                valueText = shellPathDisplay,
                                 checked = false,
                                 onToggle = {},
                                 onOpen = { editingSetting = setting },
@@ -444,7 +451,7 @@ internal fun ToolsScreen(
                             first = false
                             PiSettingRow(
                                 setting = setting,
-                                valueText = setting.display(setting.current(store)),
+                                valueText = shellPrefixDisplay,
                                 checked = false,
                                 onToggle = {},
                                 onOpen = { editingSetting = setting },
@@ -455,8 +462,8 @@ internal fun ToolsScreen(
                             if (!first) PiSettingsHairline()
                             PiSettingRow(
                                 setting = setting,
-                                valueText = setting.display(setting.current(store)),
-                                checked = setting.boolIn(store, false),
+                                valueText = expandDefaultDisplay,
+                                checked = expandDefaultChecked,
                                 onToggle = { next ->
                                     store.write(setting.key, JsonPrimitive(next))
                                     onSettingWritten(setting.key)
@@ -507,8 +514,8 @@ private fun ToolGroupCard(
     onToggle: (HostAdvanced.ToolDetail, Boolean) -> Unit,
 ) {
     val palette = PiTheme.palette
-    Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-        ModelsSectionLabel(title)
+    Column(verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupHeaderGap)) {
+        PiSettingsSectionHeader(title)
         PiSettingsCard {
             Column {
                 tools.forEachIndexed { index, tool ->

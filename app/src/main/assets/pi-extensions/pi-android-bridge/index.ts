@@ -339,11 +339,12 @@ const COMM_ACTIONS = [
 	"share",
 	"open",
 	"inbox",
+	"events",
 	"reply",
 	"dismiss",
 	"snooze",
 ] as const;
-const DEVICE_ACTIONS = ["battery", "torch", "location", "sensors", "sensor"] as const;
+const DEVICE_ACTIONS = ["info", "network", "volume", "battery", "torch", "location", "sensors", "sensor"] as const;
 
 /** 全局动作键（无障碍 `performGlobalAction` 认得的那几个）。 */
 const GLOBAL_KEYS = [
@@ -390,22 +391,26 @@ const CommAction = Type.Union(
 		Type.Literal("share"),
 		Type.Literal("open"),
 		Type.Literal("inbox"),
+		Type.Literal("events"),
 		Type.Literal("reply"),
 		Type.Literal("dismiss"),
 		Type.Literal("snooze"),
 	],
-	{ description: "clipboard · notify · toast · tts · vibrate · share · open · inbox · reply · dismiss · snooze" },
+	{ description: "clipboard · notify · toast · tts · vibrate · share · open · inbox · events · reply · dismiss · snooze" },
 );
 
 const DeviceAction = Type.Union(
 	[
+		Type.Literal("info"),
+		Type.Literal("network"),
+		Type.Literal("volume"),
 		Type.Literal("battery"),
 		Type.Literal("torch"),
 		Type.Literal("location"),
 		Type.Literal("sensors"),
 		Type.Literal("sensor"),
 	],
-	{ description: "battery · torch · location · sensors · sensor" },
+	{ description: "info · network · volume · battery · torch · location · sensors · sensor" },
 );
 
 /** One `steps` entry: the same parameters as the action it names. */
@@ -423,13 +428,22 @@ const StepSpec = Type.Object({
 		{ description: "step action" },
 	),
 	text: Type.Optional(Type.String({ description: "match or input text" })),
+	targetText: Type.Optional(Type.String({ description: "type: selector text of input field" })),
+	desc: Type.Optional(Type.String({ description: "contentDesc part" })),
 	index: Type.Optional(Type.Number({ description: "node index" })),
 	resourceId: Type.Optional(Type.String({ description: "view id part" })),
 	anchor: Type.Optional(Type.String({ description: "nearby anchor text" })),
 	occurrence: Type.Optional(Type.Number({ description: "1-based match index" })),
+	longPress: Type.Optional(Type.Boolean({ description: "tap: long press" })),
 	x: Type.Optional(Type.Number({ description: "x px" })),
 	y: Type.Optional(Type.Number({ description: "y px" })),
+	x1: Type.Optional(Type.Number({ description: "swipe start x" })),
+	y1: Type.Optional(Type.Number({ description: "swipe start y" })),
+	x2: Type.Optional(Type.Number({ description: "swipe end x" })),
+	y2: Type.Optional(Type.Number({ description: "swipe end y" })),
+	durationMs: Type.Optional(Type.Number({ description: "swipe duration ms" })),
 	key: Type.Optional(Type.String({ description: "key name" })),
+	repeat: Type.Optional(Type.Number({ description: "key repeat count" })),
 	direction: Type.Optional(StringEnum(["forward", "backward"] as const, { description: "scroll dir" })),
 	submit: Type.Optional(Type.Boolean({ description: "submit after type" })),
 	waitMs: Type.Optional(Type.Number({ description: "timeout ms" })),
@@ -644,6 +658,7 @@ interface ScreenParams {
 	x?: number;
 	y?: number;
 	text?: string;
+	targetText?: string;
 	desc?: string;
 	resourceId?: string;
 	anchor?: string;
@@ -768,7 +783,7 @@ async function screenType(p: ScreenParams, params: Record<string, unknown>): Pro
 		text: p.text,
 		index: p.index,
 		submit: p.submit === true,
-		...selectorBody({ desc: p.desc, resourceId: p.resourceId }),
+		...selectorBody({ text: p.targetText, desc: p.desc, resourceId: p.resourceId }),
 	});
 	const line =
 		`[type] 已写入 ${data.chars} 个字符${data.submitted ? "，并已提交" : ""}` +
@@ -837,11 +852,11 @@ async function screenKey(p: ScreenParams, params: Record<string, unknown>): Prom
 	);
 }
 
-async function screenWait(p: ScreenParams, params: Record<string, unknown>): Promise<ToolOutcome> {
-	if (!hasSelector(p) && typeof p.index !== "number") {
+async function screenWait(p: ScreenParams, _params: Record<string, unknown>): Promise<ToolOutcome> {
+	if (!hasSelector(p)) {
 		throw new Error(
 			'[BAD_PARAM] android_screen 的 action="wait" 需要 text、desc 或 resourceId 之一。' +
-				"\n提示：wait 只认选择器，不认坐标。",
+				"\n提示：wait 只认选择器（text/desc/resourceId），不认编号或坐标。",
 		);
 	}
 	const data = await bridgePost<{
@@ -1047,7 +1062,7 @@ async function appAction(params: Record<string, unknown>): Promise<ToolOutcome> 
 				throw new Error(
 					'[DISABLED] android_app 的 action="stop" 属于无障碍组，它现在没有开：' +
 						"结束应用走的是无障碍通道，不是基础组。" +
-						"\n提示：让用户在「设置 → 设备能力」打开「屏幕」那一组后重试；不要换工具绕过。",
+						"\n提示：让用户在「设置 → 设备能力」打开「屏幕自动化」并启用无障碍服务后重试；不要换工具绕过。",
 				);
 			}
 			const data = await bridgePost<{ packageName: string; mode: string; note?: string }>("/app/apps/stop", {
@@ -1061,8 +1076,6 @@ async function appAction(params: Record<string, unknown>): Promise<ToolOutcome> 
 		throw badParam("android_app", "action", [...APP_ACTIONS], p.action);
 	});
 }
-
-// -------------------------------------------------------------------- 文件 ----
 
 // ------------------------------------------------------------------ Shell ----
 
@@ -1081,8 +1094,6 @@ async function shellRun(params: Record<string, unknown>): Promise<ToolOutcome> {
 		if (data.stdout.trim().length > 0) parts.push(data.stdout.trimEnd());
 		if (data.stderr.trim().length > 0) parts.push(`[stderr]\n${data.stderr.trimEnd()}`);
 		parts.push(`[退出码 ${data.exitCode}${data.timedOut ? "，超时被杀" : ""}]`);
-		// 不写这一行，50 KiB 的上限对模型就是不可见的：被截断的 stdout 会看起来像
-		// 完整输出，而「截断的 stdout」和「截断的 stderr」意思完全不同（少了结果 vs 少了原因）。
 		const clipped = [data.stdoutTruncated ? "stdout" : "", data.stderrTruncated ? "stderr" : ""].filter(
 			(name) => name.length > 0,
 		);
@@ -1093,10 +1104,7 @@ async function shellRun(params: Record<string, unknown>): Promise<ToolOutcome> {
 		}
 		parts.push(`[后端 ${data.backendLabel}，uid=${data.uid}]`);
 		parts.push(data.note);
-		if (data.policy) parts.push(data.policy);
 		const text = truncateForModel(parts.join("\n"), "Shell 输出", "tail");
-		// pi 的失败口径（`core/tools/bash.ts:368-373`）：超时 / 无退出码 / 非零退出都是
-		// 错误，用 throw 表达；正文里保留 pi 的原句，App 的退出码解析因此仍然成立。
 		const failure = shellFailureStatus(data);
 		if (failure !== null) throw new Error(`${text}\n\n${failure}`);
 		return textResult(text, { exitCode: data.exitCode, backend: data.backend, uid: data.uid });
@@ -1117,6 +1125,7 @@ interface CommParams {
 	rate?: number;
 	long?: boolean;
 	limit?: number;
+	since?: number;
 }
 
 async function commAction(params: Record<string, unknown>): Promise<ToolOutcome> {
@@ -1211,16 +1220,46 @@ async function commAction(params: Record<string, unknown>): Promise<ToolOutcome>
 				if (entries === null) return textResult(head.join("\n"), recent);
 				return textResult(
 					`${head.join("\n")}\n\n${listText("最近通知", entries, (entry) => {
-						const body = typeof entry.text === "string" && entry.text.length > 0 ? `：${entry.text}` : "";
+						const rawText = typeof entry.text === "string" ? entry.text : "";
+						const rawBig = typeof entry.bigText === "string" ? entry.bigText : "";
+						const bestBody = rawBig.length > rawText.length ? rawBig : rawText;
+						const body = bestBody.length > 0 ? `：${bestBody}` : "";
 						const flags = [
 							entry.replyable === true ? "可回复" : "",
 							entry.isOngoing === true ? "常驻" : "",
 							entry.isClearable === false ? "不可撤销" : "",
+							entry.removed === true ? "已移除" : "",
 						].filter((flag) => flag.length > 0);
 						return `- [${show(entry.key)}] ${show(entry.packageName)}｜${show(entry.title)}${body}` +
 							`${flags.length > 0 ? `（${flags.join("、")}）` : ""}`;
 					})}`,
 					recent,
+				);
+			}
+			case "events": {
+				const data = await bridgeGet<
+					ActionPayload & {
+						count?: number;
+						cursor?: number;
+						events?: Array<Record<string, unknown>>;
+					}
+				>("/app/notify/events", {
+					since: p.since,
+					limit: p.limit,
+				});
+				const entries = Array.isArray(data.events) ? data.events : [];
+				const body = listText("通知事件流", entries, (ev) => {
+					const rawText = typeof ev.text === "string" ? ev.text : "";
+					const rawBig = typeof ev.bigText === "string" ? ev.bigText : "";
+					const best = rawBig.length > rawText.length ? rawBig : rawText;
+					const msg = best.length > 0 ? `：${best}` : "";
+					const pkg = typeof ev.packageName === "string" && ev.packageName.length > 0 ? ` ${ev.packageName}` : "";
+					const title = typeof ev.title === "string" && ev.title.length > 0 ? `｜${ev.title}` : "";
+					return `- #${show(ev.seq)} [${show(ev.type)}]${pkg}${title}${msg}${ev.detail ? `（${ev.detail}）` : ""}`;
+				});
+				return textResult(
+					truncateForModel(`${body}\n\n最新游标 cursor=${show(data.cursor)}（下次传 since=${show(data.cursor)} 只取增量）`, "通知事件"),
+					{ count: entries.length, cursor: data.cursor },
 				);
 			}
 			case "reply": {
@@ -1266,6 +1305,9 @@ interface DeviceParams {
 	typeName?: string;
 	type?: number;
 	timeoutMs?: number;
+	stream?: string;
+	level?: number;
+	percent?: number;
 }
 
 async function deviceAction(params: Record<string, unknown>): Promise<ToolOutcome> {
@@ -1273,6 +1315,94 @@ async function deviceAction(params: Record<string, unknown>): Promise<ToolOutcom
 		const p = params as DeviceParams;
 		const action = typeof p.action === "string" ? p.action : "";
 		switch (action) {
+			case "info": {
+				const data = await bridgeGet<{
+					manufacturer: string;
+					brand: string;
+					model: string;
+					device: string;
+					androidRelease: string;
+					sdkInt: number;
+					abis: string[];
+					screenWidthPx: number;
+					screenHeightPx: number;
+					densityDpi: number;
+					ramAvailableBytes: number;
+					ramTotalBytes: number;
+					lowMemory: boolean;
+					storageAvailableBytes: number;
+					storageTotalBytes: number;
+					locale: string;
+					timezone: string;
+				}>("/app/device/info");
+				const lines = [
+					`机型：${data.manufacturer} ${data.model}（${data.brand}/${data.device}）`,
+					`系统：Android ${data.androidRelease}（SDK ${data.sdkInt}）· ABI ${(data.abis ?? []).join(", ")}`,
+					`屏幕：${data.screenWidthPx}×${data.screenHeightPx}（${data.densityDpi} dpi）`,
+					`内存：可用 ${formatSize(data.ramAvailableBytes)} / 共 ${formatSize(data.ramTotalBytes)}${data.lowMemory ? "（低内存）" : ""}`,
+					`存储：可用 ${formatSize(data.storageAvailableBytes)} / 共 ${formatSize(data.storageTotalBytes)}`,
+					`区域：${data.locale} · 时区 ${data.timezone}`,
+				];
+				return textResult(lines.join("\n"), data as unknown as Record<string, unknown>);
+			}
+			case "network": {
+				const data = await bridgeGet<{
+					connected: boolean;
+					validated: boolean;
+					metered: boolean;
+					transports: string[];
+					localIpv4: string | null;
+				}>("/app/network");
+				const transports = Array.isArray(data.transports) && data.transports.length > 0
+					? data.transports.join(" + ")
+					: "无";
+				const status = data.connected ? (data.validated ? "已联网（已验证）" : "已连接（未验证公网）") : "离线";
+				const lines = [
+					`网络：${status} · 通道 ${transports} · ${data.metered ? "计费网络" : "非计费"}`,
+					`本机 IPv4：${data.localIpv4 ?? "无"}`,
+				];
+				return textResult(lines.join("\n"), data as unknown as Record<string, unknown>);
+			}
+			case "volume": {
+				const hasWrite = typeof p.level === "number" || typeof p.percent === "number";
+				if (hasWrite) {
+					const data = await bridgePost<{
+						stream: string;
+						level: number;
+						max: number;
+						percent: number;
+						ringerMode: string;
+						updated?: boolean;
+					}>("/app/volume", {
+						stream: p.stream,
+						level: p.level,
+						percent: p.percent,
+					});
+					return textResult(
+						`已将 ${data.stream} 音量调至 ${data.level}/${data.max}（${data.percent}%，响铃模式 ${data.ringerMode}）`,
+						data as unknown as Record<string, unknown>,
+					);
+				}
+				const data = await bridgeGet<{
+					ringerMode: string;
+					stream?: string;
+					level?: number;
+					max?: number;
+					percent?: number;
+					streams?: Array<{ stream: string; level: number; max: number; percent: number }>;
+				}>("/app/volume", { stream: p.stream });
+				if (Array.isArray(data.streams)) {
+					const lines = data.streams.map((s) => `- ${s.stream}: ${s.level}/${s.max} (${s.percent}%)`);
+					return textResult(
+						`响铃模式：${data.ringerMode}\n${lines.join("\n")}`,
+						data as unknown as Record<string, unknown>,
+					);
+				}
+				return textResult(
+					`${data.stream ?? p.stream ?? "volume"}：${data.level}/${data.max}（${data.percent}%，响铃模式 ${data.ringerMode}）`,
+					data as unknown as Record<string, unknown>,
+				);
+			}
 			case "battery": {
 				const data = await bridgeGet<{ percent: number; status: string; plugged: boolean; temperatureC: number }>(
 					"/app/battery",
@@ -1352,7 +1482,6 @@ async function statusBridge(): Promise<ToolOutcome> {
 		const lines: string[] = [];
 		lines.push(`设备桥：运行中（127.0.0.1:${health.port}，协议 v${health.version}）`);
 		lines.push(`设备：Android ${health.androidRelease}（SDK ${health.sdkInt}）`);
-		// 模型最需要的上下文就是「我接下来要动的是哪个应用」，所以先报前台。
 		lines.push(
 			health.foreground
 				? `前台：${health.foreground.packageName ?? "未知"}${health.foreground.class ? `/${health.foreground.class}` : ""}`
@@ -1370,10 +1499,19 @@ async function statusBridge(): Promise<ToolOutcome> {
 							: "未运行"
 			}（系统设置中${health.accessibilityEnabledInSettings ? "已启用" : "未启用"}）`,
 		);
+		if (health.notificationListenerState) {
+			const nl = health.notificationListenerState === "connected"
+				? "已连接"
+				: health.notificationListenerState === "enabled_not_connected"
+					? "已授权，正在绑定"
+					: "未开启";
+			lines.push(`通知监听：${nl}`);
+		}
 		lines.push(`截图：${health.screenshotSupported ? "支持" : "不支持（需要 Android 11+）"}`);
 		lines.push(
 			`系统权限：定位${health.locationPermissionGranted ? "已授予" : "未授予"} · ` +
 				`通知${health.notificationPermissionGranted ? "已授予" : "未授予"} · ` +
+				`相机(手电筒)${health.cameraPermissionGranted ? "已授予" : "未授予"} · ` +
 				`震动${health.vibratePermissionGranted ? "已授予" : "未授予"}`,
 		);
 		const groups = health.capabilities.map((capability) => {
@@ -1389,27 +1527,12 @@ async function statusBridge(): Promise<ToolOutcome> {
 		lines.push(`能力：${groups.join(" · ")}`);
 		const shizuku = health.shizuku;
 		if (shizuku) {
-			// 身份，而不只是标签：「已就绪（ADB 身份，uid=2000）」才是模型判断
-			// pm / input / screencap 能不能用的依据。
 			const identity = shizuku.ready
 				? shizuku.uid === 0
 					? "已就绪（root，uid=0）"
 					: `已就绪（ADB 身份，uid=${shizuku.uid}）`
 				: "未就绪";
 			lines.push(`Shell：${identity} —— ${shizuku.note}`);
-		}
-		const saf = health.saf;
-		if (saf) {
-			lines.push(
-				saf.count > 0
-					? `已授权（SAF）目录：${saf.roots.join("、")}`
-					: "已授权（SAF）目录：无 —— 需要用户在「设置 → 设备能力 → 存储」授权",
-			);
-		}
-		const gate = health.gate;
-		if (gate?.reported) {
-			const grants = gate.sessionGrants ?? [];
-			lines.push(`本会话已记住的危险操作：${grants.length > 0 ? grants.join("、") : "无（每次都会问）"}`);
 		}
 		return textResult(lines.join("\n"), {
 			connected: true,
@@ -1423,7 +1546,7 @@ async function statusBridge(): Promise<ToolOutcome> {
 
 interface DeviceToolSpec {
 	name: string;
-	/** 这个工具属于哪一组能力；`null` 表示不依赖任何一组（只有 `android_status`），永远注册。 */
+	/** 这个工具属于哪一组能力；`null` 表示不依赖任何一组（只有 `android_status`），只要有任意一组可用即激活。 */
 	capability: DeviceCapabilityId | null;
 	label: string;
 	description: string;
@@ -1438,8 +1561,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_status",
 		capability: null,
 		label: "设备状态",
-		description: "Bridge status: capability groups, app, shell uid, SAF.",
-		promptSnippet: "Bridge status",
+		description: "Phone bridge status: enabled capability groups, foreground app, permissions, and shell identity.",
+		promptSnippet: "Inspect phone bridge status, foreground app, permissions & Shizuku shell identity",
 		parameters: Type.Object({}),
 		run: () => statusBridge(),
 	},
@@ -1447,18 +1570,23 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_screen",
 		capability: "accessibility",
 		label: "屏幕",
-		description: "Phone UI: look, tap, type, swipe, key, wait, idle, shot(marks), steps.",
-		promptSnippet: "Phone screen UI automation",
+		description: "Phone UI automation: look, tap, type, swipe, key, wait, idle, shot(marks), steps(<=8).",
+		promptSnippet: "Read and automate the phone UI (look, tap, type, swipe, key, wait, idle, shot, steps)",
+		promptGuidelines: [
+			"For phone UI automation, follow look -> act (tap/type/swipe/key returns a UI diff) -> if unchanged, look again or use shot(marks=true).",
+			"Prefer node index, resourceId, or anchor over raw pixel coordinates; batch predictable flows with action=\"steps\" (max 8).",
+		],
 		parameters: Type.Object({
 			action: ScreenAction,
 			steps: Type.Optional(Type.Array(StepSpec, { description: "batch <=8 steps" })),
 			filter: Type.Optional(Type.String({ description: "look: filter text" })),
 			diff: Type.Optional(Type.Boolean({ description: "look: diff only" })),
 			maxNodes: Type.Optional(Type.Number({ description: "look: node cap" })),
-			index: Type.Optional(Type.Number({ description: "node index" })),
-			x: Type.Optional(Type.Number({ description: "x px" })),
-			y: Type.Optional(Type.Number({ description: "y px" })),
-			text: Type.Optional(Type.String({ description: "match or type text" })),
+			index: Type.Optional(Type.Number({ description: "node index from look or shot(marks=true)" })),
+			x: Type.Optional(Type.Number({ description: "x px (display space)" })),
+			y: Type.Optional(Type.Number({ description: "y px (display space)" })),
+			text: Type.Optional(Type.String({ description: "tap/wait: match text; type: text to input" })),
+			targetText: Type.Optional(Type.String({ description: "type: match input field by hint/current text" })),
 			desc: Type.Optional(Type.String({ description: "contentDesc part" })),
 			resourceId: Type.Optional(Type.String({ description: "view id part" })),
 			anchor: Type.Optional(Type.String({ description: "tap: nearby anchor text" })),
@@ -1471,7 +1599,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 			y2: Type.Optional(Type.Number()),
 			durationMs: Type.Optional(Type.Number()),
 			submit: Type.Optional(Type.Boolean({ description: "type: submit" })),
-			key: Type.Optional(Type.String({ description: "back/home/recents/lock or KEYCODE_*" })),
+			key: Type.Optional(Type.String({ description: "back/home/recents/lock/screenshot or KEYCODE_*" })),
 			repeat: Type.Optional(Type.Number()),
 			waitMs: Type.Optional(Type.Number()),
 			gone: Type.Optional(Type.Boolean()),
@@ -1486,9 +1614,9 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_app",
 		capability: "basic",
 		label: "应用",
-		description: "App: list, launch, stop.",
-		promptSnippet: "App list/launch/stop",
-		promptGuidelines: ["stop kills the app's background process; unsaved work may be lost."],
+		description: "Android apps: list, launch, stop.",
+		promptSnippet: "List, launch, or stop Android apps",
+		promptGuidelines: ["android_app(action=\"stop\") kills background processes of a user app; unsaved state may be lost."],
 		parameters: Type.Object({
 			action: AppAction,
 			package: Type.Optional(Type.String({ description: "exact package, e.g. org.telegram.messenger" })),
@@ -1502,10 +1630,11 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_shell",
 		capability: "shell",
 		label: "设备 Shell",
-		description: "Device shell: any command, guarded by device policy.",
-		promptSnippet: "Device shell",
+		description: "Android host /system/bin/sh command (Shizuku uid=2000/root when authorized, else app uid).",
+		promptSnippet: "Run Android host shell commands (pm/am/settings/dumpsys via Shizuku, or app uid)",
 		promptGuidelines: [
-			"Shell is guarded by device policy: irreversible commands ask for confirmation.",
+			"Use standard bash for Linux guest work (git, npm, files, ~/projects, /sdcard); use android_shell only for Android host commands.",
+			"Ask the user to confirm before running destructive android_shell commands (pm uninstall/clear, rm -rf, dd, reboot).",
 		],
 		parameters: Type.Object({
 			command: Type.String({ description: "one command; split several actions into calls" }),
@@ -1517,8 +1646,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_comm",
 		capability: "basic",
 		label: "对外动作",
-		description: "Comms: clipboard, notify/toast/tts, share, open, inbox.",
-		promptSnippet: "Comms & clipboard",
+		description: "Comms: clipboard, notify/toast/tts/vibrate, share, open URL/intent, inbox/events/reply/dismiss/snooze.",
+		promptSnippet: "Clipboard, notifications (post/read/reply/events), toast, TTS, vibrate, share & open URLs",
 		parameters: Type.Object({
 			action: CommAction,
 			text: Type.Optional(Type.String({ description: "body; clipboard reads when omitted" })),
@@ -1530,19 +1659,23 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 			language: Type.Optional(Type.String({ description: "tts: BCP-47, e.g. zh-CN" })),
 			rate: Type.Optional(Type.Number({ description: "tts: rate 0.1-3.0" })),
 			long: Type.Optional(Type.Boolean({ description: "toast: long duration" })),
-			limit: Type.Optional(Type.Number({ description: "inbox: rows, default 20" })),
+			limit: Type.Optional(Type.Number({ description: "inbox/events: row cap" })),
+			since: Type.Optional(Type.Number({ description: "events: cursor from previous events call" })),
 		}),
 		run: (params) => commAction(params),
 	},
 	{
 		name: "android_device",
 		capability: "basic",
-		label: "设备读数",
-		description: "Device: battery, torch, location, sensors, sensor.",
-		promptSnippet: "Device readings",
+		label: "设备信息与硬件",
+		description: "Device hardware & state: info, network, volume, battery, torch, location, sensors, sensor.",
+		promptSnippet: "Read/control phone hardware & state (info, network, volume, battery, torch, location, sensors)",
 		parameters: Type.Object({
 			action: DeviceAction,
 			on: Type.Optional(Type.Boolean({ description: "torch: true on, false off" })),
+			stream: Type.Optional(StringEnum(["music", "ring", "notification", "alarm", "voice"] as const, { description: "volume: audio stream" })),
+			level: Type.Optional(Type.Number({ description: "volume: target integer level (0..max)" })),
+			percent: Type.Optional(Type.Number({ description: "volume: target percentage (0..100)" })),
 			typeName: Type.Optional(Type.String({ description: "sensor: type name, e.g. accelerometer" })),
 			type: Type.Optional(Type.Number({ description: "sensor: Android Sensor.TYPE_*" })),
 			timeoutMs: Type.Optional(Type.Number({ description: "sensor: sample timeout ms, default 1500" })),
@@ -1552,180 +1685,50 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// environment documentation (the app's equivalent of pi's Termux AGENTS.md)
+// Compact dynamic prompt section (zero generated skill files, zero overhead when off)
 // ---------------------------------------------------------------------------
 
-const SKILL_NAME = "pi-android-device";
-
 /**
- * 技能正文：`SKILL.md` 是路标（frontmatter + 一份索引 + 四句话的套路），细节按主题拆在
- * `references/*.md` 里；附件不进每轮提示词，进去的只有 frontmatter 的 name/description。
- *
- * **按开启的能力组裁剪**，因为技能是写给「这一轮真的存在的工具」看的：
- * 只开 `basic` 时 `references/ui.md` 根本不写、索引里也没有屏幕那一行；`shell` 段同理。
- * 模型因此不会读到一套它调不到的工具（那正是 v1 里「说明文字太多」的一半来源：
- * 技能在讲工具，而工具有没有注册是另一回事）。
- *
- * 键是相对技能目录（`<agentDir>/skills/<SKILL_NAME>/`）的路径，因为文件由下面
- * `resources_discover` 写到磁盘上。
+ * Remove any legacy `<agentDir>/skills/pi-android-device` directory left by older builds.
+ * Device tool guidance now lives cleanly inside each tool's native `promptSnippet` /
+ * `promptGuidelines` and the dynamic `phone_bridge` system prompt section — no synthetic
+ * skill file is ever created or registered.
  */
-function skillFiles(usable: ReadonlySet<string>): Record<string, string> {
-	const accessibility = usable.has("accessibility");
-	const shell = usable.has("shell");
-	const basic = usable.has("basic");
-
-	const rows: string[] = [];
-	if (accessibility) rows.push("| screen: read, tap, type, swipe, key, shot | about to touch the UI | `references/ui.md` |");
-	rows.push("| paths, identity, boundary | unsure where a file lives, or running a device command | `references/env.md` |");
-
-	const bullets: string[] = [];
-	if (accessibility) {
-		bullets.push(
-			"- `[n]` in `look` output is the `index` for `tap` / `type`; use coordinates only without it.",
-			"- The second line of an action result is the verdict: act on it before trying anything else.",
-			"- Several actions at once: `action=\"steps\"` (max 8, stops at the first error and says which).",
-		);
+async function cleanupLegacySkillDir(): Promise<void> {
+	try {
+		const { rm } = await import("node:fs/promises");
+		const { join } = await import("node:path");
+		const home = process.env.HOME && process.env.HOME.trim().length > 0 ? process.env.HOME.trim() : "/root";
+		const agentDir = process.env.PI_CODING_AGENT_DIR && process.env.PI_CODING_AGENT_DIR.trim().length > 0
+			? process.env.PI_CODING_AGENT_DIR.trim()
+			: join(home, ".pi", "agent");
+		await rm(join(agentDir, "skills", "pi-android-device"), { recursive: true, force: true });
+	} catch {
+		// best effort
 	}
-	if (basic) {
-		bullets.push(
-			"- Apps, notifications, clipboard, vibration, share, links: `android_app` & `android_comm`; battery, torch, location, sensors: `android_device`.",
-		);
-	}
-	if (shell) {
-		bullets.push("- Device commands: `android_shell` — the identity decides what works (`references/env.md`).");
-	}
-
-	const skill = `---
-name: ${SKILL_NAME}
-description: "How to drive this phone with the android_* tools. Read before acting on it."
----
-
-# pi-android device environment
-
-pi runs in proot Ubuntu; the \`android_*\` tools drive this phone.
-A capability group that is off has **no tools at all**: the tool is absent, the call is not refused.
-
-Loop: \`look\` → act (the result carries the diff) → nothing changed? look again.
-
-| topic | read it when | file |
-|---|---|---|
-${rows.join("\n")}
-
-${bullets.join("\n")}
-`;
-
-	const ui = `# Screen (android_screen)
-
-One action per call; a missing parameter is reported by name.
-
-| action | parameters | notes |
-|---|---|---|
-| look | filter, maxNodes | one screen as \`[n] class "text" clickable @[x,y][x,y]\` |
-| tap | index, or x+y, or text/desc/resourceId, longPress | index first; it goes stale when the screen changes |
-| type | text, index or desc/resourceId, submit | focused field, or the given index |
-| swipe | direction + index/text, or x1/y1/x2/y2 | direction scrolls a list; coordinates for canvases |
-| key | key, repeat | back/home/recents/lock/screenshot…; raw keys need Shizuku |
-| wait | text or resourceId, waitMs, gone | waits for a node; gone=true waits for it to disappear |
-| shot | format, region, maxDimension | screenshot; enlarge or crop when text is unreadable |
-
-## The diff attached to every action
-
-\`tap\` / \`type\` / \`swipe\` / \`key\` fetch \`/app/ui/diff\` right after acting, so the same result
-carries the verdict:
-
-- \`界面变了：…\` → \`changed: true\`: the nodes that appeared, disappeared or changed; continue.
-- \`界面没变，可能没点中\` → \`changed: false\`: \`look\` again and pick another index, or pass
-  text/resourceId. Do not repeat the identical call.
-- \`还没有上一屏可对比\` → \`changed: null\`: no baseline yet; \`look\` once and the next action can
-  be compared.
-
-## Pitfalls
-
-- NOT_FOUND: the index is stale (look again) or the text does not match (use resourceId).
-- DISABLED / NO_PERMISSION: that group is off — read \`android_status\`, tell the user, do not retry.
-- \`已按上限截断\`: narrow the read with filter / maxNodes instead of asking for more.
-- Password fields: the tree cannot read them; \`type\` writes but nothing reads back.
-`;
-
-	const shellSection = shell
-		? `
-## Shell identity
-
-\`android_shell\` has two backends: Shizuku (uid 2000) and the app's own uid.
-
-- \`uid=2000\`: \`pm\`, \`settings\`, \`am\`, \`input\`, \`dumpsys\`, \`screencap\` all work.
-- app uid: those commands fail with SecurityException — the command is not wrong.
-- \`/data/data/<pkg>\` needs root; neither backend reaches it.
-
-Irreversible commands (\`dd\`, \`mkfs\`, \`/dev/block\`, \`pm clear\`, \`pm uninstall\`) ask first.
-When the user declines, stop — do not route around it.
-`
-		: "";
-
-	const env = `# Paths, identity, boundary
-
-| path | what it is |
-|---|---|
-| ~/projects | sandbox projects inside Linux rootfs (fast local ext4/f2fs; default \`~/projects/default\`) |
-| /sdcard | shared phone storage (\`/storage/emulated/0\`, directly accessible via \`read\`/\`write\`/\`bash\`) |
-| ~/.pi/agent | pi's agent dir (\`settings.json\`, \`auth.json\`, \`sessions/\`, \`skills/\`, \`extensions/\`) |
-
-- Guest work (git, npm, builds, local files) uses pi's standard \`read\`/\`write\`/\`bash\`, never \`android_shell\`.
-${shellSection}`;
-
-	const files: Record<string, string> = { "SKILL.md": skill, "references/env.md": env };
-	if (accessibility) files["references/ui.md"] = ui;
-	return files;
 }
 
 /**
- * v1 写过、v2 不再有的附件：能力组一换，它们就必须从磁盘上消失。
- *
- * 列在这里而不是只靠「不写」，是因为 pi 只按目录扫盘 —— 索引里没写不等于文件不在，
- * 留着它模型读到的就是一份没人维护的旧说明。
+ * Tailored strictly to the currently usable capability groups and injected into
+ * Pi SDK 1.6.1's structured `event.systemPromptOptions.sections["phone_bridge"]`
+ * ONLY when at least one group is active (0 tokens when all groups are disabled).
  */
-const STALE_SKILL_FILES = [
-	"references/tools.md",
-	"references/paths.md",
-	"references/shell.md",
-	"references/elevate.md",
-	"references/pitfalls.md",
-	"references/ui.md",
-];
-
-/**
- * 技能被写到磁盘上的哪个目录。
- *
- * 用 `PI_CODING_AGENT_DIR`（App 侧 `PiRuntime.agentDir` 就是 `<rootfs>/root/.pi/agent`），
- * **不涉及工作区** —— 换工作区不影响这个路径，也不需要为工作区准备第二份。
- *
- * 写（`resources_discover`）和删（能力全关时的清理）两边共用它，免得各算一遍算歪。
- */
-async function skillDirectory(): Promise<string> {
-	const { join } = await import("node:path");
-	const home = process.env.HOME && process.env.HOME.trim().length > 0 ? process.env.HOME.trim() : "/root";
-	const agentDir = process.env.PI_CODING_AGENT_DIR && process.env.PI_CODING_AGENT_DIR.trim().length > 0
-		? process.env.PI_CODING_AGENT_DIR.trim()
-		: join(home, ".pi", "agent");
-	return join(agentDir, "skills", SKILL_NAME);
-}
-
-/**
- * The system-prompt block appended for every turn — **only while something is usable**.
- *
- * 这里只留“这台手机有 android_* 工具”这一句。另外三条（/workspace 与 /sdcard 的快慢、
- * uid 2000 怎么拿、危险动作会确认）都是 skill 附件里写得更详细的内容（
- * references/elevate.md 整整一篇讲无线调试，比这里一句话详细十倍）—— 常驻段重复它们
- * 只是在每轮里白占位置。
- *
- * 全关时不注入：那由 [hasDeclaredDeviceTools] 决定，见 before_agent_start 那个钩子。
- */
-function environmentGuidance(): string {
-	return [
-		"",
-		"## Phone bridge (pi-android)",
-		"Active `android_*` tools control this phone. Screen loop: `look` → act (result carries UI diff); use `shot(marks=true)` when the tree is sparse. Read skill `pi-android-device` if needed.",
-	].join("\n");
+function environmentGuidance(usable: ReadonlySet<string>): string {
+	const lines: string[] = [
+		"This session runs inside Linux on an Android phone (`~/projects` = fast local projects, `/sdcard` = shared phone storage, `~/.pi/agent` = Pi config).",
+		"Active `android_*` tools control the Android host directly; disabled groups are unmounted. Call `android_status` if a permission or service seems missing.",
+	];
+	if (usable.has("accessibility")) {
+		lines.push(
+			"Screen automation (`android_screen`): `look` -> `tap`/`type`/`swipe`/`key` (every action appends a UI diff verdict); if unchanged or sparse, `look` again or use `shot(marks=true)`.",
+		);
+	}
+	if (usable.has("shell")) {
+		lines.push(
+			"Host shell (`android_shell`): runs `/system/bin/sh` on Android (uid=2000/root via Shizuku, else app sandbox). Keep Linux dev tasks in `bash`.",
+		);
+	}
+	return lines.join("\n");
 }
 
 const ALL_DEVICE_TOOL_NAMES = new Set(DEVICE_TOOLS.map((tool) => tool.name));
@@ -1742,23 +1745,14 @@ async function usableCapabilities(): Promise<ReadonlySet<string> | null> {
 /**
  * 零上下文占用硬约束：
  * - 当没有任何设备能力可用（全关或桥未连接）时，**包括 `android_status` 在内所有工具全部停用**，
- *   不注入任何系统提示词、并清理磁盘技能目录 → 上下文占用严格为 0 token；
+ *   不注入任何系统提示词段 → 上下文占用严格为 0 token；
  * - 只要至少开启 1 组可用能力，才激活对应能力组的工具与 `android_status`，并在每轮 `before_agent_start`
- *   通过 `pi.setActiveTools()` 实时热同步，无需重启引擎或新开会话。
+ *   通过 `pi.setActiveTools()` + 官方结构化 `systemPromptOptions.sections["phone_bridge"]` 实时热同步。
  */
 function shouldActivate(spec: DeviceToolSpec, usable: ReadonlySet<string> | null): boolean {
 	if (usable === null || usable.size === 0) return false;
 	if (spec.capability === null) return true;
 	return usable.has(spec.capability);
-}
-
-async function removeSkillDirSafe(): Promise<void> {
-	try {
-		const { rm } = await import("node:fs/promises");
-		await rm(await skillDirectory(), { recursive: true, force: true });
-	} catch {
-		// best effort
-	}
 }
 
 function syncActiveDeviceTools(pi: ExtensionAPI, usable: ReadonlySet<string> | null): boolean {
@@ -1789,12 +1783,10 @@ export default async function (pi: ExtensionAPI) {
 	// undici warm-up on boot). Falls back to /app/health only if the field is absent.
 	const snapshotUsable = await loadInitialUsableCapabilities();
 	const initialUsable = snapshotUsable === undefined ? await usableCapabilities() : snapshotUsable;
-	const initialUsableAt = Date.now();
 	usableGroups = initialUsable ?? new Set<string>();
 
-	if (initialUsable === null || initialUsable.size === 0) {
-		await removeSkillDirSafe();
-	}
+	// Sweep any legacy auto-generated pi-android-device skill folder asynchronously.
+	void cleanupLegacySkillDir();
 
 	for (const tool of DEVICE_TOOLS) {
 		pi.registerTool({
@@ -1818,61 +1810,31 @@ export default async function (pi: ExtensionAPI) {
 		});
 	}
 
-	// 每轮发送前实时探测 `/app/health` 并热同步活跃设备工具：
-	// 关闭全部设备能力时，所有 `android_*` 工具（含 `android_status`）立刻移出活跃工具表，
-	// 不注入任何系统提示词并清理技能目录 —— 严格 0 Token 上下文占用，且无需重启引擎。
+	// 每轮发送前实时探测 `/app/health` 并热同步活跃设备工具与结构化提示词段：
+	// - 使用 Pi SDK 1.6.1 原生 `event.systemPromptOptions.sections["phone_bridge"]`，绝不返回
+	//   `{ systemPrompt }`（避免触发 `forceSystemPrompt` 破坏结构化提示词 diff 与缓存、或冻结旧工具列表）；
+	// - 关闭全部设备能力时，所有 `android_*` 工具立刻移出活跃表并移除 `phone_bridge` 段 → 严格 0 Token 占用。
 	pi.on("before_agent_start", async (event) => {
 		const liveUsable = await usableCapabilities();
 		const hasActive = syncActiveDeviceTools(pi, liveUsable);
-		if (!hasActive) {
-			void removeSkillDirSafe();
+		const sections = (event as { systemPromptOptions?: { sections?: Record<string, string> } }).systemPromptOptions?.sections;
+		if (!hasActive || liveUsable === null) {
+			if (sections && "phone_bridge" in sections) {
+				delete sections.phone_bridge;
+			}
 			return undefined;
 		}
+		if (sections) {
+			sections.phone_bridge = environmentGuidance(liveUsable);
+			return undefined;
+		}
+		// Fallback only for mocked/legacy hosts without structured systemPromptOptions.sections
+		const guidance = environmentGuidance(liveUsable);
 		if (event.systemPrompt.includes("## Phone bridge (pi-android)")) return undefined;
-		return { systemPrompt: event.systemPrompt + environmentGuidance() };
+		return { systemPrompt: `${event.systemPrompt}\n\n## Phone bridge (pi-android)\n${guidance}` };
 	});
 
-	// Contribute the environment skill: SKILL.md plus its references/. `resources_discover`
-// can only hand back *paths*, so every file is written on the way in.
-//
-// 这里**只管写**。能力全关时那份残留在工厂里就被删掉了（那里删才赶得上扫盘，见上面的长注释）。
-// 写失败静默：技能没写出来只会让模型少一份参考，不该让扩展加载不了。
-pi.on("resources_discover", async () => {
-	try {
-		const usable = Date.now() - initialUsableAt < 3_000 ? initialUsable : await usableCapabilities();
-		if (usable === null || usable.size === 0) return {};
-		const { mkdir, rm, writeFile } = await import("node:fs/promises");
-		const { dirname, join } = await import("node:path");
-		const skillDir = await skillDirectory();
-		const files = skillFiles(usable);
-		// 上一版写过、这一版不再有的附件必须真的删掉：pi 只按目录扫盘，索引里没写不等于
-		// 文件不在 —— 留着它，模型读到的就是一份没人维护的旧说明。
-		for (const stale of STALE_SKILL_FILES) {
-			if (files[stale] !== undefined) continue;
-			await rm(join(skillDir, stale), { force: true });
-		}
-		for (const [relativePath, content] of Object.entries(files)) {
-			const target = join(skillDir, relativePath);
-			await mkdir(dirname(target), { recursive: true });
-			await writeFile(target, content, "utf8");
-		}
-		return { skillPaths: [skillDir] };
-	} catch {
-		return {};
-	}
-});
-
-	// On session start the app shows nothing at the bottom of the screen — and in RPC
-	// mode it does not even probe: device health is *persistent* state with a
-	// permanent home, and 设置 → 设备能力 shows the bridge's status, the accessibility
-	// service's state and every capability. Announcing it again at every session start
-	// was a snackbar the user had to dismiss for information that had not changed, and
-	// the probe itself was a loopback HTTP call in front of the session's first
-	// message. A genuine failure still surfaces where it happens: the `android_*` tool
-	// call reports it, with the address and the next step.
-	//
-	// TUI mode keeps the probe, because in a terminal there is no page to look at
-	// instead — it paints the same information as a footer status.
+	// TUI mode keeps a lightweight footer status probe; App SDK host shows live state in 「设置 → 设备能力」.
 	pi.on("session_start", async (_event, ctx) => {
 		if (process.env.PI_SDK_HOST === "1") return;
 		if (!ctx.hasUI || ctx.mode !== "tui") return;

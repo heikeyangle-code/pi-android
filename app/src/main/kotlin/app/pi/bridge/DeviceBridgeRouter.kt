@@ -356,6 +356,23 @@ class DeviceBridgeRouter(
                     DeviceSystemActions.torch(context, params.boolRequired("on"))
                 }
 
+                "/app/device/info" -> withCapability(DeviceCapability.Basic) {
+                    DeviceSystemActions.deviceInfo(context)
+                }
+
+                "/app/network" -> withCapability(DeviceCapability.Basic) {
+                    DeviceSystemActions.networkStatus(context)
+                }
+
+                "/app/volume" -> withCapability(DeviceCapability.Basic) {
+                    DeviceSystemActions.volume(
+                        context = context,
+                        streamName = params.str("stream"),
+                        level = if (request.method == "POST") params.intOrNull("level") else null,
+                        percent = if (request.method == "POST") params.intOrNull("percent") else null,
+                    )
+                }
+
                 "/app/export" -> withCapability(DeviceCapability.Basic) {
                     DeviceSystemActions.export(
                         context = context,
@@ -648,7 +665,9 @@ class DeviceBridgeRouter(
         put("screenshotSupported", Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
         put("locationPermissionGranted", store.hasLocationPermission())
         put("notificationPermissionGranted", store.hasNotificationPermission())
+        put("cameraPermissionGranted", store.hasCameraPermission())
         put("vibratePermissionGranted", store.hasVibratePermission())
+        put("notificationListenerState", PiNotificationListener.stateName(context))
         put("legacyStoragePermissionGranted", store.hasLegacyStoragePermission())
         DeviceWorkspace.refresh(context)
         put("workspace", JSONObject().apply {
@@ -978,6 +997,10 @@ class DeviceBridgeRouter(
             "GET  /app/sensor",
             "GET  /app/battery",
             "POST /app/torch",
+            "GET  /app/device/info",
+            "GET  /app/network",
+            "GET  /app/volume",
+            "POST /app/volume",
             "POST /app/export",
             "POST /app/import",
             "POST /app/shell",

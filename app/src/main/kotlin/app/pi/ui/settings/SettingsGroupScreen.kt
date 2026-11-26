@@ -205,6 +205,7 @@ fun SettingsGroupScreen(
                         SettingSlot(
                             setting = setting,
                             store = store,
+                            freshness = freshness,
                             valueOverrides = valueOverrides,
                             detailOverrides = detailOverrides,
                             highlighted = setting.key == highlightKey,
@@ -312,6 +313,7 @@ fun SettingsGroupScreen(
 private fun SettingSlot(
     setting: PiSetting,
     store: PiSettingsStore,
+    freshness: Int,
     valueOverrides: Map<String, String>,
     detailOverrides: Map<String, String>,
     highlighted: Boolean,
@@ -320,11 +322,17 @@ private fun SettingSlot(
     onExplain: (PiSetting) -> Unit,
 ) {
     val detail = detailOverrides[setting.key]
+    val valueText = valueOverrides[setting.key] ?: remember(store, setting.key, freshness) {
+        setting.display(setting.current(store))
+    }
+    val checked = remember(store, setting.key, freshness) {
+        setting.boolIn(store, false)
+    }
     Column {
         PiSettingRow(
             setting = setting,
-            valueText = valueOverrides[setting.key] ?: setting.display(setting.current(store)),
-            checked = setting.boolIn(store, false),
+            valueText = valueText,
+            checked = checked,
             highlighted = highlighted,
             onToggle = { next -> onToggle(setting, next) },
             onOpen = { onOpen(setting) },

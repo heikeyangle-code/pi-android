@@ -5,9 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -32,15 +30,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
 import app.pi.models.ProviderForm
+import app.pi.ui.components.PiPrimaryButton
+import app.pi.ui.components.PiSecondaryButton
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
+import app.pi.ui.settings.McpSegmentedTrack
 import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsDialog
 import app.pi.ui.settings.PiSettingsMetrics
@@ -51,7 +51,9 @@ import kotlinx.coroutines.launch
 
 /**
  * 自定义供应商（`models.json`）表单：新增、编辑，以及覆盖内置供应商。
- * 字段严格对齐 SDK provider schema：`name` `baseUrl` `api` `apiKey` `authHeader` `headers` `models[]`。
+ * 字段严格对齐 Pi 1.6.1 SDK `ProviderConfigSchema` / `ModelDefinitionSchema`：
+ * `name` `baseUrl` `api` `apiKey` `authHeader` `headers` `compat` `models[]`（含单模型 `api`/`baseUrl`/`compat`），
+ * 其余高级字段（`modelOverrides`、`oauth`、`samplingParams` 等）无损往返保留。
  */
 @Composable
 internal fun ProviderFormSheet(
@@ -70,6 +72,7 @@ internal fun ProviderFormSheet(
     var saving by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var open by remember(initial) { mutableStateOf<Int?>(if (initial.models.size == 1) 0 else null) }
+    var providerCompatOpen by remember(initial) { mutableStateOf(initial.compat.hasUiFields) }
 
     val idCheck = if (isNew) checkNewProviderId(f.id, customIds, knownIds) else IdCheck.Ok
     val overriding = if (isNew) idCheck == IdCheck.OverridesBuiltin else initial.id in knownIds
@@ -85,7 +88,7 @@ internal fun ProviderFormSheet(
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
                 .padding(top = 4.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Column(
                 modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
@@ -99,13 +102,34 @@ internal fun ProviderFormSheet(
                         else -> tr("编辑自定义供应商：${initial.id}", "Edit Provider: ${initial.id}")
                     },
                     style = PiType.title,
-                    color = palette.text,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
                     tr("写入 ~/.pi/agent/models.json 并由 Pi SDK 实时校验", "Writes to ~/.pi/agent/models.json with live Pi SDK validation"),
                     style = PiTheme.text.meta,
-                    color = palette.dim,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+
+            if (f.modelOverridesCount > 0) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = BorderStroke(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.35f)),
+                ) {
+                    Text(
+                        tr(
+                            "该配置包含 ${f.modelOverridesCount} 条内置模型覆盖（modelOverrides），保存时会完整保留；如需细改可通过「导入 / 编辑 models.json」编辑。",
+                            "Includes ${f.modelOverridesCount} modelOverrides entries preserved lossless on save; edit them in \"Import / Edit models.json\" if needed.",
+                        ),
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(12.dp),
+                    )
+                }
             }
 
             // ---- 1. 基本信息与协议 ----
@@ -129,8 +153,8 @@ internal fun ProviderFormSheet(
                             )
                             IdCheck.OverridesBuiltin -> Surface(
                                 shape = RoundedCornerShape(10.dp),
-                                color = palette.accent.copy(alpha = 0.10f),
-                                border = BorderStroke(0.5.dp, palette.accent.copy(alpha = 0.30f)),
+                                color = palette.accent.copy(alpha = 0.09f),
+                                border = BorderStroke(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.30f)),
                             ) {
                                 Text(
                                     tr(
@@ -160,7 +184,7 @@ internal fun ProviderFormSheet(
                         Text(
                             tr("接口协议（api）", "API Protocol"),
                             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                            color = palette.text.copy(alpha = 0.82f),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
                         )
                         Row(
                             modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -194,29 +218,32 @@ internal fun ProviderFormSheet(
                             placeholder = tr("直接粘贴密钥、环境变量名，或 !命令", "Paste key, env var name, or !command"),
                             secret = true,
                             labelTrailing = {
-                                Row(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(palette.accent.copy(alpha = 0.12f))
-                                        .clickable {
-                                            val pasted = clipboard.getText()?.text?.trim().orEmpty()
-                                            if (pasted.isNotEmpty()) f = f.copy(apiKey = pasted)
-                                        }
-                                        .padding(horizontal = 8.dp, vertical = 3.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                Surface(
+                                    onClick = {
+                                        val pasted = clipboard.getText()?.text?.trim().orEmpty()
+                                        if (pasted.isNotEmpty()) f = f.copy(apiKey = pasted)
+                                    },
+                                    shape = RoundedCornerShape(7.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    border = BorderStroke(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)),
                                 ) {
-                                    Icon(
-                                        Icons.Filled.ContentPaste,
-                                        contentDescription = null,
-                                        tint = palette.accent,
-                                        modifier = Modifier.size(13.dp),
-                                    )
-                                    Text(
-                                        tr("粘贴", "Paste"),
-                                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                                        color = palette.accent,
-                                    )
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.ContentPaste,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(13.dp),
+                                        )
+                                        Text(
+                                            tr("粘贴", "Paste"),
+                                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                    }
                                 }
                             },
                         ) { f = f.copy(apiKey = it) }
@@ -237,39 +264,94 @@ internal fun ProviderFormSheet(
                 }
             }
 
-            // ---- 3. 自定义模型 ----
+            // ---- 3. OpenAI 兼容参数（compat，可选折叠） ----
+            ModelsCard(accent = providerCompatOpen) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { providerCompatOpen = !providerCompatOpen }
+                            .padding(horizontal = ModelsCardPadding, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    tr("兼容参数（compat）", "Compatibility (compat)"),
+                                    style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                if (f.compat.hasUiFields || f.compat.extra.isNotEmpty()) {
+                                    TagPill(tr("已配置", "Configured"), tone = palette.accent)
+                                }
+                            }
+                            Text(
+                                tr("思考参数格式 · 最大输出字段 · developer 角色 · 推理力度（留空由 SDK 自动探测）", "Thinking format · max_tokens field · developer role · reasoning effort (blank = auto-detect)"),
+                                style = PiTheme.text.meta,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Icon(
+                            imageVector = if (providerCompatOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = null,
+                            tint = if (providerCompatOpen) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    if (providerCompatOpen) {
+                        ModelsDivider()
+                        CompatEditorFields(
+                            compat = f.compat,
+                            onChange = { f = f.copy(compat = it) },
+                            modifier = Modifier.padding(ModelsCardPadding),
+                        )
+                    }
+                }
+            }
+
+            // ---- 4. 自定义模型 ----
             ModelsSectionLabel(
                 if (overriding && f.models.isEmpty()) tr("模型（可选：沿用内置目录）", "Models (optional: inherits built-in)")
                 else tr("模型（${f.models.size}）", "Models (${f.models.size})"),
                 trailing = {
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(palette.accent.copy(alpha = 0.13f))
-                            .clickable {
-                                f = f.copy(models = f.models + ProviderForm.ModelForm())
-                                open = f.models.lastIndex
-                            }
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    Surface(
+                        onClick = {
+                            f = f.copy(models = f.models + ProviderForm.ModelForm())
+                            open = f.models.lastIndex
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        border = BorderStroke(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)),
                     ) {
-                        Icon(
-                            Icons.Filled.Add,
-                            contentDescription = null,
-                            tint = palette.accent,
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Text(
-                            tr("添加模型", "Add Model"),
-                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                            color = palette.accent,
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Icon(
+                                Icons.Filled.Add,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Text(
+                                tr("添加模型", "Add Model"),
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
                     }
                 },
             )
             f.models.forEachIndexed { i, m ->
                 val expanded = open == i
+                var modelCompatOpen by remember(i, m.id) { mutableStateOf(m.compat.hasUiFields) }
                 ModelsCard(accent = expanded) {
                     Column {
                         Row(
@@ -284,18 +366,18 @@ internal fun ProviderFormSheet(
                                 Text(
                                     m.name.ifBlank { m.id }.ifBlank { tr("新模型 #${i + 1}", "New Model #${i + 1}") },
                                     style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
-                                    color = palette.text,
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 if (m.id.isNotBlank() && m.name.isNotBlank() && m.name != m.id) {
-                                    Text(m.id, style = PiTheme.text.monoSmall, color = palette.dim, maxLines = 1)
+                                    Text(m.id, style = PiTheme.text.monoSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                                 }
                             }
                             Icon(
                                 imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                                 contentDescription = null,
-                                tint = palette.muted,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp),
                             )
                         }
@@ -308,10 +390,24 @@ internal fun ProviderFormSheet(
                                     LabeledField(tr("上下文窗口", "Context Window"), m.contextWindow, "128000", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(contextWindow = v) } }
                                     LabeledField(tr("最大输出", "Max Output"), m.maxTokens, "8192", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(maxTokens = v) } }
                                 }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    LabeledField(
+                                        tr("协议覆盖（可选）", "API Override"),
+                                        m.api,
+                                        f.api.ifBlank { "openai-completions" },
+                                        Modifier.weight(1f),
+                                    ) { v -> updateModel(i) { it.copy(api = v) } }
+                                    LabeledField(
+                                        tr("地址覆盖（可选）", "URL Override"),
+                                        m.baseUrl,
+                                        tr("沿用供应商", "Inherits"),
+                                        Modifier.weight(1f),
+                                    ) { v -> updateModel(i) { it.copy(baseUrl = v) } }
+                                }
                                 Text(
                                     tr("价格（美元 / 百万 token，均可选）", "Pricing (USD / 1M tokens, optional)"),
                                     style = PiTheme.text.meta,
-                                    color = palette.muted,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     LabeledField(tr("输入", "Input"), m.costInput, "3", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costInput = v) } }
@@ -326,6 +422,39 @@ internal fun ProviderFormSheet(
                             PiSettingsToggleRow(tr("支持深度思考（推理模型）", "Reasoning Model"), null, m.reasoning, { v -> updateModel(i) { it.copy(reasoning = v) } })
                             ModelsDivider()
                             PiSettingsToggleRow(tr("支持视觉图片输入", "Accepts Images"), null, m.acceptsImages, { v -> updateModel(i) { it.copy(acceptsImages = v) } })
+                            ModelsDivider()
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { modelCompatOpen = !modelCompatOpen }
+                                    .padding(horizontal = ModelsCardPadding, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    tr("单模型兼容参数（compat）", "Model Compatibility (compat)"),
+                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (m.compat.hasUiFields || m.compat.extra.isNotEmpty()) {
+                                    TagPill(tr("已覆盖", "Overridden"), tone = palette.accent)
+                                }
+                                Icon(
+                                    imageVector = if (modelCompatOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                            if (modelCompatOpen) {
+                                ModelsDivider()
+                                CompatEditorFields(
+                                    compat = m.compat,
+                                    onChange = { next -> updateModel(i) { it.copy(compat = next) } },
+                                    modifier = Modifier.padding(ModelsCardPadding),
+                                )
+                            }
                             ModelsDivider()
                             Row(
                                 Modifier
@@ -352,8 +481,8 @@ internal fun ProviderFormSheet(
                         .fillMaxWidth()
                         .padding(horizontal = PiSettingsMetrics.pageHorizontal),
                     shape = RoundedCornerShape(12.dp),
-                    color = palette.error.copy(alpha = 0.10f),
-                    border = BorderStroke(0.5.dp, palette.error.copy(alpha = 0.35f)),
+                    color = palette.error.copy(alpha = 0.08f),
+                    border = BorderStroke(PiSpacing.hairlineThin, palette.error.copy(alpha = 0.35f)),
                 ) {
                     Text(
                         it,
@@ -365,11 +494,11 @@ internal fun ProviderFormSheet(
             }
         }
 
-        // ---- 吸底操作栏 ----
+        // ---- 吸底操作栏（统一 PiSecondaryButton / PiPrimaryButton） ----
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            color = palette.cardBg,
-            border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.45f)),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.50f)),
         ) {
             Row(
                 Modifier
@@ -379,17 +508,18 @@ internal fun ProviderFormSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (!isNew) {
-                    app.pi.ui.components.PiDestructiveButton(
+                    PiSecondaryButton(
                         label = if (overriding) tr("移除覆盖", "Remove") else tr("删除", "Delete"),
+                        tone = palette.error,
                         enabled = !saving,
                         onClick = { confirmDelete = true },
                     )
                 }
-                app.pi.ui.components.PiSecondaryButton(
+                PiSecondaryButton(
                     label = tr("取消", "Cancel"),
                     onClick = onDismiss,
                 )
-                app.pi.ui.components.PiPrimaryButton(
+                PiPrimaryButton(
                     label = if (saving) tr("保存中…", "Saving…") else tr("保存配置", "Save"),
                     enabled = !saving,
                     modifier = Modifier.weight(1f),
@@ -451,6 +581,116 @@ internal fun ProviderFormSheet(
             },
             dismissalLabel = tr("取消", "Cancel"),
             onDismissButton = { confirmDelete = false },
+        )
+    }
+}
+
+/** 供应商与单模型共用的 `compat` 参数编辑块（对齐 `@earendil-works/pi-ai/providers/compat-schema`）。 */
+@Composable
+private fun CompatEditorFields(
+    compat: ProviderForm.CompatForm,
+    onChange: (ProviderForm.CompatForm) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                tr("思考参数格式（thinkingFormat）", "Thinking Format (thinkingFormat)"),
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
+            )
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                COMMON_THINKING_FORMATS.forEach { (value, label) ->
+                    PiSettingsChip(
+                        text = label,
+                        active = compat.thinkingFormat == value,
+                        onClick = { onChange(compat.copy(thinkingFormat = value)) },
+                    )
+                }
+            }
+            LabeledField(
+                label = tr("自定义格式名（留空 = 自动探测）", "Custom Format (blank = auto-detect)"),
+                value = compat.thinkingFormat,
+                placeholder = "openai / deepseek / qwen / zai / together / chat-template",
+            ) { onChange(compat.copy(thinkingFormat = it)) }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                tr("最大输出字段（maxTokensField）", "Max Tokens Field (maxTokensField)"),
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
+            )
+            val options = MAX_TOKENS_FIELD_OPTIONS
+            val selectedIndex = options.indexOfFirst { it.first == compat.maxTokensField }.coerceAtLeast(0)
+            McpSegmentedTrack(
+                options = listOf(tr("自动", "Auto"), "max_completion", "max_tokens"),
+                selectedIndex = selectedIndex,
+                onSelect = { idx -> onChange(compat.copy(maxTokensField = options[idx].first)) },
+            )
+        }
+
+        CompatTriStateRow(
+            label = tr("支持 developer 角色（supportsDeveloperRole）", "Developer Role (supportsDeveloperRole)"),
+            value = compat.supportsDeveloperRole,
+            onChange = { onChange(compat.copy(supportsDeveloperRole = it)) },
+        )
+        CompatTriStateRow(
+            label = tr("支持 reasoning_effort（supportsReasoningEffort）", "Reasoning Effort (supportsReasoningEffort)"),
+            value = compat.supportsReasoningEffort,
+            onChange = { onChange(compat.copy(supportsReasoningEffort = it)) },
+        )
+        CompatTriStateRow(
+            label = tr("支持 store 字段（supportsStore）", "Store Field (supportsStore)"),
+            value = compat.supportsStore,
+            onChange = { onChange(compat.copy(supportsStore = it)) },
+        )
+
+        if (compat.extra.isNotEmpty()) {
+            Text(
+                tr(
+                    "其余 ${compat.extra.size} 项高级 compat 字段（如 ${compat.extra.keys.take(3).joinToString(", ")}）将在保存时原样保留。",
+                    "${compat.extra.size} additional compat field(s) (${compat.extra.keys.take(3).joinToString(", ")}) will be preserved on save.",
+                ),
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompatTriStateRow(
+    label: String,
+    value: Boolean?,
+    onChange: (Boolean?) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            label,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
+        )
+        val selectedIndex = when (value) {
+            null -> 0
+            true -> 1
+            false -> 2
+        }
+        McpSegmentedTrack(
+            options = listOf(tr("自动", "Auto"), tr("开启", "On"), tr("关闭", "Off")),
+            selectedIndex = selectedIndex,
+            onSelect = { idx ->
+                onChange(
+                    when (idx) {
+                        1 -> true
+                        2 -> false
+                        else -> null
+                    },
+                )
+            },
         )
     }
 }

@@ -1476,23 +1476,29 @@ try {
         activeTools.includes("android_status") &&
           activeTools.includes("android_screen") &&
           activeTools.includes("android_app") &&
+          activeTools.includes("android_device") &&
+          activeTools.includes("android_comm") &&
           !activeTools.includes("android_shell"),
         JSON.stringify(activeTools),
       );
       const bLoaded = await b.call("resources.loaded", {}, 15000);
       const loadedPaths = (bLoaded.data?.extensions ?? []).map((e) => e.path);
+      const loadedSkillNames = (bLoaded.data?.skills ?? []).map((s) => s.name ?? s.path ?? "");
       expect(
-        "bundle 仅以官方 builtin:pi-android-bridge 注册设备桥（不再带 permission-gate / highlight）",
+        "bundle 仅以官方 builtin:pi-android-bridge 注册设备桥（不再带 permission-gate / highlight / 冗余设备技能）",
         loadedPaths.includes("builtin:pi-android-bridge") &&
           !loadedPaths.includes("builtin:pi-android-permission-gate") &&
-          !loadedPaths.includes("builtin:pi-highlight"),
-        JSON.stringify(loadedPaths),
+          !loadedPaths.includes("builtin:pi-highlight") &&
+          !loadedSkillNames.some((n) => String(n).includes("pi-android-device")),
+        JSON.stringify({ extensions: loadedPaths, skills: loadedSkillNames }),
       );
       const bCmds = await b.call("catalog.commands", {}, 15000);
       const cmdNames = (bCmds.data?.commands ?? []).map((c) => c.name);
       expect(
-        "bundle 不再注册已废弃的 RPC 补丁命令 /device-reload 与 /pi-android-navigate",
-        !cmdNames.includes("device-reload") && !cmdNames.includes("pi-android-navigate"),
+        "bundle 不再注册已废弃的 RPC 补丁命令与冗余 pi-android-device 技能命令",
+        !cmdNames.includes("device-reload") &&
+          !cmdNames.includes("pi-android-navigate") &&
+          !cmdNames.includes("skill:pi-android-device"),
         JSON.stringify(cmdNames.filter((n) => n.includes("device") || n.includes("navigate"))),
       );
       const bList = await b.call("resources.list", {}, 15000);

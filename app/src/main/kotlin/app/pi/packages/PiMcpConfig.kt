@@ -73,6 +73,11 @@ object PiMcpConfig {
         val description: String
             get() = (config["description"] as? JsonPrimitive)?.contentOrNull.orEmpty()
 
+        /** 官方 HTTP 服务器供应商凭据认证（`auth: { provider }`，仅全局可用）。 */
+        val authProvider: String?
+            get() = ((config["auth"] as? JsonObject)?.get("provider") as? JsonPrimitive)
+                ?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+
         /** 列表里那一行小字：命令式显示「命令 参数…」，网址式显示网址。 */
         val summary: String
             get() = when (kind) {
@@ -83,7 +88,7 @@ object PiMcpConfig {
                     }
                 }
                 Kind.Http -> (config["url"] as? JsonPrimitive)?.contentOrNull.orEmpty()
-                Kind.Override -> "只覆盖启用状态/暴露方式"
+                Kind.Override -> app.pi.i18n.tr("只覆盖启用状态 / 暴露方式", "Overrides enabled / exposure only")
             }
     }
 
@@ -214,6 +219,8 @@ object PiMcpConfig {
         /** `clientRegistration`: `""`/`"auto"`（自动）、`"dcr"`（强制动态注册）、`"cimd"`（使用 CIMD 元数据）。 */
         val oauthClientRegistration: String = "",
         val oauthAuthServerUrl: String = "",
+        /** 官方 `auth: { provider }`：复用某个 `/login` 供应商的凭据认证 HTTP MCP 服务器（仅全局可用）。 */
+        val authProvider: String = "",
     )
 
     private fun JsonObject.text(key: String): String = (this[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
@@ -271,13 +278,14 @@ object PiMcpConfig {
             oauthClientName = oauth.text("clientName"),
             oauthClientRegistration = oauth.text("clientRegistration").takeIf { it in setOf("dcr", "cimd") }.orEmpty(),
             oauthAuthServerUrl = oauth.text("authServerMetadataUrl"),
+            authProvider = server.authProvider.orEmpty(),
         )
     }
 
     private fun isLoopback(host: String?): Boolean = host == "localhost" || host == "127.0.0.1" || host == "[::1]" || host == "::1"
 
-    /** 表单整体校验。返回 `null` = 可以保存；否则是第一条问题。规则逐条来自 `docs/mcp.md`。 */
-    fun check(draft: Draft, others: Collection<String>): String? {
+    /** 表单整体校验。返回 `null` = 可以保存；否则是第一条问题。规则逐条来自官方 SDK `core/mcp-servers.js`。 */
+    fun check(draft: Draft, others: Collection<String>, isProject: Boolean = false): String? {
         checkName(draft.name.trim(), others)?.let { return it }
         if (draft.http) checkUrl(draft.url)?.let { return it } else checkCommand(draft.command)?.let { return it }
         checkTimeout(draft.timeoutSeconds)?.let { return it }
@@ -288,10 +296,33 @@ object PiMcpConfig {
             val isCimd = draft.oauthClientRegistration == "cimd"
             val hasAuthHeader = draft.bearer.isNotBlank() ||
                 parseHeaders(draft.headers).map.keys.any { it.equals("Authorization", ignoreCase = true) }
+            val hasAuthProvider = draft.authProvider.isNotBlank()
             val oauthUsed = listOf(
                 draft.oauthClientId, draft.oauthClientSecret, draft.oauthCallbackPort, draft.oauthCallbackUrl,
                 draft.oauthScope, draft.oauthClientName, draft.oauthAuthServerUrl,
             ).any { it.isNotBlank() } || draft.oauthClientRegistration.isNotBlank()
+            if (hasAuthProvider) {
+                if (isProject) {
+                    return app.pi.i18n.tr(
+                        "项目级 .pi/mcp.json 不允许配置供应商认证（auth.provider），请改在全局配置。",
+                        "Project .pi/mcp.json cannot use provider auth (auth.provider); configure it globally instead.",
+                    )
+                }
+                if (hasAuthHeader || oauthUsed) {
+                    return app.pi.i18n.tr(
+                        "供应商认证（auth.provider）不能与访问令牌 / Authorization 头或 OAuth 同时使用。",
+                        "Provider auth (auth.provider) cannot be combined with Authorization headers or OAuth settings.",
+                    )
+                }
+                val uri = try { URI(draft.url.trim()) } catch (_: Exception) { null }
+                val safe = uri != null && (uri.scheme?.lowercase() == "https" || (uri.scheme?.lowercase() == "http" && isLoopback(uri.host)))
+                if (!safe) {
+                    return app.pi.i18n.tr(
+                        "供应商认证（auth.provider）要求 https 网址，或 localhost / 127.0.0.1 / [::1]。",
+                        "Provider auth (auth.provider) requires an https URL, or http on localhost / 127.0.0.1 / [::1].",
+                    )
+                }
+            }
             if (oauthUsed && hasAuthHeader) {
                 return "已经填了访问令牌/Authorization 头，就不会再走 OAuth 登录；二选一。"
             }
@@ -379,6 +410,14 @@ object PiMcpConfig {
                 headers["Authorization"] = if (token.startsWith("!")) token else BEARER + token
             }
             put("headers", obj(headers))
+            val providerId = draft.authProvider.trim()
+            val authObj = LinkedHashMap<String, JsonElement>((base?.get("auth") as? JsonObject)?.toMap().orEmpty())
+            if (providerId.isNotEmpty()) {
+                authObj["provider"] = JsonPrimitive(providerId)
+            } else {
+                authObj.remove("provider")
+            }
+            put("auth", authObj.takeIf { it.isNotEmpty() }?.let { JsonObject(it) })
             // oauth：在原对象上改，不认识的子键保留。
             val oauth = LinkedHashMap<String, JsonElement>((base?.get("oauth") as? JsonObject)?.toMap().orEmpty())
             fun oauthText(key: String, value: String) {
@@ -398,7 +437,7 @@ object PiMcpConfig {
             }
             put("oauth", oauth.takeIf { it.isNotEmpty() }?.let { JsonObject(it) })
         } else {
-            put("url", null); put("headers", null); put("oauth", null)
+            put("url", null); put("headers", null); put("oauth", null); put("auth", null)
             if ((out["type"] as? JsonPrimitive)?.contentOrNull in setOf("http", "streamable-http")) out.remove("type")
             put("command", textOrNull(draft.command))
             val args = draft.args.lines().map { it.trim() }.filter { it.isNotEmpty() }
@@ -553,6 +592,27 @@ object PiMcpConfig {
                 // 全局关、工程要开：`enabled` 缺省 = 开，但空对象会被 pi 当成「覆盖了什么都没写」，
                 // 所以明确写 true。
                 if (enabled) next["enabled"] = JsonPrimitive(true)
+                out[name] = JsonObject(next)
+            }
+            out
+        }
+
+    /**
+     * 工程级覆盖：在工程文件里给某个用户级服务器写（或收回）一条 `exposure` 覆盖。
+     * 与全局一致时删掉 `exposure`，若覆盖对象变空则整条移除。
+     */
+    fun setProjectExposureOverride(root: JsonObject, name: String, exposure: String, globalExposure: String): JsonObject =
+        root.withServers { servers ->
+            val out = LinkedHashMap<String, JsonElement>(servers)
+            val existing = servers[name] as? JsonObject
+            if (exposure == globalExposure) {
+                if (existing != null) {
+                    val rest = existing.toMap().filterKeys { it != "exposure" }
+                    if (rest.isEmpty()) out.remove(name) else out[name] = JsonObject(rest)
+                }
+            } else {
+                val next = LinkedHashMap<String, JsonElement>(existing?.toMap().orEmpty())
+                next["exposure"] = JsonPrimitive(exposure)
                 out[name] = JsonObject(next)
             }
             out

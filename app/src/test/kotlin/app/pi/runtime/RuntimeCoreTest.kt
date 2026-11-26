@@ -116,6 +116,99 @@ class RuntimeCoreTest {
     }
 
     @Test
+    fun `RuntimeUsage deduplicates hardlinks and skips symlinks without following`() {
+        val root = Files.createTempDirectory("pi-usage-test").toFile()
+        val external = Files.createTempDirectory("pi-usage-ext").toFile()
+        try {
+            val fileA = File(root, "a.bin").apply { writeBytes(ByteArray(4096)) }
+            val fileB = File(root, "b.bin").apply { writeBytes(ByteArray(4096)) }
+            val extFile = File(external, "huge.bin").apply { writeBytes(ByteArray(65536)) }
+            Files.createSymbolicLink(File(root, "ext-link").toPath(), external.toPath())
+
+            val fakeStat: (String) -> RuntimeUsage.Stat? = { path ->
+                when (path) {
+                    root.path -> RuntimeUsage.Stat(4096L, isDirectory = true, isRegularFile = false, isSymlink = false)
+                    fileA.path, fileB.path -> RuntimeUsage.Stat(
+                        allocatedBytes = 8192L,
+                        isDirectory = false,
+                        isRegularFile = true,
+                        isSymlink = false,
+                        device = 7L,
+                        inode = 999L,
+                        linkCount = 2L,
+                    )
+                    File(root, "ext-link").path -> RuntimeUsage.Stat(
+                        allocatedBytes = 0L,
+                        isDirectory = false,
+                        isRegularFile = false,
+                        isSymlink = true,
+                    )
+                    extFile.path -> RuntimeUsage.Stat(65536L, isDirectory = false, isRegularFile = true, isSymlink = false)
+                    else -> null
+                }
+            }
+
+            val result = RuntimeUsage.measure(root, fakeStat)
+            assertTrue(result.complete)
+            // root (4096) + single shared inode (8192), never 2 * 8192 and never external 65536
+            assertEquals(4096L + 8192L, result.bytes)
+
+            val categorized = RuntimeUsage.measureCategorized(
+                roots = listOf(root),
+                stat = fakeStat,
+                classify = { f -> if (f.name == "b.bin") "bucketB" else "bucketA" },
+            )
+            assertTrue(categorized.complete)
+            assertEquals(4096L + 8192L, categorized.totalBytes)
+            assertEquals(categorized.totalBytes, categorized.byCategory.values.sum())
+        } finally {
+            root.deleteRecursively()
+            external.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `RuntimeProvisioner Step fraction progresses continuously with subProgress`() {
+        val start = RuntimeProvisioner.Step("audit", index = 0, total = 10)
+        assertEquals(0.0f, start.fraction, 0.0001f)
+
+        val mid = RuntimeProvisioner.Step(
+            label = "engine",
+            index = 5,
+            total = 10,
+            subProgress = 0.5f,
+            mode = RuntimeProvisioner.InstallMode.FirstInstall,
+            phaseKey = "engine",
+        )
+        assertEquals(0.55f, mid.fraction, 0.0001f)
+
+        val zeroTotal = RuntimeProvisioner.Step("zero", index = 0, total = 0)
+        assertEquals(0.0f, zeroTotal.fraction, 0.0001f)
+    }
+
+    @Test
+    fun `TarExtractor invalidates parent cache when symlink created and blocks symlink escape`() {
+        val dir = Files.createTempDirectory("pi-tar-symlink-escape").toFile()
+        val outside = Files.createTempDirectory("pi-tar-outside").toFile()
+        try {
+            val tarGz = buildTarGz {
+                addRegularEntry("safe/a.txt", "one".toByteArray(), mode = 0b110_100_100)
+                addRegularEntry("safe/b.txt", "two".toByteArray(), mode = 0b110_100_100)
+                addSymlinkEntry("escape", outside.absolutePath)
+                addRegularEntry("escape/pwn.txt", "nope".toByteArray(), mode = 0b110_100_100)
+            }
+            val result = TarExtractor(dir).extractGzip(ByteArrayInputStream(tarGz))
+            assertEquals(2L, result.files)
+            assertEquals("one", File(dir, "safe/a.txt").readText())
+            assertEquals("two", File(dir, "safe/b.txt").readText())
+            assertFalse(File(outside, "pwn.txt").exists())
+        } finally {
+            dir.deleteRecursively()
+            outside.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `PersistentProcessSpawner executes process cleanly`() {
         val process = PersistentProcessSpawner.start(ProcessBuilder("/bin/sh", "-c", "echo pi-spawner-ok"))
         val out = process.inputStream.bufferedReader().use { it.readText().trim() }
@@ -139,6 +232,10 @@ class RuntimeCoreTest {
             writeData(data)
         }
 
+        fun addSymlinkEntry(name: String, linkTarget: String) {
+            writeHeader(name, 0L, 0b111_111_111, '2', linkTarget)
+        }
+
         private fun encodePax(key: String, value: String): ByteArray {
             val payload = " $key=$value\n".toByteArray(Charsets.UTF_8)
             var len = payload.size + 1
@@ -150,7 +247,7 @@ class RuntimeCoreTest {
             return "$len".toByteArray(Charsets.US_ASCII) + payload
         }
 
-        private fun writeHeader(name: String, size: Long, mode: Int, type: Char) {
+        private fun writeHeader(name: String, size: Long, mode: Int, type: Char, linkName: String = "") {
             val header = ByteArray(512)
             val nameBytes = name.toByteArray(Charsets.UTF_8)
             System.arraycopy(nameBytes, 0, header, 0, minOf(nameBytes.size, 100))
@@ -159,6 +256,10 @@ class RuntimeCoreTest {
             val sizeStr = "%011o\u0000".format(size).toByteArray(Charsets.US_ASCII)
             System.arraycopy(sizeStr, 0, header, 124, 12)
             header[156] = type.code.toByte()
+            if (linkName.isNotEmpty()) {
+                val linkBytes = linkName.toByteArray(Charsets.UTF_8)
+                System.arraycopy(linkBytes, 0, header, 157, minOf(linkBytes.size, 100))
+            }
             out.write(header)
         }
 

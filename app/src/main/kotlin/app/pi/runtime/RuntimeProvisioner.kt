@@ -2,6 +2,7 @@ package app.pi.runtime
 
 import android.content.res.AssetManager
 import android.util.Log
+import app.pi.i18n.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -101,8 +102,28 @@ class RuntimeProvisioner(
     private val assets: AssetManager,
 ) {
 
-    data class Step(val label: String, val index: Int, val total: Int) {
-        val fraction: Float get() = index.toFloat() / total.toFloat()
+    enum class InstallMode {
+        FirstInstall,
+        Update,
+        Repair,
+        Rebuild,
+    }
+
+    data class Step(
+        val label: String,
+        val index: Int,
+        val total: Int,
+        val detail: String? = null,
+        val subProgress: Float? = null,
+        val mode: InstallMode = InstallMode.FirstInstall,
+        val phaseKey: String? = null,
+    ) {
+        val fraction: Float
+            get() {
+                if (total <= 0) return 0f
+                val sub = (subProgress ?: 0f).coerceIn(0f, 0.99f)
+                return ((index.toFloat() + sub) / total.toFloat()).coerceIn(0f, 1f)
+            }
     }
 
     class ProvisioningException(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -197,6 +218,10 @@ class RuntimeProvisioner(
         val migrated: Boolean,
         /** True when the explicit repair path ran and [wipe] deleted the tree first. */
         val rebuilt: Boolean,
+        /** Mode of this provisioning pass for contextual UI progress. */
+        val mode: InstallMode = InstallMode.Update,
+        /** Total step count emitted on this slow path (including any host trailing steps). */
+        val totalSteps: Int = 0,
     )
 
     /**
@@ -217,6 +242,8 @@ class RuntimeProvisioner(
      *        boot-time self-check, a missing rootfs, a user asking for a repair). It is
      *        never derived from a digest comparison, and this is the only path that may
      *        delete anything the user could have touched inside the guest.
+     * @param trailingSteps optional post-provisioning steps owned by the caller (e.g.
+     *        container self-check + engine startup) so progress stays honest up to Ready.
      * @param onStep progress, one call per named step. The list names only the work this
      *        attempt actually does; when every payload is current it says exactly that.
      */
@@ -238,15 +265,17 @@ class RuntimeProvisioner(
          * 因此它只该在"启动失败之后的那一次重试"上被触发，不在每次冷启动。
          */
         repair: Boolean = false,
+        trailingSteps: Int = 0,
         onStep: (Step) -> Unit = {},
     ): Result<ProvisionOutcome> = withContext(Dispatchers.IO) {
-        runCatching { provision(revision, rebuild, repair, onStep) }
+        runCatching { provision(revision, rebuild, repair, trailingSteps.coerceAtLeast(0), onStep) }
     }
 
     private fun provision(
         revision: String,
         rebuild: Boolean,
         repair: Boolean,
+        trailingSteps: Int,
         onStep: (Step) -> Unit,
     ): ProvisionOutcome {
         // ---------------------------------------------------------------- fast path
@@ -373,37 +402,95 @@ class RuntimeProvisioner(
             return finishCurrent(revision, migration = false, onStep)
         }
 
-        // The step list is the plan, **in the order the work runs**: a payload that did
-        // not change contributes no step, so the segmented bar's total is the work that is
-        // really about to happen.
-        val steps = buildList {
-            add(AUDIT_STEP)
-            if (migration && !rebuild && !rootfsMissing) add(MIGRATION_STEP)
-            add(PREPARE_STEP)
-            if (rebuild) add(REBUILD_STEP)
-            plan.forEach { add(stepLabel(it)) }
-            add(CONFIGURE_STEP)
-            add(FINAL_STEP)
+        val installMode = when {
+            rebuild -> InstallMode.Rebuild
+            repair -> InstallMode.Repair
+            rootfsMissing -> InstallMode.FirstInstall
+            else -> InstallMode.Update
         }
+
+        data class PlannedStep(val label: String, val phaseKey: String, val detail: String? = null)
+
+        // The step list is the plan, **in the order the work runs**: a payload that did
+        // not change contributes no step, so the progress bar's total is the work that is
+        // really about to happen (plus any caller-owned trailing steps like self-check & launch).
+        val steps = buildList {
+            add(PlannedStep(tr("校验内置运行包", "Verifying runtime packages"), "audit"))
+            if (migration && !rebuild && !rootfsMissing) {
+                add(
+                    PlannedStep(
+                        tr("迁移至增量更新格式", "Migrating to incremental format"),
+                        "migrate",
+                        tr("仅覆盖内置组件，完整保留用户数据", "Preserving all user data and packages"),
+                    ),
+                )
+            }
+            add(PlannedStep(tr("检查存储空间", "Checking available storage"), "prepare"))
+            if (rebuild) {
+                add(
+                    PlannedStep(
+                        tr("清理易失运行环境", "Clearing ephemeral runtime"),
+                        "rebuild",
+                        tr("工作区、会话与配置均完整保留", "Workspaces, sessions & settings are preserved"),
+                    ),
+                )
+            }
+            plan.forEach { payload -> add(PlannedStep(stepLabel(payload), payloadPhaseKey(payload))) }
+            add(
+                PlannedStep(
+                    tr("写入网络与容器配置", "Configuring container & DNS"),
+                    "configure",
+                    tr("配置 DNS 解析与本地环境目录", "Setting up DNS and guest directories"),
+                ),
+            )
+            add(
+                PlannedStep(
+                    if (trailingSteps > 0) {
+                        tr("校验运行环境完整性", "Finalizing runtime layout")
+                    } else {
+                        tr("准备完成", "Ready")
+                    },
+                    "finalize",
+                ),
+            )
+        }
+        val totalSteps = steps.size + trailingSteps
         var index = 0
-        fun next(label: String = steps[index]) = onStep(Step(label, index, steps.size))
+        fun emit(
+            label: String = steps[index].label,
+            detail: String? = steps[index].detail,
+            subProgress: Float? = null,
+            phaseKey: String = steps[index].phaseKey,
+        ) {
+            onStep(
+                Step(
+                    label = label,
+                    index = index,
+                    total = totalSteps,
+                    detail = detail,
+                    subProgress = subProgress,
+                    mode = installMode,
+                    phaseKey = phaseKey,
+                ),
+            )
+        }
 
         // Pre-flight, and deliberately *before* anything destructive: the audit is the
         // step that can prove the APK's payload is unusable, and a package that cannot be
         // read must not destroy a runtime that works. `auditPayloads` throws only for the
         // payloads the unpack needs; see its KDoc for why the engine is reported but not
-        // required. Its file-and-size list goes on screen in the step label so the next
-        // device failure is self-explanatory.
-        next()
+        // required.
+        emit()
         val payloads = auditPayloads()
-        onStep(Step(auditLabel(payloads), index, steps.size))
+        emit(detail = auditSummaryDetail(payloads), subProgress = 0.85f)
         index++
 
         // The migration gets its own named step rather than a silent plan of six
         // payloads: it is the one transition whose whole point is that it deletes
         // nothing, and the user should be able to read that on the boot screen.
         if (migration && !rebuild && !rootfsMissing) {
-            next(); index++
+            emit(subProgress = 0.5f)
+            index++
         }
 
         // Pre-flight too, and it has to be *here*: after the audit (so the real payload
@@ -420,16 +507,27 @@ class RuntimeProvisioner(
         // [RuntimeSpaceBudget.shortfall] treats that as "cannot tell" rather than "out
         // of space", so this can never refuse a boot because of a number it could not
         // read.
-        next()
         val plannedAssets = plan.mapTo(HashSet()) { "runtime/${it.name}" }
         val payloadBytes = payloads.filter { it.ok && it.asset in plannedAssets }.sumOf { it.bytes }
         val fullUnpack = rebuild || rootfsMissing || migration || plan.size == PAYLOADS.size
         val available = paths.home.usableSpace
+        val required = RuntimeSpaceBudget.requiredBytes(payloadBytes, fullUnpack)
+        emit(
+            detail = if (available > 0L) {
+                tr(
+                    "预计需 ${formatBytes(required)} · 设备可用 ${formatBytes(available)}",
+                    "~${formatBytes(required)} needed · ${formatBytes(available)} free",
+                )
+            } else {
+                null
+            },
+            subProgress = 0.5f,
+        )
         RuntimeSpaceBudget.shortfall(available, payloadBytes, fullUnpack)?.let { missing ->
             throw ProvisioningException(
                 RuntimeSpaceBudget.message(available, payloadBytes, fullUnpack) +
                     "\n（本次预检：可用 $available 字节，本次要解的载荷 $payloadBytes 字节，" +
-                    "预计至少需要 ${RuntimeSpaceBudget.requiredBytes(payloadBytes, fullUnpack)} 字节，" +
+                    "预计至少需要 $required 字节，" +
                     "还差 $missing 字节）",
             )
         }
@@ -438,14 +536,26 @@ class RuntimeProvisioner(
         // The explicit repair path: the only place in this class that deletes the tree,
         // and it is reachable only when the caller passed `rebuild = true`.
         if (rebuild) {
-            next(); wipe(); index++
+            emit(subProgress = 0.25f)
+            wipe()
+            emit(subProgress = 0.95f)
+            index++
         }
 
         for (payload in plan) {
-            next()
+            val cur = steps[index]
+            emit()
             // 清单在这里读一次：解压进度要它的行数做分母，下面的 prune 与状态记录复用同一份。
             val newList = packagedList(payload)
-            entryProgress = progressFor(steps[index], index, steps.size, newList?.size, onStep)
+            entryProgress = progressFor(
+                label = cur.label,
+                index = index,
+                total = totalSteps,
+                entries = newList?.size,
+                mode = installMode,
+                phaseKey = cur.phaseKey,
+                onStep = onStep,
+            )
             try {
                 extractPayloadOver(payload)
             } finally {
@@ -524,13 +634,13 @@ class RuntimeProvisioner(
         // fast path uses: a launch that finds all of it already in place writes nothing, so
         // this step costs four existence probes on an update. See [ensureGuestConfig] for why
         // the write and the check must be one function.
-        next()
+        emit(subProgress = 0.4f)
         val configWarning = ensureGuestConfig()
         index++
 
         paths.prepareLibraryAliases()
         // A stamp that could not be written is shown where the user is already looking
-        // (the boot screen's step label) instead of failing a boot whose runtime is
+        // (the boot screen's step detail) instead of failing a boot whose runtime is
         // complete. See [writeStamp].
         val stampWarning = writeStamp(revision)
         // Every warning this attempt produced, joined rather than picked: they are all true
@@ -544,12 +654,14 @@ class RuntimeProvisioner(
             configWarning,
             stampWarning,
         ).joinToString("\n").takeIf { it.isNotEmpty() }
-        onStep(Step(warning ?: steps[index], index, steps.size))
+        emit(detail = warning, subProgress = 0.9f)
 
         return ProvisionOutcome(
             reextracted = plan.map { it.name },
             migrated = migration && !rebuild && !rootfsMissing,
             rebuilt = rebuild,
+            mode = installMode,
+            totalSteps = totalSteps,
         )
     }
 
@@ -831,15 +943,37 @@ class RuntimeProvisioner(
      */
     private var entryProgress: ((Int) -> Unit)? = null
 
-    private fun progressFor(label: String, index: Int, total: Int, entries: Int?, onStep: (Step) -> Unit): ((Int) -> Unit)? {
+    private fun progressFor(
+        label: String,
+        index: Int,
+        total: Int,
+        entries: Int?,
+        mode: InstallMode,
+        phaseKey: String,
+        onStep: (Step) -> Unit,
+    ): ((Int) -> Unit)? {
         if (entries == null || entries <= 0) return null
         var last = 0L
         return { seen ->
             val now = System.nanoTime()
-            if (now - last >= 150_000_000L) {
+            if (now - last >= 100_000_000L) {
                 last = now
-                val percent = (seen * 100L / entries).toInt().coerceIn(0, 99)
-                onStep(Step("$label · $percent%", index, total))
+                val clamped = seen.coerceIn(0, entries)
+                val sub = (clamped.toFloat() / entries.toFloat()).coerceIn(0f, 0.99f)
+                onStep(
+                    Step(
+                        label = label,
+                        index = index,
+                        total = total,
+                        detail = tr(
+                            "已处理 %,d / %,d 项".format(clamped, entries),
+                            "%,d / %,d items".format(clamped, entries),
+                        ),
+                        subProgress = sub,
+                        mode = mode,
+                        phaseKey = phaseKey,
+                    ),
+                )
             }
         }
     }
@@ -858,13 +992,23 @@ class RuntimeProvisioner(
 
     /** The screen's name for each payload's work; only planned payloads get one. */
     private fun stepLabel(payload: Payload): String = when (payload.name) {
-        UBUNTU_BASE -> "解压 Ubuntu 用户态"
-        NODE_ARCHIVE -> "解压 Node 运行时"
-        RIPGREP_ARCHIVE -> "安装 rg"
-        FD_ARCHIVE -> "安装 fd"
-        GIT_ARCHIVE -> "安装 git"
-        ENGINE_ARCHIVE -> "解压 pi 引擎"
-        else -> "解压 ${payload.name}"
+        UBUNTU_BASE -> tr("解压 Ubuntu 基础环境", "Unpacking Ubuntu base")
+        NODE_ARCHIVE -> tr("解压 Node.js 运行时", "Unpacking Node.js runtime")
+        RIPGREP_ARCHIVE -> tr("安装 ripgrep 搜索工具", "Installing ripgrep")
+        FD_ARCHIVE -> tr("安装 fd 文件查找工具", "Installing fd")
+        GIT_ARCHIVE -> tr("安装 Git 版本控制", "Installing Git")
+        ENGINE_ARCHIVE -> tr("部署官方 Pi SDK 引擎", "Deploying Pi SDK engine")
+        else -> tr("解压 ${payload.name}", "Unpacking ${payload.name}")
+    }
+
+    private fun payloadPhaseKey(payload: Payload): String = when (payload.name) {
+        UBUNTU_BASE -> "ubuntu"
+        NODE_ARCHIVE -> "node"
+        RIPGREP_ARCHIVE -> "rg"
+        FD_ARCHIVE -> "fd"
+        GIT_ARCHIVE -> "git"
+        ENGINE_ARCHIVE -> "engine"
+        else -> "runtime"
     }
 
     /** `<name>.tgz` -> `<name>`, the spelling of the payload-state files in `assets/`. */
@@ -1357,12 +1501,15 @@ class RuntimeProvisioner(
         if (!required) append(" [optional]")
     }
 
-    /** The same audit as one compact, on-screen line of names and sizes. */
-    private fun auditLabel(audited: List<PayloadInfo>): String =
-        "校验内置载荷：" + audited.joinToString(" · ") { info ->
-            val name = info.asset.removePrefix("runtime/")
-            if (info.ok) "$name ${formatBytes(info.bytes)}" else "$name 缺失/不可读"
-        }
+    /** Compact, readable summary for the boot screen caption (full per-file report stays in [payloadReport]). */
+    private fun auditSummaryDetail(audited: List<PayloadInfo>): String {
+        val okPayloads = audited.filter { it.ok }
+        val totalBytes = okPayloads.sumOf { it.bytes }
+        return tr(
+            "${okPayloads.size} 个运行组件 · 共 ${formatBytes(totalBytes)}",
+            "${okPayloads.size} runtime packages · ${formatBytes(totalBytes)} total",
+        )
+    }
 
     /**
      * The audit, for a failure that happens *after* it — an unpack that dies
@@ -2265,33 +2412,6 @@ class RuntimeProvisioner(
 
         /** One payload digest's length in hex characters; see [PAYLOAD_META_DIR]. */
         private const val DIGEST_LENGTH = 16
-
-        // ------------------------------------------------------- boot step labels
-        // Named constants rather than literals at the call sites: a step label is the one
-        // place a user reads what an update actually did, and the labels are the boot
-        // screen's own text.
-        //
-        // There is deliberately **no** "nothing to do" label. That sentence had one, and it
-        // was the thing that put a full-screen page over a chat page that was already usable
-        // on every launch that changed nothing — see [finishCurrent].
-
-        /** Pre-flight: what this APK actually carries. */
-        private const val AUDIT_STEP = "校验内置载荷"
-
-        /** The transition every existing install goes through once. */
-        private const val MIGRATION_STEP = "迁移到按载荷更新（只覆盖，不删除）"
-
-        /** The explicit repair path, which is the only one that may delete the tree. */
-        private const val REBUILD_STEP = "重建运行时（清空易失树）"
-
-        /** Free-space pre-flight, and the creation of `runtime/`, `tmp/` and `lib/`. */
-        private const val PREPARE_STEP = "准备存储"
-
-        /** DNS, the guest home and `/etc/group`. */
-        private const val CONFIGURE_STEP = "配置 DNS 与目录"
-
-        /** The last step, replaced by a warning on screen when one has to be shown. */
-        private const val FINAL_STEP = "完成"
 
         /**
          * The revision the packaged payloads carry — a digest of their bytes, or

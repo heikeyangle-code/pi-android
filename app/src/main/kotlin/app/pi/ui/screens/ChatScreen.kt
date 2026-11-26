@@ -135,6 +135,7 @@ import app.pi.ui.render.LocalPiMarkdownImmediate
 import app.pi.ui.render.LocalPiMarkdownParsed
 import app.pi.ui.render.RowHeightCache
 import app.pi.ui.render.gapFor
+import app.pi.ui.render.hasPiMarkdownDocCached
 import app.pi.ui.render.piMarkdownParseBudget
 import app.pi.ui.render.rememberedRowHeight
 import app.pi.ui.extension.ExtensionWidgetStack
@@ -358,7 +359,7 @@ internal fun ChatBody(
     // 可交互工厂 widget（带 handleInput / handleMouse）点「交互」打开的底部表面。
     var interactingWidgetKey by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
-    // 顶栏的 0.5dp 发丝线随列表离开顶部平滑显现（用 drawBehind 绘制，不改变顶栏高度，零视口抖动）。
+    // 列表离开顶部后轻微锐化悬浮顶栏双胶囊的发丝描边与层级（零高度变动、零视口抖动）。
     val topBarScrolled by remember(listState) {
         derivedStateOf { listState.canScrollBackward }
     }
@@ -1622,17 +1623,20 @@ internal fun ChatBody(
         }
     }
     val visibleHeader = state.ext.header?.takeIf { app.pi.ui.extension.HIDE_KEY_HEADER !in hiddenWidgetSet }
-    val emptyTranscript = state.transcript.isEmpty() && state.busy == null
+    val emptyTranscript = state.transcript.isEmpty() && visibleHeader == null
+    val emptyStatusNote = when {
+        !state.busy.isNullOrBlank() -> state.busy
+        state.engine == null || state.engine == PiEngineSession.EngineState.Starting ->
+            tr("正在连接本地引擎…", "Connecting local engine…")
+        else -> null
+    }
 
     // 全高无界聊天画布：从屏幕最顶端（状态栏下方）一路铺到最底端（手势条区域），
     // 顶部双悬浮胶囊与底部悬浮工作台上下对称叠在柔和渐隐羽化层之上。
     Box(Modifier.fillMaxSize().imePadding().clipToBounds()) {
             if (emptyTranscript) {
                 ChatEmptyWelcome(
-                    workspaceName = state.workspace.displayName,
-                    modelLabel = modelLabel,
-                    onOpenWorkspace = onOpenWorkspace,
-                    onOpenModel = { perform(ChatAction.PickModel) },
+                    statusNote = emptyStatusNote,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(top = topChromeHeightDp, bottom = dockHeightDp),
@@ -1718,27 +1722,41 @@ internal fun ChatBody(
                         isMatch -> Modifier.background(PiTheme.palette.searchMatchBg, PiShapes.cardInner)
                         else -> Modifier
                     }
-                    val rowModifier = (if (extraTop > 0.dp) Modifier.padding(top = extraTop) else Modifier)
-                        .then(highlightModifier)
-                        .rememberedRowHeight(row.key, contentReady = markdownParsed.value)
                     val singleItem = (row as? ChatRow.Single)?.item
                     val streamingRow = (singleItem as? AssistantText)?.streaming == true ||
                         (singleItem as? ThinkingBlock)?.streaming == true ||
                         (row as? ChatRow.ActivityGroup)?.summary?.isRunning == true
+                    val itemText = when (singleItem) {
+                        is AssistantText -> singleItem.text
+                        is UserMessage -> singleItem.text
+                        is ThinkingBlock -> singleItem.text
+                        else -> null
+                    }
+                    val hasMarkdownContent = !streamingRow &&
+                        (singleItem is AssistantText || singleItem is UserMessage) &&
+                        !itemText.isNullOrBlank()
+                    val rowModifier = (if (extraTop > 0.dp) Modifier.padding(top = extraTop) else Modifier)
+                        .then(highlightModifier)
+                        .rememberedRowHeight(
+                            rowKey = row.key,
+                            contentReady = markdownParsed.value,
+                            hasMarkdown = hasMarkdownContent,
+                        )
                     val enteringFromAbove = androidx.compose.runtime.snapshots.Snapshot
                         .withoutReadObservation { sliceIndex <= listState.firstVisibleItemIndex }
-                    val itemCharCount = when (singleItem) {
-                        is AssistantText -> singleItem.text.length
-                        is UserMessage -> singleItem.text.length
-                        is ThinkingBlock -> singleItem.text.length
-                        else -> 0
-                    }
-                    // 超长消息（>8000 字）绝不豁免 4ms 帧预算，避免快速上滑长会话时主线程同步解析卡死 ANR。
-                    val allowSyncFromAbove = enteringFromAbove && itemCharCount <= 8_000
-                    val immediateMarkdown = !streamingRow &&
-                        RowHeightCache.shared.of(row.key) == null &&
-                        (row.key in freshRowKeys || restoring || allowSyncFromAbove) &&
-                        (allowSyncFromAbove || piMarkdownParseBudget.allow(System.nanoTime()))
+                    val itemCharCount = itemText?.length ?: 0
+                    val docCached = !itemText.isNullOrEmpty() && hasPiMarkdownDocCached(itemText)
+                    // 屏幕上方即将滑入视口的已定稿消息（含大表格，<=24 KiB，实测 ~5ms 解析一次后永久命中
+                    // PiMarkdownDocCache）必须在帧 0 同步解析，绝不回落到 0px 异步占位——否则快速下拉时
+                    // 列表先滑过 0px 占位、5ms 后表格撑高 1000+px 就会在视口上方直接顶跳一整屏。
+                    val allowSyncFromAbove = enteringFromAbove && !docCached && itemCharCount <= 24_000
+                    val immediateMarkdown = !streamingRow && (
+                        allowSyncFromAbove || (
+                            RowHeightCache.shared.of(row.key) == null &&
+                                (row.key in freshRowKeys || restoring) &&
+                                piMarkdownParseBudget.allow(System.nanoTime())
+                            )
+                        )
                     val rowAnchor = remember(listState, sliceIndex, row.key) {
                         TranscriptRowAnchor(
                             listState = listState,
@@ -1853,8 +1871,8 @@ internal fun ChatBody(
                 }
             }
 
-            // 底部柔和渐隐羽化层：消除输入框色带上方半毫米的硬切遮罩感，
-            // 同时在全面屏底部手势条区域留出呼吸感、柔化滑过的历史文字而不显凌乱。
+            // 底部柔和渐隐羽化层：与顶部悬浮羽化层（0.96 / 0.84 / 0.34 / 0.00，18dp 羽化带）严格镜像对称，
+            // 上下透明度曲线完全一致，柔化滑过的历史文字而绝不硬切。
             val fadeFeather = PiSpacing.composerGradientFade
             Box(
                 modifier = Modifier
@@ -1862,18 +1880,20 @@ internal fun ChatBody(
                     .fillMaxWidth()
                     .height(dockHeightDp + fadeFeather)
                     .drawBehind {
-                        val featherPx = fadeFeather.toPx().coerceAtMost(size.height)
-                        val stopFeather = if (size.height > 0f) (featherPx / size.height).coerceIn(0.06f, 0.85f) else 0.18f
-                        val stopLower = (stopFeather + (1f - stopFeather) * 0.48f).coerceIn(stopFeather, 0.98f)
-                        val featherAlpha = if (imeVisible) 0.90f else 0.72f
-                        val lowerAlpha = if (imeVisible) 0.97f else 0.86f
-                        val bottomAlpha = if (imeVisible) 1.00f else 0.90f
+                        val featherPx = fadeFeather.toPx().coerceAtMost(size.height * 0.4f)
+                        val stopFeather = if (size.height > 0f) (featherPx / size.height).coerceIn(0.06f, 0.40f) else 0.18f
+                        val stopLower = if (size.height > 0f) {
+                            ((featherPx + (size.height - featherPx) * 0.32f) / size.height)
+                                .coerceIn(stopFeather + 0.05f, 0.90f)
+                        } else {
+                            0.44f
+                        }
                         drawRect(
                             brush = Brush.verticalGradient(
                                 0f to pageBackground.copy(alpha = 0f),
-                                stopFeather to pageBackground.copy(alpha = featherAlpha),
-                                stopLower to pageBackground.copy(alpha = lowerAlpha),
-                                1f to pageBackground.copy(alpha = bottomAlpha),
+                                stopFeather to pageBackground.copy(alpha = 0.34f),
+                                stopLower to pageBackground.copy(alpha = 0.84f),
+                                1f to pageBackground.copy(alpha = 0.96f),
                             ),
                         )
                     },
@@ -1929,18 +1949,31 @@ internal fun ChatBody(
             }
             }
 
-            // 顶部柔和渐隐羽化层：与底部羽化层镜像对称，文字滑过双悬浮胶囊下方时丝滑融进画布，绝不硬切也不糊成一团。
+            // 顶部柔和渐隐羽化层：与底部羽化层严格镜像对称（物理 18dp 羽化带 + 0.96/0.84/0.34/0.00 曲线），
+            // 搜索栏或扩展头展开时仍保持一致物理过渡距离，文字滑过双悬浮胶囊下方丝滑融进画布。
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .height(topChromeHeightDp + 18.dp)
+                    .height(topChromeHeightDp + PiSpacing.composerGradientFade)
                     .drawBehind {
+                        val featherPx = PiSpacing.composerGradientFade.toPx().coerceAtMost(size.height * 0.4f)
+                        val stopFeather = if (size.height > 0f) {
+                            (1f - featherPx / size.height).coerceIn(0.60f, 0.94f)
+                        } else {
+                            0.82f
+                        }
+                        val stopUpper = if (size.height > 0f) {
+                            (1f - (featherPx + (size.height - featherPx) * 0.32f) / size.height)
+                                .coerceIn(0.10f, stopFeather - 0.05f)
+                        } else {
+                            0.56f
+                        }
                         drawRect(
                             brush = Brush.verticalGradient(
                                 0f to pageBackground.copy(alpha = 0.96f),
-                                0.56f to pageBackground.copy(alpha = 0.84f),
-                                0.82f to pageBackground.copy(alpha = 0.34f),
+                                stopUpper to pageBackground.copy(alpha = 0.84f),
+                                stopFeather to pageBackground.copy(alpha = 0.34f),
                                 1f to pageBackground.copy(alpha = 0f),
                             ),
                         )

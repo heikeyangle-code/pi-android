@@ -638,24 +638,38 @@ private fun ViewerTopBar(
                         onClick = onSave,
                         enabled = dirty,
                         shape = RoundedCornerShape(999.dp),
-                        color = if (dirty) palette.accent else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        color = if (dirty) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerLow,
+                        border = if (!dirty) {
+                            androidx.compose.foundation.BorderStroke(
+                                PiSpacing.hairlineThin,
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                            )
+                        } else {
+                            null
+                        },
                     ) {
                         Text(
                             tr("保存", "Save"),
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                             style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                            color = if (dirty) palette.contrastOn(palette.accent) else palette.muted,
+                            color = if (dirty) MaterialTheme.colorScheme.surface else palette.muted,
                             maxLines = 1,
                         )
                     }
                 }
 
                 else -> {
+                    val isDark = PiTheme.isDark
+                    val pillBorder = androidx.compose.foundation.BorderStroke(
+                        PiSpacing.hairlineThin,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f),
+                    )
                     if (isMarkdown) {
                         Surface(
                             onClick = onToggleMarkdownPreview,
                             shape = RoundedCornerShape(999.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            border = pillBorder,
                         ) {
                             Text(
                                 if (markdownPreview) tr("源码", "Source") else tr("预览", "Preview"),
@@ -670,7 +684,8 @@ private fun ViewerTopBar(
                         Surface(
                             onClick = onMention,
                             shape = RoundedCornerShape(999.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            border = pillBorder,
                         ) {
                             Text(
                                 "@",
@@ -685,13 +700,13 @@ private fun ViewerTopBar(
                         Surface(
                             onClick = onEdit,
                             shape = RoundedCornerShape(999.dp),
-                            color = PiTheme.palette.accent.copy(alpha = 0.14f),
+                            color = MaterialTheme.colorScheme.onSurface,
                         ) {
                             Text(
                                 tr("编辑", "Edit"),
                                 modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp),
                                 style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                                color = PiTheme.palette.accent,
+                                color = MaterialTheme.colorScheme.surface,
                                 maxLines = 1,
                             )
                         }

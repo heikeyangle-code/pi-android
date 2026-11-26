@@ -183,16 +183,21 @@ internal fun AppUpdateSheet(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
-                        .clip(RoundedCornerShape(13.dp))
-                        .background(palette.accent.copy(alpha = 0.14f)),
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .border(
+                            PiSpacing.hairlineThin,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                            RoundedCornerShape(11.dp),
+                        ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Filled.SystemUpdate,
                         contentDescription = null,
-                        tint = palette.accent,
-                        modifier = Modifier.size(22.dp),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(20.dp),
                     )
                 }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {

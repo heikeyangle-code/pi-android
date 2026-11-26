@@ -49,15 +49,12 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
@@ -75,6 +72,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -975,17 +973,46 @@ private fun PiListItemRow(
             it.type != MarkdownTokenTypes.WHITE_SPACE
     }
 
+    val density = LocalDensity.current
+    val firstChildStyle = when (bodyChildren.firstOrNull()?.type) {
+        MarkdownElementTypes.ATX_1, MarkdownElementTypes.SETEXT_1 -> typography.h1
+        MarkdownElementTypes.ATX_2, MarkdownElementTypes.SETEXT_2 -> typography.h2
+        MarkdownElementTypes.ATX_3 -> typography.h3
+        MarkdownElementTypes.ATX_4 -> typography.h4
+        MarkdownElementTypes.ATX_5 -> typography.h5
+        MarkdownElementTypes.ATX_6 -> typography.h6
+        else -> typography.paragraph
+    }
+    val textMeasurer = rememberTextMeasurer()
+    // Measure the real first-line baseline and line box for the active prose/heading font so
+    // vector bullets and task checkboxes sit at the true optical center of CJK + Latin glyphs
+    // (Android's default proportional line-height puts ~75% of extra leading above the baseline,
+    // which previously placed naive `0.5f * lineHeight` bullets noticeably above the text center).
+    val firstLineMetrics = remember(firstChildStyle, density, textMeasurer) {
+        val layout = textMeasurer.measure(
+            text = "中Ag",
+            style = firstChildStyle,
+            maxLines = 1,
+        )
+        val lineH = (layout.getLineBottom(0) - layout.getLineTop(0)).coerceAtLeast(1f)
+        val fontSizePx = with(density) {
+            (firstChildStyle.fontSize.value.takeIf { it.isFinite() && it > 0f } ?: 15f).sp.toPx()
+        }
+        val opticalCenterY = (layout.firstBaseline - fontSizePx * 0.35f)
+            .coerceIn(lineH * 0.28f, lineH * 0.78f)
+        lineH to opticalCenterY
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top,
     ) {
-        // Leading marker: checkbox (dynamically centered to list lineHeight), right-aligned numeral, or depth bullet
+        // Leading marker: checkbox (optically centered to first line), right-aligned numeral, or depth bullet
         if (checkboxNode != null) {
             val checked = piTaskCheckboxChecked(safeSlice(content, checkboxNode))
-            val lineHeightSp = typography.list.lineHeight.value
-                .takeIf { it.isFinite() && it > 0f }
-                ?: ((typography.list.fontSize.value.takeIf { it.isFinite() && it > 0f } ?: 15f) * 1.45f)
-            val checkboxTopDp = ((lineHeightSp - TASK_CHECKBOX_SIZE.value) / 2f).coerceIn(1f, 8f).dp
+            val checkboxTopDp = with(density) {
+                (firstLineMetrics.second - TASK_CHECKBOX_SIZE.toPx() / 2f).coerceAtLeast(0f).toDp()
+            }
             Box(
                 modifier = Modifier.padding(top = checkboxTopDp, end = TASK_CHECKBOX_END_PADDING),
                 contentAlignment = Alignment.Center,
@@ -1006,11 +1033,8 @@ private fun PiListItemRow(
                     .padding(end = 6.dp),
             )
         } else {
-            val density = LocalDensity.current
-            val lineHeightSp = typography.list.lineHeight.value
-                .takeIf { it.isFinite() && it > 0f }
-                ?: ((typography.list.fontSize.value.takeIf { it.isFinite() && it > 0f } ?: 15f) * 1.48f)
-            val markerHeightDp = with(density) { lineHeightSp.sp.toDp() }
+            val markerHeightDp = with(density) { firstLineMetrics.first.toDp() }
+            val opticalCenterPx = firstLineMetrics.second
             val bulletColor = typography.bullet.color
             Canvas(
                 modifier = Modifier
@@ -1018,7 +1042,7 @@ private fun PiListItemRow(
                     .height(markerHeightDp),
             ) {
                 val cx = 6.dp.toPx()
-                val cy = size.height * 0.5f
+                val cy = opticalCenterPx.coerceIn(0f, size.height)
                 when (depth % 3) {
                     0 -> drawCircle(
                         color = bulletColor,
@@ -1360,32 +1384,29 @@ private fun PiTable(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
                     .drawWithContent {
                         drawContent()
                         val fadePx = TABLE_FADE_WIDTH.toPx().coerceAtMost(size.width * 0.2f)
                         if (fadePx > 1f && scrollState.value > 0) {
                             drawRect(
                                 brush = Brush.horizontalGradient(
-                                    colors = listOf(Color.Transparent, Color.Black),
+                                    colors = listOf(surfaceBg, surfaceBg.copy(alpha = 0f)),
                                     startX = 0f,
                                     endX = fadePx,
                                 ),
                                 topLeft = Offset.Zero,
                                 size = Size(fadePx, size.height),
-                                blendMode = BlendMode.DstIn,
                             )
                         }
                         if (fadePx > 1f && scrollState.value < scrollState.maxValue) {
                             drawRect(
                                 brush = Brush.horizontalGradient(
-                                    colors = listOf(Color.Black, Color.Transparent),
+                                    colors = listOf(surfaceBg.copy(alpha = 0f), surfaceBg),
                                     startX = size.width - fadePx,
                                     endX = size.width,
                                 ),
                                 topLeft = Offset(size.width - fadePx, 0f),
                                 size = Size(fadePx, size.height),
-                                blendMode = BlendMode.DstIn,
                             )
                         }
                     },

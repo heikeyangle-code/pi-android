@@ -385,7 +385,7 @@ object DeviceAppActions {
             )
         }
         val info = runCatching {
-            manager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+            manager.getApplicationInfo(packageName, 0)
         }.getOrNull() ?: throw DeviceActionException(
             DeviceDenial(
                 code = DeviceDenial.NOT_FOUND,

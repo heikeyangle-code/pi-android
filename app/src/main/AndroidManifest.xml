@@ -92,9 +92,10 @@
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
 
-    <!-- Package visibility for the manager app, so the status card can say
-         「未安装」 instead of 「未运行」. -->
+    <!-- Package visibility for the Shizuku manager app (modern & legacy ids),
+         so the status card can distinguish 「未安装」 from 「未运行」. -->
     <queries>
+        <package android:name="moe.shizuku.privileged.api" />
         <package android:name="moe.shizuku.manager" />
     </queries>
 

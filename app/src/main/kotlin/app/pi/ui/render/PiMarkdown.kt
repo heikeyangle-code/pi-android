@@ -67,13 +67,16 @@ private const val SYNC_PARSE_STREAMING_LIMIT = 1500
  * Scrolling back over long settled replies hits frame 0 synchronously with zero re-parse and zero blank flash.
  */
 private object PiMarkdownDocCache {
-    private const val MAX_ENTRIES = 64
-    private const val MAX_CHARS = 512 * 1024
+    private const val MAX_ENTRIES = 128
+    private const val MAX_CHARS = 1024 * 1024
     private val map = LinkedHashMap<String, ParsedMarkdownDoc>(MAX_ENTRIES, 0.75f, true)
     private var totalChars = 0
 
     @Synchronized
     fun get(markdown: String): ParsedMarkdownDoc? = map[markdown]
+
+    @Synchronized
+    fun contains(markdown: String): Boolean = map.containsKey(markdown)
 
     @Synchronized
     fun put(markdown: String, doc: ParsedMarkdownDoc) {
@@ -94,6 +97,8 @@ private object PiMarkdownDocCache {
         totalChars = 0
     }
 }
+
+internal fun hasPiMarkdownDocCached(markdown: String): Boolean = PiMarkdownDocCache.contains(markdown)
 
 internal fun clearPiMarkdownDocCache() {
     PiMarkdownDocCache.clear()

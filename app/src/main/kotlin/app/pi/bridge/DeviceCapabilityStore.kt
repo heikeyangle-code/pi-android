@@ -101,6 +101,8 @@ class DeviceCapabilityStore private constructor(context: Context) {
     private val appContext: Context = context.applicationContext
     private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val sessionDisabled: MutableSet<String> = Collections.synchronizedSet(mutableSetOf<String>())
+    private val _version = kotlinx.coroutines.flow.MutableStateFlow(0)
+    val version: kotlinx.coroutines.flow.StateFlow<Int> = _version
 
     /** The user's standing decision for [capability], ignoring the session switch. */
     fun isPersistentlyEnabled(capability: DeviceCapability): Boolean =
@@ -118,10 +120,12 @@ class DeviceCapabilityStore private constructor(context: Context) {
         // Switching a group off clears its session override, so turning it back
         // on cannot leave a stale "暂时禁用" behind.
         if (!enabled) sessionDisabled.remove(capability.id)
+        _version.value = _version.value + 1
     }
 
     fun setSessionDisabled(capability: DeviceCapability, disabled: Boolean) {
         if (disabled) sessionDisabled.add(capability.id) else sessionDisabled.remove(capability.id)
+        _version.value = _version.value + 1
     }
 
     fun state(capability: DeviceCapability): DeviceCapabilityState {
@@ -200,7 +204,7 @@ class DeviceCapabilityStore private constructor(context: Context) {
             DeviceAccessibilityService.State.NOT_ENABLED -> DeviceDenial(
                 code = DeviceDenial.NO_PERMISSION,
                 reason = "无障碍服务未启用，无法操作屏幕。",
-                hint = "让用户在「设置 → 设备能力 → 无障碍」启用 PI 设备桥。",
+                hint = "让用户在「设置 → 设备能力 → 无障碍服务」启用 PI 设备桥。",
             )
         }
 
@@ -274,7 +278,7 @@ class DeviceCapabilityStore private constructor(context: Context) {
     /**
      * The camera precondition, checked per *endpoint* rather than per group.
      *
-     * The 基础 group also carries location, the sensor list, the battery reading and
+     * The 系统交互与硬件 group also carries location, the sensor list, the battery reading and
      * the clipboard, none of which need CAMERA. So a missing grant must not
      * make the whole group unusable — but it must be reported as `NO_PERMISSION` with
      * the camera permission named, and never as "this device has no flash". Before the
@@ -288,7 +292,7 @@ class DeviceCapabilityStore private constructor(context: Context) {
             DeviceDenial(
                 code = DeviceDenial.NO_PERMISSION,
                 reason = "控制手电筒需要 CAMERA 权限（API 23+ 要求）。",
-                hint = "让用户在「设置 → 设备能力 → 基础」点「授予相机权限」；部分设备需先用一次相机。",
+                hint = "让用户在「设置 → 设备能力 → 系统交互与硬件」点「授予相机(手电筒)」；部分设备需先用一次相机。",
             )
         }
 

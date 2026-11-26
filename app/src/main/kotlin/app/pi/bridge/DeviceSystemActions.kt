@@ -426,7 +426,7 @@ object DeviceSystemActions {
             DeviceDenial(
                 code = DeviceDenial.NOT_FOUND,
                 reason = "找不到传感器「$typeName」。",
-                hint = "先用 android_device_state（what=\"sensors\"）。",
+                hint = "先用 android_device（action=\"sensors\"）列出可用传感器。",
             ),
         )
 
@@ -573,10 +573,158 @@ object DeviceSystemActions {
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
                     reason = "系统拒绝手电筒控制（CAMERA 权限可能被撤销）。",
-                    hint = "让用户在「设置 → 设备能力 → 位置·传感器·相机」重授相机权限。",
+                    hint = "让用户在「设置 → 设备能力 → 系统交互与硬件」重授相机权限。",
                 ),
             )
         }
+    }
+
+    // --------------------------------------------------- device info / net / volume ----
+
+    /** Hardware, OS, display, RAM, storage, locale, and timezone snapshot (zero extra permissions). */
+    fun deviceInfo(context: Context): JSONObject {
+        val metrics = context.resources.displayMetrics
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+        val memInfo = android.app.ActivityManager.MemoryInfo()
+        val hasMem = runCatching {
+            activityManager?.getMemoryInfo(memInfo)
+            activityManager != null
+        }.getOrDefault(false)
+        val dataDir = context.filesDir
+        val storageAvail = runCatching { dataDir.usableSpace }.getOrDefault(0L)
+        val storageTotal = runCatching { dataDir.totalSpace }.getOrDefault(0L)
+        val abis = JSONArray().apply { Build.SUPPORTED_ABIS.forEach { put(it) } }
+        return JSONObject().apply {
+            put("manufacturer", Build.MANUFACTURER)
+            put("brand", Build.BRAND)
+            put("model", Build.MODEL)
+            put("device", Build.DEVICE)
+            put("androidRelease", Build.VERSION.RELEASE)
+            put("sdkInt", Build.VERSION.SDK_INT)
+            put("abis", abis)
+            put("screenWidthPx", metrics.widthPixels)
+            put("screenHeightPx", metrics.heightPixels)
+            put("densityDpi", metrics.densityDpi)
+            put("ramAvailableBytes", if (hasMem) memInfo.availMem else 0L)
+            put("ramTotalBytes", if (hasMem) memInfo.totalMem else 0L)
+            put("lowMemory", if (hasMem) memInfo.lowMemory else false)
+            put("storageAvailableBytes", storageAvail)
+            put("storageTotalBytes", storageTotal)
+            put("locale", Locale.getDefault().toLanguageTag())
+            put("timezone", java.util.TimeZone.getDefault().id)
+        }
+    }
+
+    /** Active connectivity, transport types, metered state, and local IPv4 address. */
+    fun networkStatus(context: Context): JSONObject {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            ?: throw DeviceActionException(DeviceDenial(DeviceDenial.UNSUPPORTED, "系统没有网络状态服务。"))
+        val active = cm.activeNetwork
+        val caps = active?.let { cm.getNetworkCapabilities(it) }
+        val transports = buildList {
+            if (caps != null) {
+                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) add("wifi")
+                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)) add("cellular")
+                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)) add("ethernet")
+                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) add("vpn")
+                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_BLUETOOTH)) add("bluetooth")
+            }
+        }
+        val connected = caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val validated = caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        val metered = cm.isActiveNetworkMetered
+        val ipv4 = active?.let { net ->
+            runCatching {
+                cm.getLinkProperties(net)?.linkAddresses
+                    ?.map { it.address }
+                    ?.firstOrNull { addr -> addr is java.net.Inet4Address && !addr.isLoopbackAddress }
+                    ?.hostAddress
+            }.getOrNull()
+        }
+        return JSONObject().apply {
+            put("connected", connected)
+            put("validated", validated)
+            put("metered", metered)
+            put("transports", JSONArray(transports))
+            put("localIpv4", ipv4 ?: JSONObject.NULL)
+        }
+    }
+
+    /**
+     * Read all audio stream volumes when [level] and [percent] are omitted, or set the requested
+     * [streamName] (`music` / `ring` / `notification` / `alarm` / `voice`, default `music`).
+     */
+    fun volume(context: Context, streamName: String?, level: Int?, percent: Int?): JSONObject {
+        val audio = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            ?: throw DeviceActionException(DeviceDenial(DeviceDenial.UNSUPPORTED, "系统没有音频服务。"))
+        val streams = linkedMapOf(
+            "music" to AudioManager.STREAM_MUSIC,
+            "ring" to AudioManager.STREAM_RING,
+            "notification" to AudioManager.STREAM_NOTIFICATION,
+            "alarm" to AudioManager.STREAM_ALARM,
+            "voice" to AudioManager.STREAM_VOICE_CALL,
+        )
+
+        fun streamObj(name: String, code: Int): JSONObject {
+            val current = audio.getStreamVolume(code)
+            val max = audio.getStreamMaxVolume(code).coerceAtLeast(1)
+            return JSONObject().apply {
+                put("stream", name)
+                put("level", current)
+                put("max", max)
+                put("percent", ((current * 100.0) / max).toInt().coerceIn(0, 100))
+            }
+        }
+
+        val ringerMode = when (audio.ringerMode) {
+            AudioManager.RINGER_MODE_SILENT -> "silent"
+            AudioManager.RINGER_MODE_VIBRATE -> "vibrate"
+            else -> "normal"
+        }
+
+        if (level == null && percent == null) {
+            val requested = streamName?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotEmpty() }
+            if (requested != null) {
+                val code = streams[requested] ?: throw DeviceActionException(
+                    DeviceDenial(
+                        DeviceDenial.BAD_REQUEST,
+                        "不支持的音量通道「$streamName」。",
+                        hint = "支持：${streams.keys.joinToString(" / ")}。",
+                    ),
+                )
+                return streamObj(requested, code).put("ringerMode", ringerMode)
+            }
+            val all = JSONArray()
+            streams.forEach { (name, code) -> all.put(streamObj(name, code)) }
+            return JSONObject().put("ringerMode", ringerMode).put("streams", all)
+        }
+
+        val targetName = streamName?.trim()?.lowercase(Locale.US)?.ifEmpty { "music" } ?: "music"
+        val code = streams[targetName] ?: throw DeviceActionException(
+            DeviceDenial(
+                DeviceDenial.BAD_REQUEST,
+                "不支持的音量通道「$targetName」。",
+                hint = "支持：${streams.keys.joinToString(" / ")}。",
+            ),
+        )
+        val max = audio.getStreamMaxVolume(code).coerceAtLeast(1)
+        val targetLevel = when {
+            level != null -> level.coerceIn(0, max)
+            percent != null -> Math.round((percent.coerceIn(0, 100) / 100.0) * max).toInt().coerceIn(0, max)
+            else -> audio.getStreamVolume(code)
+        }
+        try {
+            audio.setStreamVolume(code, targetLevel, 0)
+        } catch (error: SecurityException) {
+            throw DeviceActionException(
+                DeviceDenial(
+                    DeviceDenial.NO_PERMISSION,
+                    "系统拒绝调整「$targetName」音量（可能开启了勿扰模式限制）：${error.message}",
+                    hint = "尝试调节 music（媒体）音量，或关闭勿扰限制后重试。",
+                ),
+            )
+        }
+        return streamObj(targetName, code).put("ringerMode", ringerMode).put("updated", true)
     }
 
     // -------------------------------------------------------------------- tts ----

@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -73,15 +74,16 @@ fun SettingsHome(
     val palette = PiTheme.palette
     val context = LocalContext.current
     val capStore = remember(context) { app.pi.bridge.DeviceCapabilityStore.get(context) }
+    val capVersion by capStore.version.collectAsStateWithLifecycle()
     var capStates by remember { mutableStateOf<List<app.pi.bridge.DeviceCapabilityState>>(emptyList()) }
-    LaunchedEffect(capStore) {
+    LaunchedEffect(capStore, capVersion, freshness) {
         capStates = withContext(Dispatchers.IO) { capStore.states() }
     }
     val capUsable = capStates.count { it.usable }
     val capSupporting = if (capStates.isEmpty() || capUsable == 0) {
-        tr("未启用（0 Token 占用）· 屏幕自动化、通知与设备 Shell", "Disabled (0 Token) · Screen automation, notifications & device shell")
+        tr("未启用（0 Token 占用）· 屏幕自动化、系统交互与设备 Shell", "Disabled (0 Token) · Screen automation, system & device shell")
     } else {
-        tr("$capUsable/${capStates.size} 组就绪 · 屏幕自动化、通知与设备 Shell", "$capUsable/${capStates.size} active · Screen automation, notifications & device shell")
+        tr("$capUsable/${capStates.size} 组就绪 · 屏幕自动化、系统交互与设备 Shell", "$capUsable/${capStates.size} active · Screen automation, system & device shell")
     }
 
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()

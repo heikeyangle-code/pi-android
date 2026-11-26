@@ -12,10 +12,10 @@ package app.pi.ui.render.rich
  * 引用（不复制），最坏占用是 [CAPACITY] 份源码 + 解析树。
  */
 /** 不超过这个长度的源码同步解析（见 [rememberTreeParse]）。 */
-internal const val SYNC_PARSE_MAX_CHARS = 8 * 1024
+internal const val SYNC_PARSE_MAX_CHARS = 24 * 1024
 
 internal object PiTreeParseCache {
-    private const val CAPACITY = 16
+    private const val CAPACITY = 32
 
     private data class Key(val kind: String, val settled: Boolean, val source: String)
 

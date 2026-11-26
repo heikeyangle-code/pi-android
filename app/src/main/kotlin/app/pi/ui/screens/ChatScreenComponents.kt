@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
@@ -253,48 +254,96 @@ internal data class TailObservation(
 )
 
 /**
- * 极简空对话画布（对齐 Pi 原生极简哲学）：
- * 彻底移除中心图标框、胶囊标签与预制起手问候语，只保留克制的项目与模型低噪上下文，
- * 让视觉重心直接落回底部输入工作台。
+ * 极简空对话欢迎画布（纯前端 UI 层，零修改官方 Pi SDK）：
+ *  - 视觉焦点：`80dp` 双层纸面留白框承载自定义 Pi 形象徽标，在深/浅主题下立体克制；
+ *  - 自然问候：无边框、无多余胶囊（工作区已在顶栏、模型已在底栏），按本地时段轻声问候；
+ *  - 零跳动过渡：下方预留固定高度静谧状态槽，仅在引擎连接/会话加载期淡入 `PiSpinner + 文案`，
+ *    就绪后平滑淡出，图标与问候语纹丝不动。
  */
 @Composable
 internal fun ChatEmptyWelcome(
-    workspaceName: String,
-    modelLabel: String?,
-    onOpenWorkspace: () -> Unit,
-    onOpenModel: () -> Unit,
+    statusNote: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
+    val isDark = PiTheme.isDark
+    val emblemOuterShape = RoundedCornerShape(24.dp)
+    val emblemInnerShape = RoundedCornerShape(21.dp)
+    val cardBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerLow else palette.cardBg
+    val hairline = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.80f)
+    val hour = remember { java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY) }
+    val greeting = when (hour) {
+        in 5..11 -> tr("早上好，想从哪开始？", "Good morning. Where shall we start?")
+        in 12..13 -> tr("中午好，想聊点什么？", "Good afternoon. What's on your mind?")
+        in 14..17 -> tr("下午好，想聊点什么？", "Good afternoon. What's on your mind?")
+        in 18..22 -> tr("晚上好，想聊点什么？", "Good evening. What's on your mind?")
+        else -> tr("夜深了，想聊点什么？", "Up late. What's on your mind?")
+    }
+
     Column(
-        modifier = modifier.padding(horizontal = 32.dp),
+        modifier = modifier
+            .padding(horizontal = 32.dp)
+            .padding(bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        androidx.compose.material3.Surface(
+            shape = emblemOuterShape,
+            color = cardBg,
+            shadowElevation = if (isDark) 0.dp else 6.dp,
+            border = androidx.compose.foundation.BorderStroke(PiSpacing.hairlineThin, hairline),
+        ) {
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(id = app.pi.R.drawable.pi_welcome_emblem),
+                contentDescription = tr("Pi 形象图标", "Pi emblem"),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier
+                    .padding(3.dp)
+                    .size(80.dp)
+                    .clip(emblemInnerShape),
+            )
+        }
+        Spacer(Modifier.height(18.dp))
         Text(
-            text = workspaceName.ifBlank { tr("默认项目", "Default Project") },
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .clickable(onClickLabel = tr("打开项目与文件", "Open project & files"), onClick = onOpenWorkspace)
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
-            color = palette.muted.copy(alpha = 0.85f),
-            maxLines = 1,
+            text = greeting,
+            style = app.pi.ui.components.PiType.title.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        if (!modelLabel.isNullOrBlank()) {
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = modelLabel,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClickLabel = tr("选择模型", "Select model"), onClick = onOpenModel)
-                    .padding(horizontal = 10.dp, vertical = 3.dp),
-                style = PiTheme.text.monoSmall,
-                color = palette.dim,
-                maxLines = 1,
-                overflow = TextOverflow.MiddleEllipsis,
-            )
+        Spacer(Modifier.height(10.dp))
+        var retainedStatusNote by remember { mutableStateOf(statusNote.orEmpty()) }
+        if (!statusNote.isNullOrBlank()) {
+            retainedStatusNote = statusNote
+        }
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.height(22.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = !statusNote.isNullOrBlank(),
+                enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(160)),
+                exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(220)),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    app.pi.ui.components.PiSpinner(
+                        size = 12.dp,
+                        strokeWidth = 1.5.dp,
+                        color = palette.muted,
+                    )
+                    Text(
+                        text = retainedStatusNote,
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }

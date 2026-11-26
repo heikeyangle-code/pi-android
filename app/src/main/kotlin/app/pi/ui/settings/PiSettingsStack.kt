@@ -481,6 +481,7 @@ fun PiSettingsStack(
                     contentPadding = contentPadding,
                     onBack = { runtimeScreen = false },
                     store = activeStore,
+                    freshness = rowsEpoch,
                     onSettingWritten = handleSettingWritten,
                     activeEngine = activeRuntimeEngine,
                     engineState = liveEngineState,

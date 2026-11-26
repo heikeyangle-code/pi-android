@@ -212,56 +212,78 @@ private fun QueueModeRow(
     title: String,
     supporting: String,
     current: QueueMode,
-    tone: Color,
+    @Suppress("UNUSED_PARAMETER") tone: Color,
     onPick: (QueueMode) -> Unit,
 ) {
+    val isDark = PiTheme.isDark
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val trackBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceContainer
+    val activeBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerHighest else Color.White
+    val trackBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f)
+    val activeBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.75f else 0.90f)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            title,
-            style = PiType.rowTitle.copy(fontWeight = FontWeight.Medium),
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-            supporting,
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(9.dp))
-                .background(PiTheme.palette.pageBg.copy(alpha = 0.55f))
-                .border(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.7f), RoundedCornerShape(9.dp))
-                .padding(3.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            val options = listOf(
-                QueueMode.OneAtATime to tr("逐条投递", "One at a time"),
-                QueueMode.All to tr("合并全部", "All at once"),
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                title,
+                style = PiType.rowTitle,
+                color = MaterialTheme.colorScheme.onSurface,
             )
-            options.forEach { (mode, label) ->
-                val active = current == mode
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (active) tone.copy(alpha = 0.18f) else Color.Transparent)
-                        .clickable { onPick(mode) }
-                        .padding(vertical = 7.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        label,
-                        style = PiTheme.text.meta.copy(
-                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                        ),
-                        color = if (active) tone else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+            Text(
+                supporting,
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp),
+            color = trackBg,
+            border = BorderStroke(PiSpacing.hairlineThin, trackBorder),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                val options = listOf(
+                    QueueMode.OneAtATime to tr("逐条投递", "One at a time"),
+                    QueueMode.All to tr("合并全部", "All at once"),
+                )
+                options.forEach { (mode, label) ->
+                    val active = current == mode
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(if (active) activeBg else Color.Transparent)
+                            .border(
+                                width = if (active) PiSpacing.hairlineThin else 0.dp,
+                                color = if (active) activeBorder else Color.Transparent,
+                                shape = RoundedCornerShape(7.dp),
+                            )
+                            .clickable {
+                                if (!active) {
+                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                    onPick(mode)
+                                }
+                            }
+                            .padding(vertical = 8.dp, horizontal = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            label,
+                            style = PiTheme.text.meta.copy(
+                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                            ),
+                            color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }

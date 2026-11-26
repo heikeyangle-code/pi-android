@@ -1,5 +1,6 @@
 package app.pi.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,11 +24,14 @@ import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -38,6 +42,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,9 +56,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -588,30 +596,52 @@ internal val ROOTFS_CRUMB_LABEL: String get() = tr("根", "Root")
  * （「最近文件的 diff，之前都没有」）：标记复用 ③ 的同一份数据，图标按
  * 文件夹 / 文本 / 二进制分三种（稿子为二进制单加了一个图标态）。
  */
+internal enum class WorkspaceSearchScope {
+    Folder,
+    Names,
+    Content;
+
+    val label: String
+        get() = when (this) {
+            Folder -> tr("当前层", "Folder")
+            Names -> tr("文件名", "Names")
+            Content -> tr("搜内容", "Content")
+        }
+}
+
 @Composable
 internal fun WorkspaceEntryRow(
     entry: WorkspaceEntry,
     sessionChanged: String?,
     diff: ToolDiff?,
     subtitlePrefix: String? = null,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
     onOpen: () -> Unit,
     onMenu: () -> Unit,
+    onLongPress: (() -> Unit)? = null,
 ) {
-    // 最近 10 分钟内动过的行：左缘一条 3dp 强调色细条（卡片圆角会把它裁成贴边的样子）。
+    val haptics = LocalHapticFeedback.current
+    // 最近 10 分钟内动过的行：左缘一条 2.5dp 强调色细条（卡片圆角会把它裁成贴边的样子）。
     val recent = remember(entry.modifiedAt) {
         System.currentTimeMillis() - entry.modifiedAt in 0..RECENT_ROW_MS
     }
     val barColor = PiTheme.palette.accent
-    val iconTintBg = entryIconTint(entry.kind, entry.name)?.copy(alpha = 0.13f)
+    val rowBg = if (selectionMode && selected) {
+        barColor.copy(alpha = 0.065f)
+    } else {
+        Color.Transparent
+    }
     Column(
         Modifier
             .fillMaxWidth()
+            .background(rowBg)
             .then(
-                if (recent) {
+                if (recent && !selectionMode) {
                     Modifier.drawBehind {
                         drawRect(
                             barColor,
-                            size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height),
+                            size = Size(2.5.dp.toPx(), size.height),
                         )
                     }
                 } else {
@@ -623,11 +653,39 @@ internal fun WorkspaceEntryRow(
             title = WorkspaceFiles.middleEllipsis(entry.name, ENTRY_NAME_MAX_CHARS),
             mono = false,
             strong = false,
-            lead = { EntryGlyph(entry.kind, entry.name) },
-            leadBackground = iconTintBg,
-            badge = if (sessionChanged != null) {
+            lead = {
+                if (selectionMode) {
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                            )
+                            .border(
+                                width = if (selected) 0.dp else 1.5.dp,
+                                color = if (selected) Color.Transparent else MaterialTheme.colorScheme.outline,
+                                shape = CircleShape,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (selected) {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = tr("已选中", "Selected"),
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.surface,
+                            )
+                        }
+                    }
+                } else {
+                    EntryGlyph(entry.kind, entry.name)
+                }
+            },
+            leadBackground = if (selectionMode) Color.Transparent else null,
+            badge = if (sessionChanged != null && !selectionMode) {
                 {
-                    WsBadge(text = tr("本次会话", "This session"), tone = StateTone.Accent, glyph = "●")
+                    WsBadge(text = tr("本次会话", "This session"), tone = StateTone.Accent, dot = true)
                 }
             } else {
                 null
@@ -640,7 +698,20 @@ internal fun WorkspaceEntryRow(
                     append(relativeTime(entry.modifiedAt))
                 }
             },
-            value = if (diff != null && (diff.added > 0 || diff.removed > 0)) {
+            value = if (selectionMode) {
+                if (!entry.isDirectory) {
+                    {
+                        Text(
+                            WorkspaceFiles.formatSize(entry.sizeBytes),
+                            style = PiTheme.text.monoSmall,
+                            color = PiTheme.palette.muted,
+                            maxLines = 1,
+                        )
+                    }
+                } else {
+                    null
+                }
+            } else if (diff != null && (diff.added > 0 || diff.removed > 0)) {
                 {
                     Row(horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap)) {
                         Text(
@@ -678,8 +749,106 @@ internal fun WorkspaceEntryRow(
                     )
                 }
             },
-            trail = { WsMoreButton(onClick = onMenu) },
-            onClick = onOpen,
+            trail = if (selectionMode) null else { { WsMoreButton(onClick = onMenu) } },
+            onClick = {
+                if (selectionMode) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onOpen()
+            },
+            onLongClick = if (onLongPress != null) {
+                {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongPress()
+                }
+            } else {
+                null
+            },
+        )
+    }
+}
+
+/** 全项目内容搜索命中行：展示文件名、行号徽标、目录路径与匹配行代码摘要。 */
+@Composable
+internal fun ContentSearchHitRow(
+    hit: ContentHit,
+    onOpen: () -> Unit,
+    onMenu: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    val parentDir = hit.path.substringBeforeLast('/', "").ifEmpty { null }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen)
+            .padding(
+                start = PiSettingsMetrics.rowPaddingHorizontal,
+                end = 8.dp,
+                top = 10.dp,
+                bottom = 10.dp,
+            ),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(PiSpacing.glyphBox)
+                    .clip(RoundedCornerShape(WsShape.small))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                EntryGlyph(hit.entry.kind, hit.entry.name)
+            }
+            Column(Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = WorkspaceFiles.middleEllipsis(hit.entry.name, ENTRY_NAME_MAX_CHARS),
+                        modifier = Modifier.weight(1f, fill = false),
+                        style = PiType.rowTitle,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "L${hit.lineNumber}",
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+                        color = palette.accent,
+                        maxLines = 1,
+                    )
+                }
+                if (parentDir != null) {
+                    Text(
+                        text = parentDir,
+                        modifier = Modifier.padding(top = 1.dp),
+                        style = PiTheme.text.monoSmall,
+                        color = palette.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            WsMoreButton(onClick = onMenu)
+        }
+        Text(
+            text = hit.preview,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = PiSpacing.glyphBox + PiSettingsMetrics.rowGap, end = 6.dp, top = 5.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.65f))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            style = PiTheme.text.monoSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -718,86 +887,132 @@ internal enum class WorkspaceSort(comparatorOf: () -> Comparator<WorkspaceEntry>
 internal fun WorkspaceFilterField(
     value: String,
     onChange: (String) -> Unit,
-    wholeProject: Boolean? = null,
-    onToggleWholeProject: (() -> Unit)? = null,
+    searchScope: WorkspaceSearchScope? = null,
+    onSelectScope: ((WorkspaceSearchScope) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
-    Row(
+    val isDark = PiTheme.isDark
+    val haptics = LocalHapticFeedback.current
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(
                 horizontal = PiSettingsMetrics.pageHorizontal,
                 vertical = 6.dp,
-            )
-            .height(44.dp)
-            .clip(RoundedCornerShape(WsShape.medium))
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .padding(start = 12.dp, end = if (wholeProject != null) 6.dp else 0.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Icon(
-            Icons.Filled.Search,
-            contentDescription = null,
-            modifier = Modifier.size(18.dp),
-            tint = palette.muted,
-        )
-        androidx.compose.foundation.text.BasicTextField(
-            value = value,
-            onValueChange = onChange,
-            modifier = Modifier.weight(1f),
-            singleLine = true,
-            textStyle = PiTheme.text.mono.copy(color = MaterialTheme.colorScheme.onSurface),
-            cursorBrush = androidx.compose.ui.graphics.SolidColor(palette.accent),
-            decorationBox = { inner ->
-                Box(contentAlignment = Alignment.CenterStart) {
-                    if (value.isEmpty()) {
-                        Text(
-                            if (wholeProject == true) {
-                                tr("全项目递归搜索文件名…", "Search all project files…")
-                            } else {
-                                tr("筛选这一层的文件名", "Filter files in this folder")
-                            },
-                            style = PiTheme.text.mono,
-                            color = palette.muted,
-                            maxLines = 1,
-                        )
-                    }
-                    inner()
-                }
-            },
-        )
-        if (value.isNotEmpty()) {
-            Box(
-                Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .clickable { onChange("") },
-                contentAlignment = Alignment.Center,
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(42.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(
+                PiSpacing.hairlineThin,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.75f),
+            ),
+        ) {
+            Row(
+                modifier = Modifier.padding(start = 12.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Icon(
-                    Icons.Filled.Close,
-                    contentDescription = tr("清除筛选", "Clear filter"),
-                    modifier = Modifier.size(16.dp),
+                    Icons.Filled.Search,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
                     tint = palette.muted,
                 )
+                androidx.compose.foundation.text.BasicTextField(
+                    value = value,
+                    onValueChange = onChange,
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    textStyle = PiTheme.text.prose.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(palette.accent),
+                    decorationBox = { inner ->
+                        Box(contentAlignment = Alignment.CenterStart) {
+                            if (value.isEmpty()) {
+                                Text(
+                                    when (searchScope) {
+                                        WorkspaceSearchScope.Names -> tr("全项目递归搜索文件名…", "Search file names across project…")
+                                        WorkspaceSearchScope.Content -> tr("搜索项目内文本文件内容…", "Search text inside project files…")
+                                        else -> tr("筛选当前目录的文件名…", "Filter files in this folder…")
+                                    },
+                                    style = PiTheme.text.prose,
+                                    color = palette.muted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            inner()
+                        }
+                    },
+                )
+                if (value.isNotEmpty()) {
+                    Box(
+                        Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .clickable { onChange("") },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = tr("清除筛选", "Clear filter"),
+                            modifier = Modifier.size(16.dp),
+                            tint = palette.muted,
+                        )
+                    }
+                }
             }
         }
-        if (wholeProject != null && onToggleWholeProject != null) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (wholeProject) palette.accent.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .clickable(onClick = onToggleWholeProject)
-                    .padding(horizontal = 8.dp, vertical = 5.dp),
-                contentAlignment = Alignment.Center,
+        if (searchScope != null && onSelectScope != null) {
+            val trackBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceContainer
+            val activeBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerHighest else Color.White
+            val trackBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f)
+            val activeBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.75f else 0.90f)
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = trackBg,
+                border = BorderStroke(PiSpacing.hairlineThin, trackBorder),
             ) {
-                Text(
-                    if (wholeProject) tr("全项目", "Project") else tr("当前层", "Folder"),
-                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                    color = if (wholeProject) palette.accent else palette.muted,
-                    maxLines = 1,
-                )
+                Row(
+                    modifier = Modifier.padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    WorkspaceSearchScope.entries.forEach { scope ->
+                        val active = scope == searchScope
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(7.dp),
+                            color = if (active) activeBg else Color.Transparent,
+                            border = if (active) BorderStroke(PiSpacing.hairlineThin, activeBorder) else null,
+                            onClick = {
+                                if (!active) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onSelectScope(scope)
+                                }
+                            },
+                        ) {
+                            Box(
+                                modifier = Modifier.padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = scope.label,
+                                    style = PiTheme.text.meta.copy(
+                                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                                    ),
+                                    color = if (active) MaterialTheme.colorScheme.onSurface else palette.muted,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -910,20 +1125,56 @@ internal fun WorkspaceInlineSearchSortBar(
     filterOpen: Boolean,
     filterActive: Boolean,
     onToggleFilter: () -> Unit,
+    selectionMode: Boolean = false,
+    selectedCount: Int = 0,
+    allSelected: Boolean = false,
+    onToggleSelectionMode: (() -> Unit)? = null,
+    onSelectAll: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
+    val haptics = LocalHapticFeedback.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(
                 start = PiSettingsMetrics.pageHorizontal + 2.dp,
-                end = PiSettingsMetrics.pageHorizontal - 4.dp,
+                end = PiSettingsMetrics.pageHorizontal - 2.dp,
                 top = 12.dp,
                 bottom = 6.dp,
             ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        if (selectionMode) {
+            Text(
+                text = tr("已选 $selectedCount 项", "$selectedCount selected"),
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+            )
+            Spacer(Modifier.weight(1f))
+            if (onSelectAll != null) {
+                WsChip(
+                    text = if (allSelected) tr("取消全选", "Deselect all") else tr("全选", "Select all"),
+                    solid = false,
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSelectAll()
+                    },
+                )
+            }
+            if (onToggleSelectionMode != null) {
+                WsChip(
+                    text = tr("完成", "Done"),
+                    solid = true,
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onToggleSelectionMode()
+                    },
+                )
+            }
+            return
+        }
         Text(
             text = tr("文件", "Files"),
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
@@ -939,6 +1190,25 @@ internal fun WorkspaceInlineSearchSortBar(
             )
         }
         Spacer(Modifier.weight(1f))
+        if (onToggleSelectionMode != null && (fileCount ?: 0) > 0) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onToggleSelectionMode()
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Checklist,
+                    contentDescription = tr("多选文件", "Select multiple files"),
+                    modifier = Modifier.size(18.dp),
+                    tint = palette.muted,
+                )
+            }
+        }
         Box(
             modifier = Modifier
                 .size(34.dp)
@@ -954,7 +1224,7 @@ internal fun WorkspaceInlineSearchSortBar(
                     tr("隐藏点文件", "Hide dotfiles")
                 },
                 modifier = Modifier.size(18.dp),
-                tint = if (hideDotFiles) palette.accent else palette.muted,
+                tint = if (hideDotFiles) MaterialTheme.colorScheme.onSurface else palette.muted,
             )
         }
         Box {
@@ -1006,9 +1276,9 @@ internal fun WorkspaceInlineSearchSortBar(
         ) {
             Icon(
                 imageVector = Icons.Filled.Search,
-                contentDescription = tr("筛选文件名", "Filter files"),
+                contentDescription = tr("搜索文件与内容", "Search files & content"),
                 modifier = Modifier.size(19.dp),
-                tint = if (filterOpen || filterActive) palette.accent else palette.muted,
+                tint = if (filterOpen || filterActive) MaterialTheme.colorScheme.onSurface else palette.muted,
             )
         }
     }
@@ -1023,48 +1293,61 @@ internal fun ProjectConfigQuickCard(
     onClick: () -> Unit,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(12.dp)
-    Row(
-        modifier = modifier
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), shape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 11.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    val isDark = PiTheme.isDark
+    val shape = RoundedCornerShape(WsShape.medium)
+    Surface(
+        modifier = modifier,
+        shape = shape,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(
+            PiSpacing.hairlineThin,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.45f else 0.70f),
+        ),
+        onClick = onClick,
     ) {
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(palette.accent.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center,
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = title,
+                    style = PiType.rowTitle.copy(fontSize = 14.sp),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = subtitle,
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Icon(
-                imageVector = icon,
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = palette.accent,
-            )
-        }
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                text = title,
-                style = PiType.rowTitle.copy(fontSize = 14.sp),
-                color = palette.text,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                style = PiTheme.text.meta,
-                color = palette.muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.size(16.dp),
+                tint = palette.dim,
             )
         }
     }
@@ -1092,10 +1375,11 @@ internal fun WorkspacePathBar(
     onSetAsProject: () -> Unit,
 ) {
     val palette = PiTheme.palette
+    val isDark = PiTheme.isDark
     val scroll = rememberScrollState()
     val atRoot = inside && crumbs.size == homeSize
     val canStepUp = crumbs.isNotEmpty()
-    val hairlineColor = palette.borderMuted.copy(alpha = 0.55f)
+    val hairlineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.45f else 0.65f)
 
     LaunchedEffect(crumbs, locationLabel) {
         delay(50)
@@ -1128,7 +1412,7 @@ internal fun WorkspacePathBar(
             PathBarIconButton(
                 icon = Icons.Filled.ArrowUpward,
                 description = tr("返回上一级目录", "Up one folder"),
-                accent = true,
+                emphasize = true,
                 onClick = onUp,
             )
         }
@@ -1140,7 +1424,11 @@ internal fun WorkspacePathBar(
                 .height(30.dp)
                 .clip(locShape)
                 .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.65f), locShape)
+                .border(
+                    PiSpacing.hairlineThin,
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f),
+                    locShape,
+                )
                 .clickable(onClick = onOpenLocations)
                 .padding(start = 8.dp, end = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1149,7 +1437,7 @@ internal fun WorkspacePathBar(
             Text(
                 text = locationLabel,
                 style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = palette.text,
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
             )
             Icon(
@@ -1164,7 +1452,7 @@ internal fun WorkspacePathBar(
             PathBarIconButton(
                 icon = Icons.Filled.Home,
                 description = tr("回到当前项目", "Back to project root"),
-                accent = false,
+                emphasize = false,
                 onClick = onHome,
             )
         }
@@ -1228,22 +1516,19 @@ internal fun WorkspacePathBar(
 private fun PathBarIconButton(
     icon: ImageVector,
     description: String,
-    accent: Boolean,
+    emphasize: Boolean,
     onClick: () -> Unit,
 ) {
-    val palette = PiTheme.palette
+    val isDark = PiTheme.isDark
     val shape = RoundedCornerShape(8.dp)
     Box(
         Modifier
             .size(30.dp)
             .clip(shape)
-            .background(
-                if (accent) palette.accent.copy(alpha = 0.12f)
-                else MaterialTheme.colorScheme.surfaceContainerLow,
-            )
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .border(
                 PiSpacing.hairlineThin,
-                if (accent) palette.accent.copy(alpha = 0.32f) else palette.borderMuted.copy(alpha = 0.60f),
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f),
                 shape,
             )
             .clickable(onClick = onClick),
@@ -1253,7 +1538,7 @@ private fun PathBarIconButton(
             icon,
             contentDescription = description,
             modifier = Modifier.size(16.dp),
-            tint = if (accent) palette.accent else palette.muted,
+            tint = if (emphasize) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
         )
     }
 }
@@ -1262,11 +1547,8 @@ private fun PathBarIconButton(
 private const val ENTRY_NAME_MAX_CHARS = 28
 
 /**
- * 四种图标：文件夹 / 文本（含 HTML）/ 图片 / 二进制。稿子为二进制单加了一个图标态。
- *
- * 图片借的是 Material 自己的 `Image` 笔画：设计稿那套图标里没有图片态（它只有
- * folder/file/bin 三种文件图标），而一张图在列表里和一份文本长得一模一样，就等于又把
- * 「能渲染」这件事藏回「文件」里 —— 这一批修的就是它。
+ * 图标家族：文件夹 / 压缩包 / 代码 / 文档 / 配置 / 图片 / HTML / 二进制。
+ * 统一克制色阶，告别花哨彩虹图标块，与新版设置页中性高级感保持一致。
  */
 private val CODE_EXTS = setOf(
     "kt", "kts", "java", "ts", "tsx", "js", "mjs", "cjs", "jsx", "py", "rs", "go",
@@ -1274,31 +1556,35 @@ private val CODE_EXTS = setOf(
 )
 private val CONFIG_EXTS = setOf("json", "jsonc", "yaml", "yml", "toml", "xml", "properties", "gradle", "env", "ini", "lock")
 private val DOC_EXTS = setOf("md", "markdown", "mdx", "txt", "rst")
+private val ARCHIVE_EXTS = setOf("zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar")
 
 @Composable
-private fun entryIconTint(kind: WorkspaceEntryKind, name: String): androidx.compose.ui.graphics.Color? {
-    val palette = PiTheme.palette
+private fun entryIconTint(kind: WorkspaceEntryKind, name: String): Color {
+    val isDark = PiTheme.isDark
     val ext = name.substringAfterLast('.', "").lowercase(Locale.US)
+    val calmNeutral = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
     return when {
-        kind == WorkspaceEntryKind.Directory -> palette.accent
-        kind == WorkspaceEntryKind.Image -> palette.accent
-        kind == WorkspaceEntryKind.Html || ext == "svg" -> palette.mdLink
-        kind == WorkspaceEntryKind.Binary -> null
-        ext in DOC_EXTS -> palette.success
-        ext in CONFIG_EXTS -> palette.warning
-        ext in CODE_EXTS -> palette.mdLink
-        else -> null
+        kind == WorkspaceEntryKind.Directory -> if (isDark) Color(0xFFD6A85C) else Color(0xFFA8721E)
+        ext in ARCHIVE_EXTS -> if (isDark) Color(0xFFC29B6B) else Color(0xFF8C6239)
+        kind == WorkspaceEntryKind.Binary -> PiTheme.palette.muted
+        else -> calmNeutral
     }
 }
 
 @Composable
 internal fun EntryGlyph(kind: WorkspaceEntryKind, name: String = "") {
-    val palette = PiTheme.palette
     val ext = name.substringAfterLast('.', "").lowercase(Locale.US)
-    val tint = entryIconTint(kind, name) ?: palette.muted
+    val tint = entryIconTint(kind, name)
     when {
         kind == WorkspaceEntryKind.Directory -> Icon(
             Icons.Filled.Folder,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+            tint = tint,
+        )
+
+        ext in ARCHIVE_EXTS -> Icon(
+            Icons.Filled.FolderZip,
             contentDescription = null,
             modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
             tint = tint,

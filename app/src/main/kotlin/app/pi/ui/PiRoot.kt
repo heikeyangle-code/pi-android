@@ -804,8 +804,14 @@ fun PiRoot() {
                             liveEngineState = { session.liveEngineState() },
                             onSelectRuntimeEngine = { engine -> session.selectRuntimeEngine(engine) },
                             onStartEngine = { session.boot() },
-                            onRepairRuntime = { session.repairRuntime() },
-                            onRebuildRuntime = { session.boot(rebuild = true) },
+                            onRepairRuntime = {
+                                destinationName = PiDestination.Chat.name
+                                session.repairRuntime()
+                            },
+                            onRebuildRuntime = {
+                                destinationName = PiDestination.Chat.name
+                                session.boot(rebuild = true)
+                            },
                             onExternalSettingsWrite = { session.invalidateSettingsCache() },
                             onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
                             liveContextUsage = liveCompaction.first,

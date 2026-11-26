@@ -3,18 +3,13 @@ package app.pi.ui.settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -38,41 +33,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
 import app.pi.packages.PiMcpConfig
 import app.pi.packages.PiMcpStatus
+import app.pi.ui.components.PiPrimaryButton
+import app.pi.ui.components.PiSecondaryButton
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.contrastOn
 
 @Composable
-private fun McpSectionLabel(text: String) {
-    Text(
-        text = text,
-        style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-        color = PiTheme.palette.muted,
-        modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + 4.dp),
-    )
-}
-
-@Composable
-private fun McpSectionCard(content: @Composable () -> Unit) {
-    val palette = PiTheme.palette
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
-        shape = RoundedCornerShape(14.dp),
-        color = palette.cardBg,
-        border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.72f)),
-    ) {
+private fun McpFormCard(content: @Composable () -> Unit) {
+    PiSettingsCard {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -92,6 +71,7 @@ internal fun McpEditSheet(
     state: PiMcpStatus.Server?,
     isNew: Boolean,
     otherNames: List<String>,
+    isProject: Boolean = false,
     saveError: String? = null,
     onDismiss: () -> Unit,
     onSave: (PiMcpConfig.Draft) -> Unit,
@@ -100,13 +80,14 @@ internal fun McpEditSheet(
     onDelete: (() -> Unit)?,
 ) {
     val palette = PiTheme.palette
+    val haptic = LocalHapticFeedback.current
     var draft by remember(initial) { mutableStateOf(initial) }
     var showProblem by remember(initial) { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var advanced by remember(initial) { mutableStateOf(draft.hasAdvanced()) }
-    val problem = PiMcpConfig.check(draft, otherNames)
-    val fieldBg = palette.pageBg.copy(alpha = 0.55f)
-    val fieldBorder = palette.borderMuted.copy(alpha = 0.75f)
+    val problem = PiMcpConfig.check(draft, otherNames, isProject = isProject)
+    val fieldBg = MaterialTheme.colorScheme.surfaceContainerLowest
+    val fieldBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
 
     app.pi.ui.components.PiSheet(onDismiss = onDismiss, fullHeight = true) {
         Column(
@@ -125,18 +106,22 @@ internal fun McpEditSheet(
                 Text(
                     text = if (isNew) tr("新增 MCP 服务器", "Add MCP Server") else tr("编辑 MCP 服务器", "Edit MCP Server"),
                     style = PiType.title,
-                    color = palette.text,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    text = tr("写入 mcp.json 并由 Pi SDK 实时校验", "Writes to mcp.json with live Pi SDK validation"),
+                    text = if (isProject) {
+                        tr("写入本项目 .pi/mcp.json 并由 Pi SDK 实时校验", "Writes to project .pi/mcp.json with live Pi SDK validation")
+                    } else {
+                        tr("写入全局 mcp.json 并由 Pi SDK 实时校验", "Writes to global mcp.json with live Pi SDK validation")
+                    },
                     style = PiTheme.text.meta,
-                    color = palette.dim,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
             // 1. 基本信息与连接
-            McpSectionLabel(tr("基本信息与连接", "Server & Connection"))
-            McpSectionCard {
+            PiSettingsSectionHeader(tr("基本信息与连接", "Server & Connection"))
+            McpFormCard {
                 PiEditorField(
                     value = draft.name,
                     onValueChange = { draft = draft.copy(name = it) },
@@ -147,8 +132,8 @@ internal fun McpEditSheet(
                     container = fieldBg,
                     idleBorder = fieldBorder,
                 )
-                app.pi.ui.PiSeg(
-                    options = listOf(tr("本地命令 (STDIO)", "Local Command (STDIO)"), tr("远程服务 (HTTP)", "Remote Server (HTTP)")),
+                McpSegmentedTrack(
+                    options = listOf(tr("本地命令 (STDIO)", "Local (STDIO)"), tr("远程服务 (HTTP)", "Remote (HTTP)")),
                     selectedIndex = if (draft.http) 1 else 0,
                     onSelect = { draft = draft.copy(http = it == 1) },
                 )
@@ -226,8 +211,8 @@ internal fun McpEditSheet(
             }
 
             // 2. 工具暴露方式
-            McpSectionLabel(tr("工具暴露方式", "Tool Exposure"))
-            McpSectionCard {
+            PiSettingsSectionHeader(tr("工具暴露方式", "Tool Exposure"))
+            McpFormCard {
                 val rows = PiMcpConfig.EXPOSURES.chunked(2)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     rows.forEach { pair ->
@@ -245,17 +230,20 @@ internal fun McpEditSheet(
                                     else -> ""
                                 }
                                 Surface(
-                                    onClick = { draft = draft.copy(exposure = option) },
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        draft = draft.copy(exposure = option)
+                                    },
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(10.dp),
                                     color = if (selected) {
-                                        palette.accent.copy(alpha = 0.13f)
+                                        palette.accent.copy(alpha = 0.11f)
                                     } else {
                                         fieldBg
                                     },
                                     border = BorderStroke(
                                         width = if (selected) 1.dp else PiSpacing.hairlineThin,
-                                        color = if (selected) palette.accent.copy(alpha = 0.65f) else fieldBorder,
+                                        color = if (selected) palette.accent.copy(alpha = 0.60f) else fieldBorder,
                                     ),
                                 ) {
                                     Column(
@@ -265,13 +253,13 @@ internal fun McpEditSheet(
                                         Text(
                                             mcpExposureShortLabel(option),
                                             style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
-                                            color = if (selected) palette.accent else palette.text,
+                                            color = if (selected) palette.accent else MaterialTheme.colorScheme.onSurface,
                                             maxLines = 1,
                                         )
                                         Text(
                                             subtitle,
                                             style = PiTheme.text.meta,
-                                            color = if (selected) palette.accent.copy(alpha = 0.85f) else palette.muted,
+                                            color = if (selected) palette.accent.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                         )
@@ -284,19 +272,24 @@ internal fun McpEditSheet(
                 Text(
                     mcpExposureHelp(draft.exposure),
                     style = PiTheme.text.meta,
-                    color = palette.muted,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
             // 3. 连接状态与 OAuth 快捷入口（编辑态）
             if (state != null || (onLogin != null && onLogout != null)) {
-                McpSectionLabel(tr("连接状态与授权", "Status & Auth"))
-                McpSectionCard {
+                PiSettingsSectionHeader(tr("连接状态与授权", "Status & Auth"))
+                McpFormCard {
                     if (state != null) {
                         Text(
                             PiMcpStatus.stateLabel(state),
                             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                            color = if (state.connected || !state.enabled) palette.muted else palette.error,
+                            color = when {
+                                state.connected -> palette.success
+                                !state.enabled -> MaterialTheme.colorScheme.onSurfaceVariant
+                                state.needsAuth -> palette.warning
+                                else -> palette.error
+                            },
                         )
                         state.error?.let { Text(it, style = PiTheme.text.meta, color = palette.error) }
                     }
@@ -307,16 +300,25 @@ internal fun McpEditSheet(
                                 "For OAuth servers, sign in via browser and pi saves the token automatically (save first after changing URL).",
                             ),
                             style = PiTheme.text.meta,
-                            color = palette.muted,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            PiSettingsChip(
-                                text = tr("登录 / 重新登录", "Sign In / Re-authenticate"),
-                                active = state?.needsAuth == true,
-                                onClick = onLogin,
-                            )
-                            PiSettingsChip(
-                                text = tr("退出登录", "Sign Out"),
+                            if (state?.needsAuth == true) {
+                                PiPrimaryButton(
+                                    label = tr("登录 / 重新登录", "Sign In / Re-auth"),
+                                    compact = true,
+                                    onClick = onLogin,
+                                )
+                            } else {
+                                PiSecondaryButton(
+                                    label = tr("登录 / 重新登录", "Sign In / Re-auth"),
+                                    compact = true,
+                                    onClick = onLogin,
+                                )
+                            }
+                            PiSecondaryButton(
+                                label = tr("退出登录", "Sign Out"),
+                                compact = true,
                                 onClick = onLogout,
                             )
                         }
@@ -324,150 +326,181 @@ internal fun McpEditSheet(
                 }
             }
 
-            // 4. 高级选项（可折叠卡片，替换突兀胶囊）
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = PiSettingsMetrics.pageHorizontal),
-                shape = RoundedCornerShape(14.dp),
-                color = palette.cardBg,
+            // 4. 高级选项（可折叠旗舰卡片）
+            PiSettingsCard(
                 border = BorderStroke(
                     PiSpacing.hairlineThin,
-                    if (advanced) palette.accent.copy(alpha = 0.40f) else palette.borderMuted.copy(alpha = 0.72f),
+                    if (advanced) palette.accent.copy(alpha = 0.42f) else palette.borderMuted.copy(alpha = 0.45f),
                 ),
             ) {
-                Column(Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { advanced = !advanced }
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = tr("高级选项", "Advanced Options"),
-                                style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
-                                color = palette.text,
-                            )
-                            Text(
-                                text = tr("说明 · 超时 · OAuth 登记 · 单工具暴露", "Description · Timeout · OAuth · Per-tool exposure"),
-                                style = PiTheme.text.meta,
-                                color = palette.muted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        Icon(
-                            imageVector = if (advanced) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                            contentDescription = null,
-                            tint = if (advanced) palette.accent else palette.muted,
-                            modifier = Modifier.size(20.dp),
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { advanced = !advanced }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = tr("高级选项", "Advanced Options"),
+                            style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = if (draft.http) {
+                                tr("说明 · 超时 · 供应商认证 · OAuth 登记 · 单工具暴露", "Description · Timeout · Provider Auth · OAuth · Per-tool exposure")
+                            } else {
+                                tr("说明 · 超时 · 工作目录 · 单工具暴露", "Description · Timeout · Working Dir · Per-tool exposure")
+                            },
+                            style = PiTheme.text.meta,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    if (advanced) {
-                        HorizontalDivider(
-                            thickness = PiSpacing.hairlineThin,
-                            color = palette.borderMuted.copy(alpha = 0.6f),
+                    Icon(
+                        imageVector = if (advanced) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = null,
+                        tint = if (advanced) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                if (advanced) {
+                    HorizontalDivider(
+                        thickness = PiSpacing.hairlineThin,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        PiEditorField(
+                            value = draft.description,
+                            onValueChange = { draft = draft.copy(description = it) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = tr("说明（可选，给你自己看）", "Description (optional, for your reference)"),
+                            height = PiNumberFieldHeight,
+                            textStyle = PiTheme.text.meta,
+                            container = fieldBg,
+                            idleBorder = fieldBorder,
                         )
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
+                        PiEditorField(
+                            value = draft.timeoutSeconds,
+                            onValueChange = { draft = draft.copy(timeoutSeconds = it) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = tr("超时（秒，留空 = 60）", "Timeout (seconds, blank = 60)"),
+                            placeholder = "60",
+                            height = PiNumberFieldHeight,
+                            container = fieldBg,
+                            idleBorder = fieldBorder,
+                        )
+                        if (!draft.http) {
                             PiEditorField(
-                                value = draft.description,
-                                onValueChange = { draft = draft.copy(description = it) },
+                                value = draft.cwd,
+                                onValueChange = { draft = draft.copy(cwd = it) },
                                 modifier = Modifier.fillMaxWidth(),
-                                label = tr("说明（可选，给你自己看）", "Description (optional, for your reference)"),
-                                height = PiNumberFieldHeight,
-                                textStyle = PiTheme.text.meta,
-                                container = fieldBg,
-                                idleBorder = fieldBorder,
-                            )
-                            PiEditorField(
-                                value = draft.timeoutSeconds,
-                                onValueChange = { draft = draft.copy(timeoutSeconds = it) },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = tr("超时（秒，留空 = 60）", "Timeout (seconds, blank = 60)"),
-                                placeholder = "60",
+                                label = tr("工作目录（可选，留空用当前项目目录）", "Working Directory (optional, defaults to project dir)"),
+                                placeholder = "/workspace/my-project",
                                 height = PiNumberFieldHeight,
                                 container = fieldBg,
                                 idleBorder = fieldBorder,
                             )
-                            if (!draft.http) {
+                        } else {
+                            // Pi SDK 1.6.1: auth.provider（复用已登录的供应商凭据作为 Bearer Token，仅限全局 mcp.json）
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 PiEditorField(
-                                    value = draft.cwd,
-                                    onValueChange = { draft = draft.copy(cwd = it) },
+                                    value = draft.authProvider,
+                                    onValueChange = { draft = draft.copy(authProvider = it) },
                                     modifier = Modifier.fillMaxWidth(),
-                                    label = tr("工作目录（可选，留空用当前项目目录）", "Working Directory (optional, defaults to project dir)"),
-                                    placeholder = "/workspace/my-project",
+                                    enabled = !isProject || draft.authProvider.isNotBlank(),
+                                    label = tr("复用供应商认证（auth.provider，仅全局）", "Reuse Provider Auth (auth.provider, global only)"),
+                                    placeholder = "anthropic / openai / github-copilot",
                                     height = PiNumberFieldHeight,
                                     container = fieldBg,
                                     idleBorder = fieldBorder,
                                 )
-                            } else {
-                                McpOauthFields(draft = draft, onChange = { draft = it })
-                            }
-                            if (state != null && state.tools.isNotEmpty()) {
                                 Text(
-                                    tr(
-                                        "已发现的工具（点一下可加入或取消单工具覆盖）",
-                                        "Discovered tools (tap to toggle per-tool override)",
-                                    ),
-                                    style = PiTheme.text.meta,
-                                    color = palette.muted,
-                                )
-                                val draftExposureMap = remember(draft.toolExposure) {
-                                    draft.toolExposure.lines()
-                                        .mapNotNull { line ->
-                                            val cut = line.indexOf('=')
-                                            if (cut <= 0) null
-                                            else line.substring(0, cut).trim() to line.substring(cut + 1).trim()
-                                        }
-                                        .toMap()
-                                }
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    state.tools.forEach { tool ->
-                                        val current = draftExposureMap[tool] ?: state.toolExposure[tool]
-                                        val inDraft = tool in draftExposureMap
-                                        PiSettingsChip(
-                                            text = if (current == null) tool else "$tool · ${mcpExposureShortLabel(current)}",
-                                            active = inDraft || current != null,
-                                            onClick = {
-                                                if (!inDraft) {
-                                                    val prefix = draft.toolExposure.trimEnd().let { if (it.isEmpty()) "" else "$it\n" }
-                                                    draft = draft.copy(toolExposure = "$prefix$tool=direct")
-                                                } else {
-                                                    val remaining = draft.toolExposure.lines()
-                                                        .filterNot { it.substringBefore('=').trim() == tool }
-                                                        .joinToString("\n")
-                                                    draft = draft.copy(toolExposure = remaining)
-                                                }
-                                            },
+                                    text = if (isProject) {
+                                        tr(
+                                            "为防止项目配置窃取凭据，Pi SDK 仅允许在全局 mcp.json 中使用 auth.provider。",
+                                            "For credential safety, Pi SDK only allows auth.provider in global mcp.json.",
                                         )
+                                    } else {
+                                        tr(
+                                            "填入模型供应商 ID 后，将自动携带该供应商已保存凭据作为 Bearer Token（与请求头 Authorization / OAuth 互斥）。",
+                                            "Reuses a configured model provider's stored credential as Bearer token (mutually exclusive with Authorization header / OAuth).",
+                                        )
+                                    },
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            McpOauthFields(draft = draft, onChange = { draft = it })
+                        }
+                        if (state != null && state.tools.isNotEmpty()) {
+                            Text(
+                                tr(
+                                    "已发现的工具（点一下循环切换：沿用 → 直接 → 检索 → 代码模式 → 隐藏）",
+                                    "Discovered tools (tap to cycle: inherit → direct → deferred → codemode → hidden)",
+                                ),
+                                style = PiTheme.text.meta,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            val draftExposureMap = remember(draft.toolExposure) {
+                                draft.toolExposure.lines()
+                                    .mapNotNull { line ->
+                                        val cut = line.indexOf('=')
+                                        if (cut <= 0) null
+                                        else line.substring(0, cut).trim() to line.substring(cut + 1).trim()
                                     }
+                                    .toMap()
+                            }
+                            val cycleOrder = remember { listOf("direct", "deferred", "codemode", "hidden") }
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                state.tools.forEach { tool ->
+                                    val draftMode = draftExposureMap[tool]
+                                    val current = draftMode ?: state.toolExposure[tool]
+                                    val inDraft = draftMode != null
+                                    PiSettingsChip(
+                                        text = if (current == null) tool else "$tool · ${mcpExposureShortLabel(current)}",
+                                        active = inDraft || current != null,
+                                        onClick = {
+                                            val nextMode = when (draftMode) {
+                                                null -> cycleOrder.first()
+                                                else -> {
+                                                    val idx = cycleOrder.indexOf(draftMode)
+                                                    if (idx < 0 || idx == cycleOrder.lastIndex) null else cycleOrder[idx + 1]
+                                                }
+                                            }
+                                            val kept = draft.toolExposure.lines()
+                                                .map { it.trim() }
+                                                .filter { it.isNotEmpty() && it.substringBefore('=').trim() != tool }
+                                            val updated = if (nextMode == null) kept else kept + "$tool=$nextMode"
+                                            draft = draft.copy(toolExposure = updated.joinToString("\n"))
+                                        },
+                                    )
                                 }
                             }
-                            PiEditorField(
-                                value = draft.toolExposure,
-                                onValueChange = { draft = draft.copy(toolExposure = it) },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = tr("单个工具另行设置（每行 工具名=暴露方式，名字可带 * ）", "Per-Tool Exposure Overrides (tool=mode per line, supports *)"),
-                                placeholder = "search_code=direct\ndelete_*=hidden",
-                                singleLine = false,
-                                maxLines = 6,
-                                minHeight = PiTextFieldMinHeight,
-                                contentPadding = PiFieldPaddingBlock,
-                                container = fieldBg,
-                                idleBorder = fieldBorder,
-                            )
                         }
+                        PiEditorField(
+                            value = draft.toolExposure,
+                            onValueChange = { draft = draft.copy(toolExposure = it) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = tr("单个工具另行设置（每行 工具名=暴露方式，名字可带 * ）", "Per-Tool Exposure Overrides (tool=mode per line, supports *)"),
+                            placeholder = "search_code=direct\ndelete_*=hidden",
+                            singleLine = false,
+                            maxLines = 6,
+                            minHeight = PiTextFieldMinHeight,
+                            contentPadding = PiFieldPaddingBlock,
+                            container = fieldBg,
+                            idleBorder = fieldBorder,
+                        )
                     }
                 }
             }
@@ -478,7 +511,7 @@ internal fun McpEditSheet(
                         .fillMaxWidth()
                         .padding(horizontal = PiSettingsMetrics.pageHorizontal),
                     shape = RoundedCornerShape(10.dp),
-                    color = palette.error.copy(alpha = 0.10f),
+                    color = palette.error.copy(alpha = 0.08f),
                     border = BorderStroke(PiSpacing.hairlineThin, palette.error.copy(alpha = 0.35f)),
                 ) {
                     Text(problem, style = PiTheme.text.meta, color = palette.error, modifier = Modifier.padding(11.dp))
@@ -490,7 +523,7 @@ internal fun McpEditSheet(
                         .fillMaxWidth()
                         .padding(horizontal = PiSettingsMetrics.pageHorizontal),
                     shape = RoundedCornerShape(10.dp),
-                    color = palette.error.copy(alpha = 0.10f),
+                    color = palette.error.copy(alpha = 0.08f),
                     border = BorderStroke(PiSpacing.hairlineThin, palette.error.copy(alpha = 0.35f)),
                 ) {
                     Text(err, style = PiTheme.text.meta, color = palette.error, modifier = Modifier.padding(11.dp))
@@ -498,11 +531,11 @@ internal fun McpEditSheet(
             }
         }
 
-        // ---- 吸底操作栏（永远无需翻越 15 个字段去找保存键） ----
+        // ---- 吸底操作栏（统一 PiSecondaryButton / PiPrimaryButton） ----
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            color = palette.cardBg,
-            border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.50f)),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.50f)),
         ) {
             Row(
                 modifier = Modifier
@@ -512,57 +545,21 @@ internal fun McpEditSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (onDelete != null) {
-                    Surface(
+                    PiSecondaryButton(
+                        label = tr("删除", "Delete"),
+                        tone = palette.error,
                         onClick = { confirmDelete = true },
-                        modifier = Modifier.height(40.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        color = palette.error.copy(alpha = 0.10f),
-                        border = BorderStroke(PiSpacing.hairlineThin, palette.error.copy(alpha = 0.35f)),
-                    ) {
-                        Box(
-                            modifier = Modifier.padding(horizontal = 14.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                tr("删除", "Delete"),
-                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                                color = palette.error,
-                            )
-                        }
-                    }
+                    )
                 }
-                Surface(
+                PiSecondaryButton(
+                    label = tr("取消", "Cancel"),
                     onClick = onDismiss,
-                    modifier = Modifier.height(40.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    color = palette.pageBg.copy(alpha = 0.55f),
-                    border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.72f)),
-                ) {
-                    Box(
-                        modifier = Modifier.padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            tr("取消", "Cancel"),
-                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                            color = palette.text,
-                        )
-                    }
-                }
-                Surface(
+                )
+                PiPrimaryButton(
+                    label = tr("保存配置", "Save"),
+                    modifier = Modifier.weight(1f),
                     onClick = { if (problem == null) onSave(draft) else showProblem = true },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    color = palette.accent,
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            tr("保存配置", "Save"),
-                            style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
-                            color = palette.contrastOn(palette.accent),
-                        )
-                    }
-                }
+                )
             }
         }
     }
@@ -586,7 +583,7 @@ internal fun McpEditSheet(
 
 private fun PiMcpConfig.Draft.hasAdvanced(): Boolean =
     description.isNotBlank() || timeoutSeconds.isNotBlank() || cwd.isNotBlank() ||
-        toolExposure.isNotBlank() || hasOauth()
+        authProvider.isNotBlank() || toolExposure.isNotBlank() || hasOauth()
 
 private fun PiMcpConfig.Draft.hasOauth(): Boolean =
     oauthClientRegistration.isNotBlank() || listOf(
@@ -594,12 +591,10 @@ private fun PiMcpConfig.Draft.hasOauth(): Boolean =
     ).any { it.isNotBlank() }
 
 /** OAuth 高级项：只在服务器不支持动态注册 / 要预注册客户端 / 要指定回调时才需要。 */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun McpOauthFields(draft: PiMcpConfig.Draft, onChange: (PiMcpConfig.Draft) -> Unit) {
-    val palette = PiTheme.palette
-    val fieldBg = palette.pageBg.copy(alpha = 0.55f)
-    val fieldBorder = palette.borderMuted.copy(alpha = 0.75f)
+    val fieldBg = MaterialTheme.colorScheme.surfaceContainerLowest
+    val fieldBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         PiEditorField(
             value = draft.oauthClientId,
@@ -669,30 +664,21 @@ private fun McpOauthFields(draft: PiMcpConfig.Draft, onChange: (PiMcpConfig.Draf
             Text(
                 tr("客户端登记方式（clientRegistration）", "Client Registration Mode"),
                 style = PiTheme.text.meta,
-                color = palette.muted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                listOf(
-                    "" to tr("自动 (auto)", "Auto"),
-                    "dcr" to "DCR",
-                    "cimd" to "CIMD",
-                ).forEach { (value, label) ->
-                    PiSettingsChip(
-                        text = label,
-                        active = draft.oauthClientRegistration == value,
-                        onClick = { onChange(draft.copy(oauthClientRegistration = value)) },
-                    )
-                }
-            }
+            val regValues = listOf("", "dcr", "cimd")
+            val regIndex = regValues.indexOf(draft.oauthClientRegistration).coerceAtLeast(0)
+            McpSegmentedTrack(
+                options = listOf(tr("自动", "Auto"), "DCR", "CIMD"),
+                selectedIndex = regIndex,
+                onSelect = { idx -> onChange(draft.copy(oauthClientRegistration = regValues[idx])) },
+            )
         }
     }
 }
 
 /** 粘贴或选择 `.json` 文件导入别的客户端的配置，实时预览检测到的服务器，转成 pi 的写法并入当前 mcp.json（同名不覆盖）。 */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun McpImportSheet(
     onDismiss: () -> Unit,
@@ -704,8 +690,8 @@ internal fun McpImportSheet(
     var fallbackName by remember { mutableStateOf("imported") }
     var readError by remember { mutableStateOf<String?>(null) }
     val palette = PiTheme.palette
-    val fieldBg = palette.pageBg.copy(alpha = 0.55f)
-    val fieldBorder = palette.borderMuted.copy(alpha = 0.75f)
+    val fieldBg = MaterialTheme.colorScheme.surfaceContainerLowest
+    val fieldBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         runCatching {
@@ -741,11 +727,11 @@ internal fun McpImportSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(tr("导入 MCP 配置", "Import MCP Config"), style = PiType.title, color = palette.text)
+                Text(tr("导入 MCP 配置", "Import MCP Config"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
                 Text(
                     tr("兼容 Claude Desktop、Cursor、OpenCode 与标准 mcp.json 格式，同名不覆盖。", "Compatible with Claude Desktop, Cursor, OpenCode, and standard mcp.json; existing names are kept."),
                     style = PiTheme.text.meta,
-                    color = palette.muted,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Row(
@@ -753,23 +739,18 @@ internal fun McpImportSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Surface(
+                PiSecondaryButton(
+                    label = tr("选择 .json 文件", "Pick .json"),
+                    leadingIcon = Icons.Filled.FolderOpen,
+                    modifier = Modifier.weight(1f),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     onClick = { filePicker.launch(arrayOf("application/json", "text/plain", "*/*")) },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    shape = RoundedCornerShape(9.dp),
-                    color = palette.cardBg,
-                    border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-                    ) {
-                        Icon(Icons.Filled.FolderOpen, contentDescription = null, tint = palette.accent, modifier = Modifier.size(16.dp))
-                        Text(tr("选择 .json 文件", "Pick .json"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = palette.text)
-                    }
-                }
-                Surface(
+                )
+                PiSecondaryButton(
+                    label = tr("粘贴剪贴板", "Paste"),
+                    leadingIcon = Icons.Filled.ContentPaste,
+                    modifier = Modifier.weight(1f),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     onClick = {
                         val clip = clipboard.getText()?.text
                         if (!clip.isNullOrBlank()) {
@@ -777,20 +758,7 @@ internal fun McpImportSheet(
                             readError = null
                         }
                     },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    shape = RoundedCornerShape(9.dp),
-                    color = palette.cardBg,
-                    border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-                    ) {
-                        Icon(Icons.Filled.ContentPaste, contentDescription = null, tint = palette.accent, modifier = Modifier.size(16.dp))
-                        Text(tr("粘贴剪贴板", "Paste"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = palette.text)
-                    }
-                }
+                )
             }
             PiEditorField(
                 value = text,
@@ -822,8 +790,8 @@ internal fun McpImportSheet(
             if (preview.entries.isNotEmpty()) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(11.dp),
-                    color = palette.cardBg,
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
                     border = BorderStroke(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.40f)),
                 ) {
                     Column(
@@ -844,12 +812,12 @@ internal fun McpImportSheet(
                                 Text(
                                     entry.name,
                                     style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = palette.text,
+                                    color = MaterialTheme.colorScheme.onSurface,
                                 )
                                 Text(
                                     if (entry.isHttp) "HTTP" else "STDIO",
                                     style = PiTheme.text.monoSmall,
-                                    color = palette.muted,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f),
@@ -862,44 +830,28 @@ internal fun McpImportSheet(
         }
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            color = palette.cardBg,
-            border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.50f)),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.50f)),
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Surface(
+                PiSecondaryButton(
+                    label = tr("取消", "Cancel"),
                     onClick = onDismiss,
-                    modifier = Modifier.height(40.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    color = palette.pageBg.copy(alpha = 0.55f),
-                    border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.72f)),
-                ) {
-                    Box(modifier = Modifier.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
-                        Text(tr("取消", "Cancel"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = palette.text)
-                    }
-                }
+                )
                 val canImport = text.isNotBlank() && preview.error == null && preview.entries.isNotEmpty()
-                Surface(
-                    onClick = { onImport(text, fallbackName.trim().ifEmpty { "imported" }) },
+                PiPrimaryButton(
+                    label = if (preview.entries.size > 1) tr("导入 ${preview.entries.size} 个", "Import ${preview.entries.size}")
+                    else tr("导入", "Import"),
                     enabled = canImport,
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (canImport) palette.accent else palette.pageBg.copy(alpha = 0.45f),
-                    border = if (canImport) null else BorderStroke(PiSpacing.hairlineThin, palette.borderMuted),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            if (preview.entries.size > 1) tr("导入 ${preview.entries.size} 个", "Import ${preview.entries.size}")
-                            else tr("导入", "Import"),
-                            style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
-                            color = if (canImport) palette.contrastOn(palette.accent) else palette.muted,
-                        )
-                    }
-                }
+                    modifier = Modifier.weight(1f),
+                    onClick = { onImport(text, fallbackName.trim().ifEmpty { "imported" }) },
+                )
             }
         }
     }

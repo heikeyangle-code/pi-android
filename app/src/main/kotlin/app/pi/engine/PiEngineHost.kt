@@ -437,9 +437,42 @@ class PiEngineHost(private val appContext: Context) {
         repair: Boolean = false,
     ): Boot =
         withContext(Dispatchers.IO) {
+            // 0. If an engine is already running (e.g. user triggered Repair or Rebuild from
+            //    Settings), stop and reap it BEFORE touching the volatile runtime tree so
+            //    `wipe()` / overwrite extraction never deletes files underneath a live Node/PRoot
+            //    process or leaks an orphan guest process tree.
+            val existing = _session.value
+            if (existing != null) {
+                exitWatcherJob?.cancel()
+                exitWatcherJob = null
+                val previousLaunch = engineLaunch
+                val previousTree = captureEngineTree(previousLaunch)
+                runCatching { existing.closeAfterSettling() }
+                if (rebuild || repair) {
+                    if (previousTree != null) {
+                        runCatching { GuestTreeReaper.reap(previousTree) }
+                    }
+                    previousLaunch?.deleteConfig()
+                } else {
+                    reapEngineTree(previousTree, previousLaunch, "重新启动前停止旧引擎")
+                }
+                engineLaunch = null
+                activeEngine = null
+                publish(null)
+            }
+
             // 1. Runtime payload.
-            val provisioned = provisioner.ensureReady(revision, rebuild, repair, onStep)
+            val provisioned = provisioner.ensureReady(
+                revision = revision,
+                rebuild = rebuild,
+                repair = repair,
+                trailingSteps = 2,
+                onStep = onStep,
+            )
             val outcome = provisioned.getOrNull()
+            val showTrailingSteps = outcome != null &&
+                (outcome.reextracted.isNotEmpty() || outcome.rebuilt) &&
+                outcome.totalSteps >= 2
 
             // 1b. The durable boot audit (BootAudit). Recorded on the background scope,
             //     never awaited: it walks the workspace root and the agent dir's direct
@@ -480,6 +513,19 @@ class PiEngineHost(private val appContext: Context) {
             // 2. Prove the runtime can actually execute before pretending it can.
             //    Cheap, and it converts an inscrutable mid-turn failure into a clear
             //    diagnosis (see RuntimeSelfCheck for why this cannot be assumed).
+            if (showTrailingSteps && outcome != null) {
+                onStep(
+                    RuntimeProvisioner.Step(
+                        label = app.pi.i18n.tr("验证容器运行环境", "Verifying container runtime"),
+                        index = outcome.totalSteps - 2,
+                        total = outcome.totalSteps,
+                        detail = app.pi.i18n.tr("检查 Linux 容器与 Node.js 执行能力", "Probing Linux container & Node.js execution"),
+                        subProgress = 0.35f,
+                        mode = outcome.mode,
+                        phaseKey = "selfcheck",
+                    ),
+                )
+            }
             val selfCheck = RuntimeSelfCheck(paths)
             val check = selfCheck.run(storage = android.os.Environment.getExternalStorageDirectory())
             if (!check.ok) {
@@ -512,6 +558,19 @@ class PiEngineHost(private val appContext: Context) {
             //    is re-published on every boot, which is the documented recovery path
             //    after a rootfs re-extract. Idempotent and non-fatal by design — a
             //    device-bridge failure must not cost the user their agent.
+            if (showTrailingSteps && outcome != null) {
+                onStep(
+                    RuntimeProvisioner.Step(
+                        label = app.pi.i18n.tr("启动 Pi 引擎与会话宿主", "Starting Pi engine & session host"),
+                        index = outcome.totalSteps - 1,
+                        total = outcome.totalSteps,
+                        detail = app.pi.i18n.tr("拉起本地 Node 宿主并连接官方 Pi SDK", "Launching local Node host & official Pi SDK"),
+                        subProgress = 0.55f,
+                        mode = outcome.mode,
+                        phaseKey = "launch",
+                    ),
+                )
+            }
             val preSpawnExternalEntries = coroutineScope {
                 val bridgeJob = async(Dispatchers.IO) {
                     runCatching { DeviceBridgeController.start(appContext) }

@@ -382,7 +382,7 @@ fun checkNewProviderId(id: String, customIds: Set<String>, knownIds: Set<String>
     }
 }
 
-/** 常用的协议（`api`），其余 KnownApi 走自由输入。 */
+/** 常用的协议（`api`，对齐 `@earendil-works/pi-ai` `KnownApi`），其余走自由输入。 */
 data class ApiChoice(val api: String, val label: String)
 
 val COMMON_APIS: List<ApiChoice>
@@ -391,4 +391,26 @@ val COMMON_APIS: List<ApiChoice>
         ApiChoice("openai-responses", "OpenAI Responses"),
         ApiChoice("anthropic-messages", "Anthropic"),
         ApiChoice("google-generative-ai", "Gemini"),
+        ApiChoice("azure-openai-responses", "Azure Responses"),
+        ApiChoice("bedrock-converse-stream", "Bedrock"),
+    )
+
+/** `compat.thinkingFormat` 常用值（对齐 `@earendil-works/pi-ai/providers/compat-schema`）。 */
+val COMMON_THINKING_FORMATS: List<Pair<String, String>>
+    get() = listOf(
+        "" to tr("自动", "Auto"),
+        "openai" to "openai",
+        "deepseek" to "deepseek",
+        "qwen" to "qwen",
+        "zai" to "zai",
+        "openrouter" to "openrouter",
+        "chat-template" to "chat-template",
+    )
+
+/** `compat.maxTokensField` 合法取值（对齐 `@earendil-works/pi-ai/providers/compat-schema`）。 */
+val MAX_TOKENS_FIELD_OPTIONS: List<Pair<String, String>>
+    get() = listOf(
+        "" to tr("自动", "Auto"),
+        "max_completion_tokens" to "max_completion_tokens",
+        "max_tokens" to "max_tokens",
     )

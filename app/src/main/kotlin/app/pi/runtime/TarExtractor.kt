@@ -248,6 +248,8 @@ class TarExtractor(
                         .exceptionOrNull()
                     if (linkError == null && isSymlink(target)) {
                         symlinksWritten++
+                        verifiedDirs.remove(target.path)
+                        canonicalParentCache.clear()
                     } else {
                         if (isSymlink(target)) runCatching { Files.deleteIfExists(target.toPath()) }
                         // Deferred on purpose: the target usually does not exist yet (the
@@ -541,16 +543,20 @@ class TarExtractor(
      * a symlink (never its target), a regular file, or an empty directory.
      */
     private fun unlinkIfPresent(path: File) {
-        verifiedDirs.remove(path.path)
-        canonicalParentCache.clear()
         if (isSymlink(path)) {
+            verifiedDirs.remove(path.path)
+            canonicalParentCache.clear()
             runCatching { Files.deleteIfExists(path.toPath()) }
             return
         }
         if (!path.exists()) return
+        val wasDir = path.isDirectory
         // `delete()` on a directory succeeds only when it is empty; a non-empty one is
         // left in place on purpose (see [ensureDirectory]).
-        path.delete()
+        if (path.delete() && wasDir) {
+            verifiedDirs.remove(path.path)
+            canonicalParentCache.clear()
+        }
     }
 
     private fun isSymlink(path: File): Boolean =

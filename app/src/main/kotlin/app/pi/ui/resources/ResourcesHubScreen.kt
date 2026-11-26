@@ -3,6 +3,7 @@ package app.pi.ui.resources
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -285,16 +286,15 @@ private fun Hub(
                             Triple(tr("提示模板", "Prompt Templates"), "prompts", Type.Prompts),
                             Triple(tr("主题", "Themes"), "themes", Type.Themes),
                         ).forEachIndexed { i, (label, page, type) ->
-                            if (i > 0) ModelsDivider()
-                            val (icon, tint) = when (type) {
-                                Type.Extensions -> Icons.Filled.Extension to palette.accent
-                                Type.Skills -> Icons.Filled.AutoAwesome to palette.success
-                                Type.Prompts -> Icons.Filled.Description to palette.warning
-                                Type.Themes -> Icons.Filled.Palette to palette.borderAccent
+                            if (i > 0) ModelsDivider(startIndent = 60.dp)
+                            val icon = when (type) {
+                                Type.Extensions -> Icons.Filled.Extension
+                                Type.Skills -> Icons.Filled.AutoAwesome
+                                Type.Prompts -> Icons.Filled.Description
+                                Type.Themes -> Icons.Filled.Palette
                             }
                             HubRow(
                                 icon = icon,
-                                iconTint = tint,
                                 title = label,
                                 summary = if (model.hasLoaded) typeSummary(type, ov) else "",
                                 badge = if (model.hasLoaded) {
@@ -305,10 +305,9 @@ private fun Hub(
                                 onClick = { onOpen(page) },
                             )
                         }
-                        ModelsDivider()
+                        ModelsDivider(startIndent = 60.dp)
                         HubRow(
                             icon = Icons.AutoMirrored.Filled.Article,
-                            iconTint = palette.muted,
                             title = tr("上下文与系统提示", "Context & System Prompt"),
                             summary = if (model.hasLoaded) contextSummary(model) else "",
                             badge = null,
@@ -320,13 +319,11 @@ private fun Hub(
         }
 
         item {
-            val palette = PiTheme.palette
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                 ModelsSectionLabel(tr("扩展包", "Packages"))
                 ModelsCard {
                     HubRow(
                         icon = Icons.Filled.Inventory2,
-                        iconTint = palette.accent,
                         title = tr("管理扩展包", "Manage Packages"),
                         summary = packagesSummary(model),
                         badge = ov.installFailures.takeIf { it > 0 }?.let { tr("$it 个没装上", "$it failed") },
@@ -337,23 +334,20 @@ private fun Hub(
         }
 
         item {
-            val palette = PiTheme.palette
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                 ModelsSectionLabel(tr("参数与选项", "Flags & Options"))
                 ModelsCard {
                     Column {
                         HubRow(
                             icon = Icons.Filled.Flag,
-                            iconTint = palette.borderAccent,
                             title = tr("扩展运行时参数（flag）", "Extension Runtime Flags"),
                             summary = tr("查看扩展注册的 --flag 并即时修改当前值", "Inspect --flag options registered by extensions and update them live"),
                             badge = null,
                             onClick = onOpenFlags,
                         )
-                        ModelsDivider()
+                        ModelsDivider(startIndent = 60.dp)
                         HubRow(
                             icon = Icons.Filled.Tune,
-                            iconTint = palette.warning,
                             title = tr("包安装与命令选项", "Package Install & Command Options"),
                             summary = tr("/skill:name 命令开关、npm 镜像命令、安装遥测", "/skill:name command toggle, npm mirror command, install telemetry"),
                             badge = null,
@@ -383,7 +377,7 @@ private fun Hub(
                     ModelsCard {
                         Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                             problems.take(10).forEach { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.warning) }
-                            if (problems.size > 10) Text(tr("还有 ${problems.size - 10} 条，在各类资源页里看。", "${problems.size - 10} more; view details in each resource screen."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                            if (problems.size > 10) Text(tr("还有 ${problems.size - 10} 条，在各类资源页里看。", "${problems.size - 10} more; view details in each resource screen."), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -417,39 +411,44 @@ private fun packagesSummary(model: ResourcesModel): String {
 @Composable
 private fun HubRow(
     icon: ImageVector,
-    iconTint: Color,
     title: String,
     summary: String,
     badge: String?,
     onClick: () -> Unit,
 ) {
+    val shape = RoundedCornerShape(10.dp)
     Row(
         Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = ModelsCardPadding, vertical = 11.dp),
+            .padding(horizontal = ModelsCardPadding, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(
             modifier = Modifier
                 .size(34.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(iconTint.copy(alpha = 0.14f)),
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .border(
+                    PiSpacing.hairlineThin,
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                    shape,
+                ),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = iconTint,
-                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(17.dp),
             )
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 title,
                 style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
-                color = PiTheme.palette.text,
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -457,7 +456,7 @@ private fun HubRow(
                 Text(
                     summary,
                     style = PiTheme.text.meta,
-                    color = PiTheme.palette.muted,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -467,7 +466,7 @@ private fun HubRow(
         Icon(
             Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
-            tint = PiTheme.palette.dim,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
             modifier = Modifier.size(18.dp),
         )
     }

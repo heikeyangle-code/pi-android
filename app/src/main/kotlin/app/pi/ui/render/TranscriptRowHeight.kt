@@ -122,10 +122,16 @@ private const val REMEMBERED_ROW_HEIGHT_FRAMES = 12
  *   anything at all.
  */
 @Composable
-internal fun Modifier.rememberedRowHeight(rowKey: String, contentReady: Boolean): Modifier {
+internal fun Modifier.rememberedRowHeight(
+    rowKey: String,
+    contentReady: Boolean,
+    hasMarkdown: Boolean = false,
+): Modifier {
     val remembered = remember(rowKey) { RowHeightCache.shared.of(rowKey) }
-    // The measurement backstop: the content laid itself out at a real height, so whatever the
-    // floor was holding up is no longer needed.
+    // The measurement backstop: for non-markdown rows, a non-zero measurement means the row is
+    // already at its true height. For markdown rows, chrome/padding around an unparsed `Box()`
+    // would otherwise report a small non-zero height on frame 0 and prematurely drop the floor or
+    // overwrite the cached height, causing a collapse-then-pop jump above the viewport.
     var measured by remember(rowKey) { mutableStateOf(false) }
     val settled = contentReady || measured
     // The fallback expiry. It reads `settled` rather than counting frames as the mechanism, so
@@ -149,7 +155,7 @@ internal fun Modifier.rememberedRowHeight(rowKey: String, contentReady: Boolean)
     // while the remembered part must keep one identity. `Modifier.then` returns `this` for
     // the empty modifier, so the common case (no highlight) hands the remembered instance
     // straight through.
-    val heightModifier = remember(rowKey, floor, density) {
+    val heightModifier = remember(rowKey, floor, density, hasMarkdown, contentReady) {
         val floorPx = floor?.let { with(density) { it.roundToPx() } }
         if (floorPx != null && floorPx > 0) {
             // Measure the child's REAL height (`placeable.height`) inside `layout`, NOT via a
@@ -157,7 +163,7 @@ internal fun Modifier.rememberedRowHeight(rowKey: String, contentReady: Boolean)
             // and prematurely released the floor on Frame 1 while markdown was still State.Loading!).
             Modifier.layout { measurable, constraints ->
                 val placeable = measurable.measure(constraints)
-                if (placeable.height > 0) {
+                if (placeable.height > 0 && (!hasMarkdown || contentReady)) {
                     RowHeightCache.shared.record(rowKey, placeable.height)
                     measured = true
                 }
@@ -167,7 +173,7 @@ internal fun Modifier.rememberedRowHeight(rowKey: String, contentReady: Boolean)
             }
         } else {
             Modifier.onSizeChanged { size ->
-                if (size.height > 0) {
+                if (size.height > 0 && (!hasMarkdown || contentReady)) {
                     RowHeightCache.shared.record(rowKey, size.height)
                 }
             }

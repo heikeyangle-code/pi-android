@@ -1,8 +1,11 @@
 package app.pi.ui.screens
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -173,12 +176,11 @@ internal fun WsBadge(
 ) {
     val palette = PiTheme.palette
     val color = stateToneColor(tone, palette)
-    val badgeShape = RoundedCornerShape(6.dp)
+    val badgeShape = RoundedCornerShape(999.dp)
     Row(
         modifier = modifier
             .clip(badgeShape)
-            .background(color.copy(alpha = 0.12f))
-            .border(PiSpacing.hairlineThin, color.copy(alpha = 0.24f), badgeShape)
+            .background(color.copy(alpha = 0.11f))
             .padding(start = 6.dp, end = 7.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
@@ -187,7 +189,7 @@ internal fun WsBadge(
             Box(
                 Modifier
                     .size(5.dp)
-                    .clip(RoundedCornerShape(2.dp))
+                    .clip(CircleShape)
                     .background(color),
             )
         }
@@ -211,7 +213,7 @@ internal fun WsBadge(
 // ------------------------------------------------------------------ 胶囊 ----
 
 /**
- * 紧凑动作按钮：统一圆角 8dp 轻盈层次，告别高饱和大药丸。
+ * 紧凑动作胶囊：非实底走中性细描边，实底走高对比中性反白，与设置页和会话页完全统一。
  */
 @Composable
 internal fun WsChip(
@@ -222,19 +224,26 @@ internal fun WsChip(
     glyph: String? = null,
     glyphIcon: ImageVector? = null,
 ) {
+    val isDark = PiTheme.isDark
     val palette = PiTheme.palette
-    val chipShape = RoundedCornerShape(8.dp)
-    val contentColor = if (solid) palette.accent else palette.text.copy(alpha = 0.88f)
-    val bgColor = if (solid) palette.accent.copy(alpha = 0.15f) else palette.cardBg
-    val borderColor = if (solid) palette.accent.copy(alpha = 0.42f) else palette.borderMuted.copy(alpha = 0.65f)
+    val chipShape = RoundedCornerShape(999.dp)
+    val contentColor = if (solid) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface
+    val bgColor = if (solid) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerLow
+    val borderColor = if (solid) {
+        Color.Transparent
+    } else {
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f)
+    }
     Row(
         modifier = modifier
             .height(if (solid) 30.dp else 28.dp)
             .clip(chipShape)
             .background(bgColor)
-            .border(if (solid) 1.dp else PiSpacing.hairlineThin, borderColor, chipShape)
+            .then(
+                if (!solid) Modifier.border(PiSpacing.hairlineThin, borderColor, chipShape) else Modifier,
+            )
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = if (solid) 11.dp else 9.dp),
+            .padding(horizontal = if (solid) 12.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
@@ -243,14 +252,14 @@ internal fun WsChip(
                 glyphIcon,
                 contentDescription = null,
                 modifier = Modifier.size(15.dp),
-                tint = if (solid) palette.accent else palette.muted,
+                tint = if (solid) contentColor else palette.muted,
             )
         }
         if (glyph != null) {
             Text(
                 glyph,
                 style = PiTheme.text.monoSmall,
-                color = if (solid) palette.accent else palette.muted,
+                color = if (solid) contentColor else palette.muted,
                 maxLines = 1,
             )
         }
@@ -510,6 +519,7 @@ internal object WsShape {
  *   资源名都是无衬线的 15/Medium。
  * @param value 右侧读数（`+N −M`、`12 项`），等宽。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun WsRow(
     title: String,
@@ -534,11 +544,24 @@ internal fun WsRow(
     value: (@Composable () -> Unit)? = null,
     trail: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
 ) {
+    val clickModifier = when {
+        onClick != null && onLongClick != null -> Modifier.combinedClickable(
+            onClick = onClick,
+            onLongClick = onLongClick,
+        )
+        onClick != null -> Modifier.clickable(onClick = onClick)
+        onLongClick != null -> Modifier.combinedClickable(
+            onClick = {},
+            onLongClick = onLongClick,
+        )
+        else -> Modifier
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(clickModifier)
             .padding(
                 start = PiSettingsMetrics.rowPaddingHorizontal,
                 end = if (trail != null) 8.dp else PiSettingsMetrics.rowPaddingHorizontal,
@@ -686,6 +709,7 @@ internal val LocalInsideWsSheet = compositionLocalOf { false }
 /** 一张卡（稿子的 `Card`）：`surf-low` 底、圆角 10、左右 14 的页边。 */
 @Composable
 internal fun WsCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val isDark = PiTheme.isDark
     val bg = if (LocalInsideWsSheet.current) {
         PiSheetChromeMetrics.sheetCardBg
     } else {
@@ -697,6 +721,10 @@ internal fun WsCard(modifier: Modifier = Modifier, content: @Composable () -> Un
             .padding(horizontal = PiSettingsMetrics.pageHorizontal),
         shape = RoundedCornerShape(WsShape.medium),
         color = bg,
+        border = BorderStroke(
+            PiSpacing.hairlineThin,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.42f else 0.65f),
+        ),
     ) {
         Column { content() }
     }

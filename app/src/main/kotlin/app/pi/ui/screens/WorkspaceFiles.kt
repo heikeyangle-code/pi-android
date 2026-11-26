@@ -7,11 +7,16 @@ import app.pi.protocol.ToolCall
 import app.pi.protocol.TranscriptItem
 import app.pi.protocol.ToolStatus
 import app.pi.ui.blocks.argString
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 /**
  * 工作区目录树的一层，读在磁盘上，画在「全部文件」里。
@@ -354,6 +359,319 @@ internal object WorkspaceFiles {
             }
             if (source.canExecute()) target.setExecutable(true, true)
         }
+    }
+
+    private const val MAX_ZIP_ENTRIES = 4_000
+    private const val MAX_ZIP_BYTES = 256L * 1024L * 1024L
+    private const val MAX_PROPERTIES_VISITS = 15_000
+
+    fun isZipFile(file: File): Boolean =
+        file.isFile && file.name.lowercase(Locale.US).endsWith(".zip")
+
+    private fun isAncestorOrSame(ancestor: File, candidate: File): Boolean {
+        val a = runCatching { ancestor.canonicalPath }.getOrDefault(ancestor.absolutePath).trimEnd('/')
+        val c = runCatching { candidate.canonicalPath }.getOrDefault(candidate.absolutePath).trimEnd('/')
+        return c == a || c.startsWith("$a/")
+    }
+
+    /**
+     * 将文件或目录复制到目标目录（不跟随符号链接，自动防重名、拦截父目录复制到子目录的死循环）。
+     */
+    fun copyTo(source: File, destDir: File): Result<File> = runCatching {
+        if (!source.exists()) throw java.io.FileNotFoundException(tr("源文件不存在。", "Source does not exist."))
+        if (!destDir.isDirectory) throw java.io.IOException(tr("目标位置不是有效目录。", "Destination is not a valid folder."))
+        if (source.isDirectory && isAncestorOrSame(source, destDir)) {
+            throw java.io.IOException(tr("不能把文件夹复制到它自身或子目录里。", "Cannot copy a folder into itself or a subfolder."))
+        }
+        val direct = File(destDir, source.name)
+        val target = if (!direct.exists()) direct else uniqueCopyTarget(destDir, source.name, source.isDirectory)
+        if (!source.isDirectory && WorkspacePiWrite.isPiJsonTarget(target)) {
+            throw java.io.IOException(WorkspacePiWrite.creationRefusalSentence())
+        }
+        copyNoFollow(source, target)
+        target
+    }
+
+    /**
+     * 将文件或目录移动到目标目录（优先原子 `renameTo`，跨文件系统自动退化为无跟随复制 + 删除）。
+     */
+    fun moveTo(source: File, destDir: File): Result<File> = runCatching {
+        if (!source.exists()) throw java.io.FileNotFoundException(tr("源文件不存在。", "Source does not exist."))
+        if (!destDir.isDirectory) throw java.io.IOException(tr("目标位置不是有效目录。", "Destination is not a valid folder."))
+        val srcParent = source.parentFile?.let { runCatching { it.canonicalPath }.getOrDefault(it.absolutePath) }
+        val dstPath = runCatching { destDir.canonicalPath }.getOrDefault(destDir.absolutePath)
+        if (srcParent != null && srcParent == dstPath) {
+            throw java.io.IOException(tr("已在当前目录中，无需移动。", "Already in this folder."))
+        }
+        if (source.isDirectory && isAncestorOrSame(source, destDir)) {
+            throw java.io.IOException(tr("不能把文件夹移动到它自身或子目录里。", "Cannot move a folder into itself or a subfolder."))
+        }
+        val direct = File(destDir, source.name)
+        val target = if (!direct.exists()) direct else uniqueImportTarget(destDir, source.name)
+        if (!source.isDirectory && WorkspacePiWrite.isPiJsonImport(source, target)) {
+            throw java.io.IOException(WorkspacePiWrite.creationRefusalSentence())
+        }
+        if (source.renameTo(target)) return@runCatching target
+        copyNoFollow(source, target)
+        delete(source).getOrThrow()
+        target
+    }
+
+    /**
+     * 将一个或多个文件/目录打包为 ZIP 压缩包（不跟随符号链接，自动避开重名与输出文件自身）。
+     */
+    fun zipEntries(sources: List<File>, destDir: File, archiveName: String): Result<File> = runCatching {
+        if (sources.isEmpty()) throw java.io.IOException(tr("没有可压缩的条目。", "No items selected to compress."))
+        if (!destDir.isDirectory) throw java.io.IOException(tr("目标目录不可用。", "Destination directory is unavailable."))
+        val baseClean = archiveName.trim().ifEmpty { "archive" }
+        val fileName = if (baseClean.lowercase(Locale.US).endsWith(".zip")) baseClean else "$baseClean.zip"
+        val outFile = uniqueImportTarget(destDir, fileName)
+        val outCanonical = runCatching { outFile.canonicalPath }.getOrDefault(outFile.absolutePath)
+        var entryCount = 0
+        var totalBytes = 0L
+        val buffer = ByteArray(32 * 1024)
+        try {
+            ZipOutputStream(BufferedOutputStream(FileOutputStream(outFile))).use { zos ->
+                fun addRecursive(file: File, entryPath: String) {
+                    val canon = runCatching { file.canonicalPath }.getOrDefault(file.absolutePath)
+                    if (canon == outCanonical) return
+                    val isLink = runCatching { java.nio.file.Files.isSymbolicLink(file.toPath()) }.getOrDefault(false)
+                    if (isLink) return
+                    if (entryCount >= MAX_ZIP_ENTRIES) {
+                        throw java.io.IOException(tr("压缩条目超过上限（$MAX_ZIP_ENTRIES 项）。", "Too many entries to compress (limit $MAX_ZIP_ENTRIES)."))
+                    }
+                    if (file.isDirectory) {
+                        val dirEntry = if (entryPath.endsWith("/")) entryPath else "$entryPath/"
+                        val children = file.listFiles()
+                        if (children == null || children.isEmpty()) {
+                            entryCount++
+                            zos.putNextEntry(ZipEntry(dirEntry))
+                            zos.closeEntry()
+                        } else {
+                            children.sortedBy { it.name.lowercase(Locale.US) }.forEach { child ->
+                                addRecursive(child, dirEntry + child.name)
+                            }
+                        }
+                    } else if (file.isFile) {
+                        entryCount++
+                        zos.putNextEntry(ZipEntry(entryPath))
+                        file.inputStream().use { input ->
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read <= 0) break
+                                totalBytes += read
+                                if (totalBytes > MAX_ZIP_BYTES) {
+                                    throw java.io.IOException(tr("压缩总大小超过 256 MB 上限。", "Archive size exceeds 256 MB safety limit."))
+                                }
+                                zos.write(buffer, 0, read)
+                            }
+                        }
+                        zos.closeEntry()
+                    }
+                }
+                sources.forEach { src ->
+                    if (src.exists()) addRecursive(src, src.name)
+                }
+            }
+            outFile
+        } catch (t: Throwable) {
+            outFile.delete()
+            throw t
+        }
+    }
+
+    /**
+     * 将 ZIP 文件安全解压到目标目录（严格校验 Zip-Slip 规范路径，限制条目数与总解压体积）。
+     */
+    fun unzipTo(zipFile: File, destDir: File): Result<Int> = runCatching {
+        if (!zipFile.isFile) throw java.io.FileNotFoundException(tr("压缩包不存在。", "Archive does not exist."))
+        if (!destDir.isDirectory && !destDir.mkdirs()) {
+            throw java.io.IOException(tr("无法创建解压目标目录。", "Unable to create destination directory."))
+        }
+        val destCanonical = runCatching { destDir.canonicalPath }.getOrDefault(destDir.absolutePath).trimEnd('/')
+        var extracted = 0
+        var totalBytes = 0L
+        val buffer = ByteArray(32 * 1024)
+        ZipInputStream(zipFile.inputStream().buffered()).use { zis ->
+            while (true) {
+                val entry = zis.nextEntry ?: break
+                if (extracted >= MAX_ZIP_ENTRIES) {
+                    throw java.io.IOException(tr("压缩包条目超过上限（$MAX_ZIP_ENTRIES 项）。", "Archive exceeds entry limit ($MAX_ZIP_ENTRIES)."))
+                }
+                val name = entry.name.replace('\\', '/').trimStart('/')
+                if (name.isEmpty()) {
+                    zis.closeEntry()
+                    continue
+                }
+                val outFile = File(destDir, name)
+                val outCanonical = runCatching { outFile.canonicalPath }.getOrDefault(outFile.absolutePath)
+                if (outCanonical != destCanonical && !outCanonical.startsWith("$destCanonical/")) {
+                    throw java.io.IOException(tr("检测到不安全的压缩包路径（已拦截 Zip-Slip）：$name", "Blocked unsafe archive path (Zip-Slip): $name"))
+                }
+                if (entry.isDirectory) {
+                    outFile.mkdirs()
+                } else {
+                    outFile.parentFile?.mkdirs()
+                    FileOutputStream(outFile).use { fos ->
+                        while (true) {
+                            val read = zis.read(buffer)
+                            if (read <= 0) break
+                            totalBytes += read
+                            if (totalBytes > MAX_ZIP_BYTES) {
+                                throw java.io.IOException(tr("解压体积超过 256 MB 安全上限。", "Extracted size exceeds 256 MB safety limit."))
+                            }
+                            fos.write(buffer, 0, read)
+                        }
+                    }
+                }
+                extracted++
+                zis.closeEntry()
+            }
+        }
+        extracted
+    }
+
+    /**
+     * 在项目/目录内搜索文本文件内容（跳过二进制、符号链接、超过 1 MB 的大文件以及默认忽略目录）。
+     * 单文件最多返回 3 条命中，避免单份超长压缩脚本占满整个结果列表。
+     */
+    fun searchContent(
+        root: File,
+        query: String,
+        includeIgnored: Boolean = false,
+        maxHits: Int = 80,
+    ): List<ContentHit> {
+        val q = query.trim()
+        if (q.isEmpty() || !root.isDirectory) return emptyList()
+        val base = runCatching { root.canonicalPath }.getOrDefault(root.absolutePath).trimEnd('/')
+        val hits = ArrayList<ContentHit>(maxHits.coerceAtMost(64))
+        val queue = ArrayDeque<File>()
+        queue.add(root)
+        var visitedFiles = 0
+        val maxFiles = 2_000
+        while (queue.isNotEmpty() && hits.size < maxHits && visitedFiles < maxFiles) {
+            val dir = queue.removeFirst()
+            val children = runCatching { dir.listFiles() }.getOrNull() ?: continue
+            for (child in children) {
+                if (hits.size >= maxHits || visitedFiles >= maxFiles) break
+                val isLink = runCatching { java.nio.file.Files.isSymbolicLink(child.toPath()) }.getOrDefault(false)
+                if (isLink) continue
+                if (child.isDirectory) {
+                    if (!includeIgnored && (child.name == ".git" || child.name == "node_modules")) continue
+                    queue.add(child)
+                    continue
+                }
+                visitedFiles++
+                if (!child.isFile || child.length() == 0L || child.length() > LARGE_BYTES) continue
+                val kind = kindOf(child)
+                if (kind != WorkspaceEntryKind.Text && kind != WorkspaceEntryKind.Html) continue
+                val full = runCatching { child.canonicalPath }.getOrDefault(child.absolutePath)
+                val rel = if (full.startsWith("$base/")) full.removePrefix("$base/") else child.name
+                var perFile = 0
+                runCatching {
+                    child.bufferedReader().use { reader ->
+                        var lineNo = 0
+                        while (hits.size < maxHits && perFile < 3) {
+                            val line = reader.readLine() ?: break
+                            lineNo++
+                            val idx = line.indexOf(q, ignoreCase = true)
+                            if (idx >= 0) {
+                                perFile++
+                                val snippet = buildContentSnippet(line, idx, q.length)
+                                hits.add(
+                                    ContentHit(
+                                        path = rel,
+                                        lineNumber = lineNo,
+                                        preview = snippet,
+                                        entry = entryOf(child, rel),
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return hits
+    }
+
+    private fun buildContentSnippet(line: String, matchIdx: Int, queryLen: Int): String {
+        val trimmed = line.trim()
+        if (trimmed.length <= 120) return trimmed
+        val leadTrimmed = line.indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
+        val relIdx = (matchIdx - leadTrimmed).coerceAtLeast(0)
+        val start = (relIdx - 32).coerceAtLeast(0)
+        val end = (relIdx + queryLen + 72).coerceAtMost(trimmed.length)
+        val prefix = if (start > 0) "…" else ""
+        val suffix = if (end < trimmed.length) "…" else ""
+        return prefix + trimmed.substring(start, end) + suffix
+    }
+
+    /**
+     * 读取文件或目录的详细属性（含宿主/容器路径、权限、递归体积与子项数、文本行数）。
+     */
+    fun inspectProperties(file: File, guestRootfs: File? = null): FileProperties {
+        val path = file.toPath()
+        val isLink = runCatching { java.nio.file.Files.isSymbolicLink(path) }.getOrDefault(false)
+        val symlinkTarget = if (isLink) runCatching { java.nio.file.Files.readSymbolicLink(path).toString() }.getOrNull() else null
+        val isDir = !isLink && file.isDirectory
+        val kind = if (isDir) WorkspaceEntryKind.Directory else kindOf(file)
+        val guestPath = guestRootfs?.let { GuestWorkspacePath.hostToGuest(it, file) }
+        val perms = buildString(3) {
+            append(if (file.canRead()) 'r' else '-')
+            append(if (file.canWrite()) 'w' else '-')
+            append(if (file.canExecute()) 'x' else '-')
+        }
+        var size = if (isDir) 0L else file.length()
+        var files = 0
+        var dirs = 0
+        var truncated = false
+        if (isDir) {
+            val queue = ArrayDeque<File>()
+            queue.add(file)
+            var visited = 0
+            while (queue.isNotEmpty()) {
+                val cur = queue.removeFirst()
+                val children = runCatching { cur.listFiles() }.getOrNull() ?: continue
+                for (child in children) {
+                    visited++
+                    if (visited > MAX_PROPERTIES_VISITS) {
+                        truncated = true
+                        queue.clear()
+                        break
+                    }
+                    val childLink = runCatching { java.nio.file.Files.isSymbolicLink(child.toPath()) }.getOrDefault(false)
+                    if (!childLink && child.isDirectory) {
+                        dirs++
+                        queue.add(child)
+                    } else {
+                        files++
+                        if (!childLink) size += child.length()
+                    }
+                }
+            }
+        }
+        val lines = if (!isDir && (kind == WorkspaceEntryKind.Text || kind == WorkspaceEntryKind.Html) && size <= LARGE_BYTES) {
+            countLines(file)
+        } else {
+            null
+        }
+        return FileProperties(
+            name = file.name.ifEmpty { "/" },
+            hostPath = file.absolutePath,
+            guestPath = guestPath,
+            isDirectory = isDir,
+            isSymlink = isLink,
+            symlinkTarget = symlinkTarget,
+            kind = kind,
+            sizeBytes = size,
+            fileCount = files,
+            dirCount = dirs,
+            statsTruncated = truncated,
+            lineCount = lines,
+            modifiedAt = file.lastModified(),
+            permissions = perms,
+        )
     }
 
     /**
@@ -873,4 +1191,30 @@ internal data class WorkspacePendingWrite(
     val action: ProjectFileAction,
     val receivedLines: Int,
     val at: Long,
+)
+
+/** 全项目文本内容搜索的一条命中结果（文件路径 + 行号 + 摘要片段）。 */
+internal data class ContentHit(
+    val path: String,
+    val lineNumber: Int,
+    val preview: String,
+    val entry: WorkspaceEntry,
+)
+
+/** 文件或目录的详细属性快照，供属性面板展示。 */
+internal data class FileProperties(
+    val name: String,
+    val hostPath: String,
+    val guestPath: String?,
+    val isDirectory: Boolean,
+    val isSymlink: Boolean,
+    val symlinkTarget: String?,
+    val kind: WorkspaceEntryKind,
+    val sizeBytes: Long,
+    val fileCount: Int,
+    val dirCount: Int,
+    val statsTruncated: Boolean,
+    val lineCount: Int?,
+    val modifiedAt: Long,
+    val permissions: String,
 )

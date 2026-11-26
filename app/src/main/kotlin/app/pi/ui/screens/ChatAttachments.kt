@@ -876,7 +876,6 @@ internal fun AttachmentPickerSheet(
                     title = tr("相册图片", "Photos"),
                     subtitle = tr("支持多选与智能压缩", "Multi-select with smart resize"),
                     icon = androidx.compose.material.icons.Icons.Filled.PhotoLibrary,
-                    tint = palette.accent,
                     modifier = Modifier.weight(1f),
                     onClick = {
                         onDismiss()
@@ -887,7 +886,6 @@ internal fun AttachmentPickerSheet(
                     title = tr("本地文件", "Local Files"),
                     subtitle = tr("多选并拷入工作区", "Copy into workspace"),
                     icon = androidx.compose.material.icons.Icons.Filled.Description,
-                    tint = palette.success,
                     modifier = Modifier.weight(1f),
                     onClick = {
                         onDismiss()
@@ -903,7 +901,6 @@ internal fun AttachmentPickerSheet(
                     title = tr("工作区文件", "Workspace Files"),
                     subtitle = tr("输入 @ 模糊引用", "Reference with @ mention"),
                     icon = androidx.compose.material.icons.Icons.Filled.AlternateEmail,
-                    tint = palette.mdLink,
                     modifier = Modifier.weight(1f),
                     onClick = {
                         onDismiss()
@@ -914,7 +911,7 @@ internal fun AttachmentPickerSheet(
                     title = tr("剪贴板图片", "Clipboard Image"),
                     subtitle = if (hasClipboardImage) tr("检测到剪贴板图片", "Image detected in clipboard") else tr("读取剪贴板中的图片", "Paste image from clipboard"),
                     icon = androidx.compose.material.icons.Icons.Filled.ContentPaste,
-                    tint = if (hasClipboardImage) palette.warning else palette.muted,
+                    activeDot = hasClipboardImage,
                     modifier = Modifier.weight(1f),
                     onClick = {
                         onDismiss()
@@ -931,35 +928,54 @@ private fun AttachmentSourceTile(
     title: String,
     subtitle: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    tint: Color,
+    activeDot: Boolean = false,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(16.dp)
+    val palette = PiTheme.palette
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val shape = RoundedCornerShape(14.dp)
     Surface(
-        onClick = onClick,
+        onClick = {
+            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+            onClick()
+        },
         modifier = modifier,
         shape = shape,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.45f)),
+        color = app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg,
+        border = BorderStroke(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f)),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(tint.copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                androidx.compose.material3.Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size(18.dp),
-                )
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.material3.Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                if (activeDot) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(palette.accent),
+                    )
+                }
             }
             Text(
                 text = title,
@@ -970,7 +986,7 @@ private fun AttachmentSourceTile(
             Text(
                 text = subtitle,
                 style = PiTheme.text.meta,
-                color = PiTheme.palette.muted,
+                color = palette.muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

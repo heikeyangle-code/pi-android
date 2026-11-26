@@ -346,8 +346,8 @@ private fun SearchNavButton(
             .size(28.dp)
             .clip(CircleShape)
             .background(
-                if (enabled) palette.accent.copy(alpha = 0.12f)
-                else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
+                if (enabled) MaterialTheme.colorScheme.surfaceContainerHigh
+                else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.45f),
             )
             .then(if (enabled) Modifier.clickable(onClickLabel = label, onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center,
@@ -355,7 +355,7 @@ private fun SearchNavButton(
         Icon(
             imageVector = icon,
             contentDescription = label,
-            tint = if (enabled) palette.accent else palette.dim.copy(alpha = 0.5f),
+            tint = if (enabled) MaterialTheme.colorScheme.onSurface else palette.dim.copy(alpha = 0.45f),
             modifier = Modifier.size(18.dp),
         )
     }

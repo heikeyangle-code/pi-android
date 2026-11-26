@@ -1,6 +1,8 @@
 package app.pi.ui.models
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -16,16 +18,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
-import app.pi.ui.components.PiSpinner
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -38,17 +40,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.host.HostAdvanced
 import app.pi.host.HostAuth
+import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
 import app.pi.models.ProviderForm
 import app.pi.protocol.PiResponses
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
+import app.pi.ui.components.PiPrimaryButton
+import app.pi.ui.components.PiSpinner
 import app.pi.ui.settings.G_MODELS_SCREEN
+import app.pi.ui.settings.McpSegmentedTrack
 import app.pi.ui.settings.PiInfoNote
 import app.pi.ui.settings.PiInlineSegmentRow
 import app.pi.ui.settings.PiSetting
@@ -73,13 +81,11 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * 模型、供应商与推理设置（100% 对齐 Pi 1.6.0 `ModelRuntime` 单一供应商注册表语义）：
+ * 模型、供应商与推理设置（100% 对齐 Pi 1.6.1 `ModelRuntime` 单一供应商注册表与 `SettingsManager` 语义）：
  *  1. **当前会话模型与思考等级**：查看当前会话模型（能力标签/价格）、一键切换模型（只本次 / 设为默认），并直接切换思考深度；
- *  2. **统一供应商列表**：不再人为拆分成「订阅登录 / 已连接 API / 其他 API / 自定义供应商」多张割裂卡片，
- *     而是与 SDK `ModelRuntime.getProviders()` + `models.json` 一致整合为单一供应商列表（当前使用与已连接置顶，
- *     支持全部 / 已连接 / 账号登录 / 自定义筛选，行内清晰展示订阅、网页 OAuth、API Key、自定义端点与覆盖标识，
- *     底部无缝集成添加自定义端点与导入 `models.json`）；
- *  3. **推理、作用域与缓存**：作用域与循环模型、全局与逐模型思考等级、思考预算及缓存预热；
+ *  2. **统一供应商列表**：与 SDK `ModelRuntime.getProviders()` + `models.json` 一致整合为单一供应商列表
+ *     （当前使用与已连接置顶，支持全部 / 已连接 / 账号登录 / 自定义筛选，底部无缝集成添加自定义端点与导入 `models.json`）；
+ *  3. **推理、作用域与缓存**：作用域与循环模型、1-tap 全局默认思考等级、逐模型思考等级、思考预算、实时缓存预热与细粒度诊断提示；
  *  4. **顶栏一键刷新目录**：按需向各供应商拉取最新模型目录并提示结果。
  */
 @Composable
@@ -97,6 +103,8 @@ fun ModelsScreen(
     initialOpenScoped: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    val isZh = PiLocale.isZh
     var reload by remember { mutableStateOf(0) }
     var data by remember { mutableStateOf<Data?>(null) }
     var loaded by remember { mutableStateOf(false) }
@@ -159,7 +167,59 @@ fun ModelsScreen(
         }
     }
 
-    val modelSettings = remember { PiSettingsCatalog.settingsIn(G_MODELS_SCREEN) }
+    val modelSettings = remember(isZh) { PiSettingsCatalog.settingsIn(G_MODELS_SCREEN) }
+    val settingByKey = remember(modelSettings) { modelSettings.associateBy { it.key } }
+    val defaultThinkingSetting = settingByKey["defaultThinkingLevel"]
+    val budgetsSetting = settingByKey["thinkingBudgets"]
+    val cacheWarmingSetting = settingByKey["cacheWarming"]
+    val noticeSettings = remember(settingByKey) {
+        listOfNotNull(
+            settingByKey["notices.cacheMisses"],
+            settingByKey["notices.cacheWarming"],
+            settingByKey["notices.compactionCosts"],
+            settingByKey["notices.reasoningDrops"],
+        )
+    }
+    val extraUsageWarningSetting = settingByKey["warnings.anthropicExtraUsage"]
+    val cacheRetentionSetting = settingByKey["app.runtime.cacheRetention"]
+
+    // 在 LazyColumn 外部提升所有 store 读取，避免 Compose Strong Skipping 跳过 item 导致切换卡死
+    val persistedEnabledModels = remember(store, freshness, reload) {
+        (store.read("enabledModels") as? kotlinx.serialization.json.JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+            .orEmpty()
+    }
+    val perModelOverrides = remember(store, freshness, reload) {
+        (store.read("modelThinkingLevels") as? kotlinx.serialization.json.JsonObject)
+            ?.mapNotNull { (k, v) ->
+                val lvl = (v as? JsonPrimitive)?.takeIf { it.isString }?.content
+                if (lvl != null) k to lvl else null
+            }
+            ?.toMap()
+            .orEmpty()
+    }
+    val defaultThinkingValue = remember(store, defaultThinkingSetting?.key, freshness, reload) {
+        defaultThinkingSetting?.textIn(store, "medium") ?: "medium"
+    }
+    val budgetsSummary = remember(store, budgetsSetting?.key, freshness, reload, isZh) {
+        budgetsSetting?.let { it.display(it.current(store)) }.orEmpty()
+    }
+    val cacheWarmingStoreMode = remember(store, cacheWarmingSetting?.key, freshness, reload) {
+        cacheWarmingSetting?.textIn(store, "idle") ?: "idle"
+    }
+    val legacyNoticesDefault = remember(store, freshness, reload) {
+        (store.read("showCacheMissNotices") as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
+    }
+    val noticeCheckedMap = remember(store, noticeSettings, legacyNoticesDefault, freshness, reload) {
+        noticeSettings.associate { it.key to it.boolIn(store, legacyNoticesDefault) }
+    }
+    val extraUsageChecked = remember(store, extraUsageWarningSetting?.key, freshness, reload) {
+        extraUsageWarningSetting?.boolIn(store, true) ?: true
+    }
+    val cacheRetentionValue = remember(store, cacheRetentionSetting?.key, freshness, reload) {
+        cacheRetentionSetting?.textIn(store, "short") ?: "short"
+    }
+
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scrolled by remember(listState) {
         androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
@@ -252,7 +312,7 @@ fun ModelsScreen(
                     ModelsCard(onClick = { notice = null }) {
                         Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(n, style = PiTheme.text.prose, color = PiTheme.palette.warning)
-                            Text(tr("点一下关掉", "Tap to dismiss"), style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            Text(tr("点一下关掉", "Tap to dismiss"), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -268,9 +328,9 @@ fun ModelsScreen(
                                 color = if (r.ok) PiTheme.palette.success else PiTheme.palette.warning,
                             )
                             r.detail(names).forEach {
-                                Text(it, style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                                Text(it, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Text(tr("点一下关掉", "Tap to dismiss"), style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            Text(tr("点一下关掉", "Tap to dismiss"), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -287,29 +347,35 @@ fun ModelsScreen(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(42.dp)
-                                    .clip(RoundedCornerShape(13.dp))
-                                    .background(palette.accent.copy(alpha = if (current != null) 0.16f else 0.08f)),
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(11.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                    .border(
+                                        PiSpacing.hairlineThin,
+                                        if (current != null) palette.accent.copy(alpha = 0.42f)
+                                        else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                                        RoundedCornerShape(11.dp),
+                                    ),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
                                     Icons.Filled.AutoAwesome,
                                     contentDescription = null,
-                                    tint = if (current != null) palette.accent else palette.muted,
-                                    modifier = Modifier.size(22.dp),
+                                    tint = if (current != null) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp),
                                 )
                             }
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
                                     if (current != null) tr("当前会话模型", "Current Session Model") else tr("尚未选择模型", "No Model Selected"),
-                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                                    color = if (current != null) palette.accent else palette.muted,
+                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                    color = if (current != null) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 if (current != null) {
                                     Text(
                                         current.title,
                                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        color = palette.text,
+                                        color = MaterialTheme.colorScheme.onSurface,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
@@ -317,7 +383,7 @@ fun ModelsScreen(
                                     Text(
                                         tr("在下方连接任意供应商后即可选择模型", "Connect any provider below to select a model"),
                                         style = PiTheme.text.meta,
-                                        color = palette.dim,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             }
@@ -332,39 +398,58 @@ fun ModelsScreen(
                         }
                         if (d.thinkingLevels.isNotEmpty()) {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(tr("思考深度", "Thinking Level"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = palette.muted)
-                                Row(
-                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
-                                ) {
-                                    d.thinkingLevels.forEach { level ->
-                                        PiSettingsChip(
-                                            text = thinkingLabel(level),
-                                            active = d.thinkingLevel == level,
-                                            onClick = {
-                                                val h = host() ?: return@PiSettingsChip
-                                                scope.launch {
-                                                    runCatching { h.setThinking(level) }
-                                                        .onSuccess { reload++ }
-                                                        .onFailure { notice = tr("切换思考等级失败：${it.message}", "Failed to switch thinking level: ${it.message}") }
-                                                }
-                                            },
-                                        )
+                                Text(
+                                    tr("当前会话思考深度", "Session Thinking Level"),
+                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (d.thinkingLevels.size <= 4) {
+                                    McpSegmentedTrack(
+                                        options = d.thinkingLevels.map { thinkingLabel(it) },
+                                        selectedIndex = d.thinkingLevels.indexOf(d.thinkingLevel).coerceAtLeast(0),
+                                        onSelect = { idx ->
+                                            val level = d.thinkingLevels[idx]
+                                            val h = host() ?: return@McpSegmentedTrack
+                                            scope.launch {
+                                                runCatching { h.setThinking(level) }
+                                                    .onSuccess { reload++ }
+                                                    .onFailure { notice = tr("切换思考等级失败：${it.message}", "Failed to switch thinking level: ${it.message}") }
+                                            }
+                                        },
+                                    )
+                                } else {
+                                    Row(
+                                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        d.thinkingLevels.forEach { level ->
+                                            PiSettingsChip(
+                                                text = thinkingLabel(level),
+                                                active = d.thinkingLevel == level,
+                                                onClick = {
+                                                    val h = host() ?: return@PiSettingsChip
+                                                    scope.launch {
+                                                        runCatching { h.setThinking(level) }
+                                                            .onSuccess { reload++ }
+                                                            .onFailure { notice = tr("切换思考等级失败：${it.message}", "Failed to switch thinking level: ${it.message}") }
+                                                    }
+                                                },
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                         if (d.models.isNotEmpty()) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                PrimaryAction(
-                                    text = if (current == null) {
-                                        tr("选择模型（${d.models.size} 可用）", "Select Model (${d.models.size} available)")
-                                    } else {
-                                        tr("更换模型（${d.models.size} 可用）", "Switch Model (${d.models.size} available)")
-                                    },
-                                    onClick = { picker = true },
-                                )
-                            }
+                            PiPrimaryButton(
+                                label = if (current == null) {
+                                    tr("选择模型（${d.models.size} 可用）", "Select Model (${d.models.size} available)")
+                                } else {
+                                    tr("更换模型（${d.models.size} 可用）", "Switch Model (${d.models.size} available)")
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { picker = true },
+                            )
                         }
                     }
                 }
@@ -389,10 +474,33 @@ fun ModelsScreen(
                             )
                         },
                         trailing = {
-                            PiSettingsChip(
-                                text = tr("+ 自定义", "+ Custom"),
-                                onClick = { form = FormRequest(ProviderForm(api = "openai-completions"), isNew = true) },
-                            )
+                            Surface(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    form = FormRequest(ProviderForm(api = "openai-completions"), isNew = true)
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                                border = BorderStroke(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Add,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                    Text(
+                                        tr("自定义", "Custom"),
+                                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
                         },
                     )
                     ModelsSearchBar(
@@ -412,7 +520,7 @@ fun ModelsScreen(
                             val count = unified.counts.countOf(f)
                             if (f == ProviderFilter.All || count > 0 || filter == f) {
                                 PiSettingsChip(
-                                    text = "$count".let { "${f.label} ($it)" },
+                                    text = "${f.label} · $count",
                                     active = filter == f,
                                     onClick = { filter = f },
                                 )
@@ -443,7 +551,7 @@ fun ModelsScreen(
                                     style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
                                     color = palette.error,
                                 )
-                                Text(e, style = PiTheme.text.meta, color = palette.muted, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                Text(e, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
                             }
                             ModelsDivider()
                         }
@@ -456,7 +564,7 @@ fun ModelsScreen(
                                 Text(
                                     tr("没有匹配的供应商", "No matching providers"),
                                     style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
-                                    color = palette.text,
+                                    color = MaterialTheme.colorScheme.onSurface,
                                 )
                                 Text(
                                     when (filter) {
@@ -465,12 +573,12 @@ fun ModelsScreen(
                                         else -> tr("换个关键词，或在下方添加 OpenAI / Anthropic 兼容端点。", "Try another keyword, or add an OpenAI/Anthropic-compatible endpoint below.")
                                     },
                                     style = PiTheme.text.meta,
-                                    color = palette.dim,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         } else {
                             unified.visible.forEachIndexed { index, p ->
-                                if (index > 0) ModelsDivider()
+                                if (index > 0) ModelsDivider(startIndent = 64.dp)
                                 ProviderRow(
                                     facts = p,
                                     onClick = {
@@ -492,7 +600,10 @@ fun ModelsScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { showAllProviders = !showAllProviders }
+                                    .clickable {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        showAllProviders = !showAllProviders
+                                    }
                                     .padding(horizontal = ModelsCardPadding, vertical = 11.dp),
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically,
@@ -509,7 +620,7 @@ fun ModelsScreen(
                                     } else {
                                         tr("展开其余 ${unified.hiddenCount} 个供应商", "Show ${unified.hiddenCount} more providers")
                                     },
-                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                                     color = palette.accent,
                                     modifier = Modifier.padding(start = 4.dp),
                                 )
@@ -523,7 +634,7 @@ fun ModelsScreen(
                             icon = Icons.Filled.Add,
                             onClick = { form = FormRequest(ProviderForm(api = "openai-completions"), isNew = true) },
                         )
-                        ModelsDivider()
+                        ModelsDivider(startIndent = 64.dp)
                         ActionRow(
                             title = tr("导入 / 编辑 models.json", "Import / Edit models.json"),
                             detail = tr("选择 .json 文件或粘贴官方 models.json 批量导入自定义端点与模型", "Pick a .json file or paste official models.json to bulk-import endpoints & models"),
@@ -534,39 +645,10 @@ fun ModelsScreen(
                 }
             }
 
-            // ---- 3. 推理、作用域与缓存（100% 对齐 Pi SDK） ----
+            // ---- 3. 推理、作用域与缓存（100% 对齐 Pi 1.6.1 SDK） ----
             item(key = "l:reasoning") { ModelsSectionLabel(tr("推理、作用域与缓存", "Reasoning, Scoped Models & Caching"), Modifier.padding(top = 10.dp)) }
             item(key = "c:reasoning") {
-                val settingByKey = remember(modelSettings) { modelSettings.associateBy { it.key } }
-                val defaultThinkingSetting = settingByKey["defaultThinkingLevel"]
-                val budgetsSetting = settingByKey["thinkingBudgets"]
-                val cacheWarmingSetting = settingByKey["cacheWarming"]
-                val noticeSettings = remember(settingByKey) {
-                    listOfNotNull(
-                        settingByKey["notices.cacheMisses"],
-                        settingByKey["notices.cacheWarming"],
-                        settingByKey["notices.compactionCosts"],
-                        settingByKey["notices.reasoningDrops"],
-                    )
-                }
-                val extraUsageWarningSetting = settingByKey["warnings.anthropicExtraUsage"]
-                val cacheRetentionSetting = settingByKey["app.runtime.cacheRetention"]
                 var noticesExpanded by rememberSaveable { mutableStateOf(false) }
-
-                val persistedEnabledModels = remember(store, freshness, reload) {
-                    (store.read("enabledModels") as? kotlinx.serialization.json.JsonArray)
-                        ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
-                        .orEmpty()
-                }
-                val perModelOverrides = remember(store, freshness, reload) {
-                    (store.read("modelThinkingLevels") as? kotlinx.serialization.json.JsonObject)
-                        ?.mapNotNull { (k, v) ->
-                            val lvl = (v as? JsonPrimitive)?.takeIf { it.isString }?.content
-                            if (lvl != null) k to lvl else null
-                        }
-                        ?.toMap()
-                        .orEmpty()
-                }
 
                 ModelsCard {
                     Column {
@@ -584,14 +666,57 @@ fun ModelsScreen(
 
                         defaultThinkingSetting?.let { setting ->
                             ModelsDivider()
-                            val summary = remember(store, setting.key, freshness, reload) {
-                                setting.display(setting.current(store))
+                            val defaultLevels = remember { listOf("off", "minimal", "low", "medium", "high", "xhigh") }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = ModelsCardPadding, vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        setting.title,
+                                        style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    Text(
+                                        setting.description,
+                                        style = PiTheme.text.meta,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    defaultLevels.forEach { lvl ->
+                                        PiSettingsChip(
+                                            text = thinkingLabel(lvl),
+                                            active = defaultThinkingValue == lvl,
+                                            onClick = {
+                                                if (defaultThinkingValue == lvl) return@PiSettingsChip
+                                                val h = host()
+                                                if (h != null) {
+                                                    scope.launch {
+                                                        runCatching { h.setDefaultThinkingLevel(lvl) }
+                                                            .onSuccess {
+                                                                onExternalSettingsWrite()
+                                                                reload++
+                                                            }
+                                                            .onFailure {
+                                                                notice = tr("设置默认思考等级失败：${it.message}", "Failed to set default thinking level: ${it.message}")
+                                                            }
+                                                    }
+                                                } else {
+                                                    store.write(setting.key, JsonPrimitive(lvl))
+                                                    onSettingWritten(setting.key)
+                                                    reload++
+                                                }
+                                            },
+                                        )
+                                    }
+                                }
                             }
-                            PiSettingsEntryRow(
-                                title = setting.title,
-                                supporting = "$summary · ${setting.description}",
-                                onClick = { editingSetting = setting },
-                            )
                         }
 
                         ModelsDivider()
@@ -607,82 +732,67 @@ fun ModelsScreen(
 
                         budgetsSetting?.let { setting ->
                             ModelsDivider()
-                            val summary = remember(store, setting.key, freshness, reload) {
-                                setting.display(setting.current(store))
-                            }
                             PiSettingsEntryRow(
                                 title = setting.title,
-                                supporting = "$summary · ${setting.description}",
+                                supporting = "$budgetsSummary · ${setting.description}",
                                 onClick = { editingSetting = setting },
                             )
                         }
 
-                        if (d.cache != null) {
+                        if (d.cache != null || cacheWarmingSetting != null) {
                             ModelsDivider()
-                            Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(tr("实时缓存预热", "Prompt Cache Warming"), style = PiTheme.text.prose, color = PiTheme.palette.text)
-                                Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                                    for ((mode, label) in listOf(
-                                        "off" to tr("关", "Off"),
-                                        "streaming" to tr("流式时", "Streaming"),
-                                        "idle" to tr("空闲时", "Idle"),
-                                    )) {
-                                        PiSettingsChip(
-                                            text = label,
-                                            active = d.cache.mode == mode,
-                                            onClick = {
-                                                val h = host() ?: return@PiSettingsChip
-                                                scope.launch {
-                                                    runCatching { h.advanced.setCacheMode(mode) }
-                                                        .onSuccess {
-                                                            onExternalSettingsWrite()
-                                                            reload++
-                                                        }
-                                                        .onFailure { notice = tr("设置缓存预热失败：${it.message}", "Failed to set cache warming: ${it.message}") }
-                                                }
-                                            },
-                                        )
-                                    }
-                                }
-                                val statusLine = listOfNotNull(
-                                    d.cache.state?.let { tr("状态：$it", "State: $it") },
-                                    d.cache.reason,
-                                    d.cache.nextWarmAt?.let { tr("下次预热 $it", "Next warm $it") },
+                            val activeCacheMode = d.cache?.mode ?: cacheWarmingStoreMode
+                            val cacheStatusLine = d.cache?.let { c ->
+                                listOfNotNull(
+                                    c.state?.let { tr("状态：$it", "State: $it") },
+                                    c.reason,
+                                    c.nextWarmAt?.let { tr("下次预热 $it", "Next warm $it") },
                                 ).joinToString(" · ")
-                                if (statusLine.isNotEmpty()) {
-                                    Text(statusLine, style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            }.orEmpty()
+                            Column {
+                                PiInlineSegmentRow(
+                                    title = cacheWarmingSetting?.title ?: tr("实时缓存预热", "Prompt Cache Warming"),
+                                    description = cacheWarmingSetting?.description ?: tr("在流式回复或空闲时自动保活服务端提示缓存", "Keep server prompt cache warm during streaming or idle periods"),
+                                    options = listOf(
+                                        "off" to tr("关闭", "Off"),
+                                        "streaming" to tr("仅流式", "Streaming"),
+                                        "idle" to tr("含空闲", "Idle"),
+                                    ),
+                                    selected = activeCacheMode,
+                                    onSelect = { next ->
+                                        val h = host()
+                                        if (d.cache != null && h != null) {
+                                            scope.launch {
+                                                runCatching { h.advanced.setCacheMode(next) }
+                                                    .onSuccess {
+                                                        onExternalSettingsWrite()
+                                                        reload++
+                                                    }
+                                                    .onFailure {
+                                                        notice = tr("设置缓存预热失败：${it.message}", "Failed to set cache warming: ${it.message}")
+                                                    }
+                                            }
+                                        } else if (cacheWarmingSetting != null) {
+                                            store.write(cacheWarmingSetting.key, JsonPrimitive(next))
+                                            onSettingWritten(cacheWarmingSetting.key)
+                                            reload++
+                                        }
+                                    },
+                                )
+                                if (cacheStatusLine.isNotEmpty()) {
+                                    Text(
+                                        text = cacheStatusLine,
+                                        style = PiTheme.text.meta,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(start = ModelsCardPadding, end = ModelsCardPadding, bottom = 12.dp),
+                                    )
                                 }
                             }
-                        } else if (cacheWarmingSetting != null) {
-                            ModelsDivider()
-                            val mode = remember(store, cacheWarmingSetting.key, freshness, reload) {
-                                cacheWarmingSetting.textIn(store, "idle")
-                            }
-                            PiInlineSegmentRow(
-                                title = cacheWarmingSetting.title,
-                                description = cacheWarmingSetting.description,
-                                options = listOf(
-                                    "off" to tr("关闭", "Off"),
-                                    "streaming" to tr("仅流式", "Streaming"),
-                                    "idle" to tr("含空闲", "Idle"),
-                                ),
-                                selected = mode,
-                                onSelect = { next ->
-                                    store.write(cacheWarmingSetting.key, JsonPrimitive(next))
-                                    onSettingWritten(cacheWarmingSetting.key)
-                                    reload++
-                                },
-                            )
                         }
 
                         if (noticeSettings.isNotEmpty()) {
                             ModelsDivider()
-                            val legacyNoticesDefault = remember(store, freshness, reload) {
-                                (store.read("showCacheMissNotices") as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
-                            }
-                            val enabledCount = remember(store, noticeSettings, legacyNoticesDefault, freshness, reload) {
-                                noticeSettings.count { it.boolIn(store, legacyNoticesDefault) }
-                            }
+                            val enabledCount = noticeSettings.count { noticeCheckedMap[it.key] == true }
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -695,7 +805,7 @@ fun ModelsScreen(
                                     Text(
                                         tr("对话诊断提示", "Transcript Notices"),
                                         style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
-                                        color = PiTheme.palette.text,
+                                        color = MaterialTheme.colorScheme.onSurface,
                                     )
                                     Text(
                                         tr(
@@ -703,30 +813,43 @@ fun ModelsScreen(
                                             "$enabledCount of ${noticeSettings.size} enabled (cache misses, warming, compaction, reasoning)",
                                         ),
                                         style = PiTheme.text.meta,
-                                        color = PiTheme.palette.muted,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                                 Icon(
                                     imageVector = if (noticesExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                                     contentDescription = null,
-                                    tint = PiTheme.palette.muted,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp),
                                 )
                             }
                             if (noticesExpanded) {
                                 noticeSettings.forEach { setting ->
                                     ModelsDivider()
-                                    val checked = remember(store, setting.key, legacyNoticesDefault, freshness, reload) {
-                                        setting.boolIn(store, legacyNoticesDefault)
-                                    }
+                                    val checked = noticeCheckedMap[setting.key] == true
                                     PiSettingsToggleRow(
                                         title = setting.title,
                                         supporting = setting.description,
                                         checked = checked,
                                         onCheckedChange = { on ->
-                                            store.write(setting.key, JsonPrimitive(on))
-                                            onSettingWritten(setting.key)
-                                            reload++
+                                            val h = host()
+                                            val shortKey = setting.key.removePrefix("notices.")
+                                            if (h != null && shortKey != setting.key) {
+                                                scope.launch {
+                                                    runCatching { h.setNotice(shortKey, on) }
+                                                        .onSuccess {
+                                                            onExternalSettingsWrite()
+                                                            reload++
+                                                        }
+                                                        .onFailure {
+                                                            notice = tr("更新诊断提示失败：${it.message}", "Failed to update notice: ${it.message}")
+                                                        }
+                                                }
+                                            } else {
+                                                store.write(setting.key, JsonPrimitive(on))
+                                                onSettingWritten(setting.key)
+                                                reload++
+                                            }
                                         },
                                     )
                                 }
@@ -735,11 +858,10 @@ fun ModelsScreen(
 
                         extraUsageWarningSetting?.let { setting ->
                             ModelsDivider()
-                            val checked = remember(store, setting.key, freshness, reload) { setting.boolIn(store, true) }
                             PiSettingsToggleRow(
                                 title = setting.title,
                                 supporting = setting.description,
-                                checked = checked,
+                                checked = extraUsageChecked,
                                 onCheckedChange = { on ->
                                     store.write(setting.key, JsonPrimitive(on))
                                     onSettingWritten(setting.key)
@@ -750,9 +872,6 @@ fun ModelsScreen(
 
                         cacheRetentionSetting?.let { setting ->
                             ModelsDivider()
-                            val retention = remember(store, setting.key, freshness, reload) {
-                                setting.textIn(store, "short")
-                            }
                             PiInlineSegmentRow(
                                 title = setting.title,
                                 description = setting.description,
@@ -760,7 +879,7 @@ fun ModelsScreen(
                                     "short" to tr("短期（~5 分钟）", "Short (~5 min)"),
                                     "long" to tr("长期（~1 小时）", "Long (~1 hr)"),
                                 ),
-                                selected = retention,
+                                selected = cacheRetentionValue,
                                 effective = setting.effective,
                                 onExplainEffect = {
                                     notice = tr("提示缓存保留时长已保存，重启引擎后生效。", "Prompt cache retention saved; takes effect after restarting the engine.")
@@ -981,7 +1100,7 @@ private fun ActionRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     enabled: Boolean = true,
 ) {
-    val tint = if (enabled) PiTheme.palette.accent else PiTheme.palette.muted
+    val fg = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
     Row(
         Modifier
             .fillMaxWidth()
@@ -993,27 +1112,32 @@ private fun ActionRow(
         if (icon != null) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(38.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(tint.copy(alpha = 0.12f)),
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .border(
+                        PiSpacing.hairlineThin,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                        RoundedCornerShape(10.dp),
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size(19.dp),
+                    tint = fg,
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium), color = tint)
-            Text(detail, style = PiTheme.text.meta, color = PiTheme.palette.dim)
+            Text(title, style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium), color = fg)
+            Text(detail, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Icon(
             Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
-            tint = PiTheme.palette.dim,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
             modifier = Modifier.size(18.dp),
         )
     }

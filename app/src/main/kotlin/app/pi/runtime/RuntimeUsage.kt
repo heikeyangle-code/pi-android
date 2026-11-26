@@ -57,6 +57,9 @@ object RuntimeUsage {
         val isDirectory: Boolean,
         val isRegularFile: Boolean,
         val isSymlink: Boolean,
+        val device: Long = 0L,
+        val inode: Long = 0L,
+        val linkCount: Long = 1L,
     )
 
     /**
@@ -70,7 +73,21 @@ object RuntimeUsage {
         val complete: Boolean get() = unmeasured == 0 && unreadableDirectories == 0
     }
 
+    /** Result of a single-pass categorized measurement with global hardlink deduplication. */
+    data class CategorizedResult(
+        val byCategory: Map<String, Long>,
+        val totalBytes: Long,
+        val unmeasured: Int,
+        val unreadableDirectories: Int,
+    ) {
+        val complete: Boolean get() = unmeasured == 0 && unreadableDirectories == 0
+    }
+
+    /** Stable `(st_dev, st_ino)` key for `du`-style hardlink deduplication. */
+    private data class InodeKey(val device: Long, val inode: Long)
+
     fun measure(root: File, stat: (String) -> Stat?): Result {
+        val seenInodes = HashSet<InodeKey>()
         var bytes = 0L
         var unmeasured = 0
         var unreadable = 0
@@ -79,6 +96,9 @@ object RuntimeUsage {
             if (entry == null) {
                 unmeasured++
                 return
+            }
+            if (entry.isRegularFile && entry.linkCount > 1L && entry.inode != 0L) {
+                if (!seenInodes.add(InodeKey(entry.device, entry.inode))) return
             }
             val allocated = entry.allocatedBytes
             if (allocated == null) unmeasured++ else bytes += allocated
@@ -112,5 +132,82 @@ object RuntimeUsage {
         add(stat(root.path))
         walk(root)
         return Result(bytes, unmeasured, unreadable)
+    }
+
+    /**
+     * Walk [roots] in a single pass per root with a shared hardlink-deduplication table,
+     * attributing every directory and regular file to the bucket returned by [classify].
+     *
+     * Because the deduplication table is shared across all categories, `totalBytes` is
+     * guaranteed to equal `byCategory.values.sum()` with zero double counting.
+     */
+    fun measureCategorized(
+        roots: List<File>,
+        stat: (String) -> Stat?,
+        classify: (File) -> String,
+    ): CategorizedResult {
+        val seenInodes = HashSet<InodeKey>()
+        val buckets = LinkedHashMap<String, Long>()
+        var total = 0L
+        var unmeasured = 0
+        var unreadable = 0
+
+        fun add(file: File, entry: Stat?) {
+            if (entry == null) {
+                unmeasured++
+                return
+            }
+            if (entry.isRegularFile && entry.linkCount > 1L && entry.inode != 0L) {
+                if (!seenInodes.add(InodeKey(entry.device, entry.inode))) return
+            }
+            val allocated = entry.allocatedBytes
+            if (allocated == null) {
+                unmeasured++
+                return
+            }
+            val bucket = classify(file)
+            buckets[bucket] = (buckets[bucket] ?: 0L) + allocated
+            total += allocated
+        }
+
+        fun walk(directory: File) {
+            val children = directory.listFiles()
+            if (children == null) {
+                unreadable++
+                return
+            }
+            for (child in children) {
+                val entry = stat(child.path)
+                if (entry == null) {
+                    unmeasured++
+                    continue
+                }
+                if (entry.isSymlink) continue
+                if (entry.isDirectory) {
+                    add(child, entry)
+                    walk(child)
+                } else if (entry.isRegularFile) {
+                    add(child, entry)
+                }
+            }
+        }
+
+        for (root in roots) {
+            if (!root.exists()) continue
+            val rootStat = stat(root.path)
+            if (rootStat == null) {
+                unmeasured++
+                continue
+            }
+            if (rootStat.isSymlink) continue
+            add(root, rootStat)
+            if (rootStat.isDirectory) walk(root)
+        }
+        return CategorizedResult(
+            byCategory = buckets,
+            totalBytes = total,
+            unmeasured = unmeasured,
+            unreadableDirectories = unreadable,
+        )
     }
 }

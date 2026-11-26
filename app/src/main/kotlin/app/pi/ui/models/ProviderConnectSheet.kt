@@ -2,6 +2,7 @@ package app.pi.ui.models
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,17 +15,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
-import app.pi.ui.components.PiSpinner
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.host.HostAuth
 import app.pi.i18n.tr
 import app.pi.ui.components.PiSheet
+import app.pi.ui.components.PiSpinner
 import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsDialog
@@ -80,11 +81,11 @@ private data class LoginState(
 
 /**
  * 供应商连接与模型面板：
- *  1. 顶部身份头：头像、标题、连接状态、provider ID、模型数；
+ *  1. 顶部身份头：单色字标、标题、连接状态、provider ID、模型数；
  *  2. 账号 / 订阅 OAuth 登录卡（支持订阅账号与 OpenRouter 等网页 OAuth，含完整事件/设备码/手动回调流）；
  *  3. API Key 配置卡（一键剪贴板粘贴、明文切换眼睛、整宽主保存按钮、来源徽标）；
- *  4. 高级与凭据管理卡（自定义端点 models.json 覆盖 + 带二次确认的退出登录/移除凭据）；
- *  5. 该供应商下的全部模型目录（搜索、能力/价格标签、一键切换或设为默认）。
+ *  4. 高级与凭据管理卡（自定义端点 models.json 覆盖与 modelOverrides 提示 + 带二次确认的退出登录/移除凭据）；
+ *  5. 该供应商下的全部模型目录（卡片化懒加载列表，搜索、能力/价格标签、一键切换或设为默认）。
  */
 @Composable
 internal fun ProviderSheet(
@@ -239,6 +240,7 @@ internal fun ProviderSheet(
     val connection = connectionOf(facts)
     val configured = provider.configured
     val palette = PiTheme.palette
+    val modelOverridesCount = remember(custom) { (custom?.get("modelOverrides") as? JsonObject)?.size ?: 0 }
 
     PiSheet(
         onDismiss = {
@@ -250,7 +252,7 @@ internal fun ProviderSheet(
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(top = 4.dp, bottom = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // ---- 1. 顶部身份头 ----
             item(key = "head") {
@@ -261,12 +263,12 @@ internal fun ProviderSheet(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    ProviderAvatar(facts.id, facts.title, size = 50.dp)
+                    ProviderAvatar(facts.id, facts.title, size = 48.dp, active = facts.isActiveProvider)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
                             facts.title,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = palette.text,
+                            color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -278,9 +280,9 @@ internal fun ProviderSheet(
                             TagPill(facts.id)
                             if (allModels.isNotEmpty()) {
                                 Text(
-                                    tr("${allModels.size} 个模型", "${allModels.size} models"),
+                                    tr("${allModels.size} 模型", "${allModels.size} models"),
                                     style = PiTheme.text.meta,
-                                    color = palette.dim,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
@@ -298,8 +300,8 @@ internal fun ProviderSheet(
                             .fillMaxWidth()
                             .padding(horizontal = PiSettingsMetrics.pageHorizontal),
                         shape = RoundedCornerShape(12.dp),
-                        color = tone.copy(alpha = 0.11f),
-                        border = BorderStroke(0.5.dp, tone.copy(alpha = 0.35f)),
+                        color = tone.copy(alpha = 0.09f),
+                        border = BorderStroke(PiSpacing.hairlineThin, tone.copy(alpha = 0.35f)),
                     ) {
                         Text(
                             n,
@@ -315,28 +317,33 @@ internal fun ProviderSheet(
             provider.oauth?.let { oauth ->
                 item(key = "oauth") {
                     val isSub = oauth.isSubscription
-                    val tint = if (isSub) palette.accent else palette.borderAccent
                     ModelsCard(accent = login != null || (configured && provider.usingOAuth)) {
                         Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(34.dp)
+                                        .size(36.dp)
                                         .clip(RoundedCornerShape(10.dp))
-                                        .background(tint.copy(alpha = 0.14f)),
+                                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                        .border(
+                                            PiSpacing.hairlineThin,
+                                            if (provider.usingOAuth) palette.accent.copy(alpha = 0.42f)
+                                            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                                            RoundedCornerShape(10.dp),
+                                        ),
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Icon(
                                         imageVector = if (isSub) Icons.Filled.VerifiedUser else Icons.Filled.Language,
                                         contentDescription = null,
-                                        tint = tint,
+                                        tint = if (provider.usingOAuth) palette.accent else MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.size(18.dp),
                                     )
                                 }
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -346,13 +353,14 @@ internal fun ProviderSheet(
                                                 if (isSub) tr("订阅账号登录", "Subscription Login") else tr("OAuth 网页登录", "OAuth Web Login")
                                             },
                                             style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
-                                            color = palette.text,
+                                            color = MaterialTheme.colorScheme.onSurface,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false),
                                         )
                                         TagPill(
                                             if (isSub) tr("订阅账号", "Subscription") else tr("网页授权", "OAuth"),
-                                            tone = tint,
+                                            tone = if (provider.usingOAuth) palette.accent else palette.muted,
                                         )
                                     }
                                     Text(
@@ -362,7 +370,7 @@ internal fun ProviderSheet(
                                             tr("在浏览器中授权登录，无需手动复制密钥", "Authorize in your browser — no manual API key needed")
                                         },
                                         style = PiTheme.text.meta,
-                                        color = palette.muted,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             }
@@ -422,23 +430,28 @@ internal fun ProviderSheet(
                         Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(34.dp)
+                                        .size(36.dp)
                                         .clip(RoundedCornerShape(10.dp))
-                                        .background(palette.success.copy(alpha = 0.13f)),
+                                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                        .border(
+                                            PiSpacing.hairlineThin,
+                                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                                            RoundedCornerShape(10.dp),
+                                        ),
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.Key,
                                         contentDescription = null,
-                                        tint = palette.success,
+                                        tint = MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.size(18.dp),
                                     )
                                 }
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -446,7 +459,7 @@ internal fun ProviderSheet(
                                         Text(
                                             "API Key",
                                             style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
-                                            color = palette.text,
+                                            color = MaterialTheme.colorScheme.onSurface,
                                         )
                                         when {
                                             configured && provider.statusSource == "stored" && !provider.usingOAuth ->
@@ -459,12 +472,12 @@ internal fun ProviderSheet(
                                     }
                                     Text(
                                         if (provider.supportsApiKeyInput) {
-                                            tr("加密或按官方 auth.json 格式本地保存，不上传到第三方", "Saved locally to Pi's auth.json via the official SDK")
+                                            tr("按官方 auth.json 格式本地保存，不上传到第三方", "Saved locally to Pi's auth.json via the official SDK")
                                         } else {
                                             tr("该供应商通过环境变量或本机云凭证工作", "Configured via environment variables or local cloud credentials")
                                         },
                                         style = PiTheme.text.meta,
-                                        color = palette.muted,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             }
@@ -484,36 +497,39 @@ internal fun ProviderSheet(
                                     },
                                     secret = true,
                                     labelTrailing = {
-                                        Row(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(palette.accent.copy(alpha = 0.12f))
-                                                .clickable {
-                                                    val pasted = clipboard.getText()?.text?.trim().orEmpty()
-                                                    if (pasted.isNotEmpty()) {
-                                                        key = pasted
-                                                        note = tr("已从剪贴板填入 API Key，点下方按钮保存。", "Pasted API key from clipboard. Tap Save below.")
-                                                        noteWarning = false
-                                                    } else {
-                                                        note = tr("剪贴板里没有可粘贴的文本。", "Clipboard is empty.")
-                                                        noteWarning = true
-                                                    }
+                                        Surface(
+                                            onClick = {
+                                                val pasted = clipboard.getText()?.text?.trim().orEmpty()
+                                                if (pasted.isNotEmpty()) {
+                                                    key = pasted
+                                                    note = tr("已从剪贴板填入 API Key，点下方按钮保存。", "Pasted API key from clipboard. Tap Save below.")
+                                                    noteWarning = false
+                                                } else {
+                                                    note = tr("剪贴板里没有可粘贴的文本。", "Clipboard is empty.")
+                                                    noteWarning = true
                                                 }
-                                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            },
+                                            shape = RoundedCornerShape(7.dp),
+                                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                            border = BorderStroke(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)),
                                         ) {
-                                            Icon(
-                                                Icons.Filled.ContentPaste,
-                                                contentDescription = null,
-                                                tint = palette.accent,
-                                                modifier = Modifier.size(13.dp),
-                                            )
-                                            Text(
-                                                tr("粘贴", "Paste"),
-                                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                                                color = palette.accent,
-                                            )
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            ) {
+                                                Icon(
+                                                    Icons.Filled.ContentPaste,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(13.dp),
+                                                )
+                                                Text(
+                                                    tr("粘贴", "Paste"),
+                                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                )
+                                            }
                                         }
                                     },
                                     onChange = { key = it },
@@ -557,7 +573,7 @@ internal fun ProviderSheet(
                                         "This provider uses environment variables or local cloud credentials and does not accept a direct API key here.",
                                     ),
                                     style = PiTheme.text.meta,
-                                    color = palette.dim,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
@@ -579,27 +595,27 @@ internal fun ProviderSheet(
                                     Text(
                                         tr("models.json 自定义端点", "Custom Endpoint (models.json)"),
                                         style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
-                                        color = palette.text,
+                                        color = MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.weight(1f),
                                     )
-                                    if (apiType != null) TagPill(apiType, tone = palette.accent)
+                                    if (apiType != null) TagPill(apiType)
                                 }
                                 if (baseUrl != null) {
                                     Text(
                                         baseUrl,
                                         style = PiTheme.text.monoSmall,
-                                        color = palette.muted,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                                 Text(
                                     tr(
-                                        "该供应商的 Base URL、API Key 与模型列表由 models.json 直接管理。",
-                                        "This provider's Base URL, API key, and model list are managed directly in models.json.",
+                                        "该供应商的 Base URL、API Key、兼容参数与模型列表由 models.json 直接管理。",
+                                        "This provider's Base URL, API key, compat options, and model list are managed in models.json.",
                                     ),
                                     style = PiTheme.text.meta,
-                                    color = palette.dim,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 PrimaryAction(
                                     text = tr("编辑端点、凭据与模型", "Edit Endpoint, Key & Models"),
@@ -616,7 +632,7 @@ internal fun ProviderSheet(
                                     "This provider has no built-in login; configure its URL and key under Custom Endpoint & Headers below.",
                                 ),
                                 style = PiTheme.text.meta,
-                                color = palette.muted,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(ModelsCardPadding),
                             )
                         }
@@ -639,12 +655,25 @@ internal fun ProviderSheet(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Icon(
-                                Icons.Filled.Tune,
-                                contentDescription = null,
-                                tint = palette.muted,
-                                modifier = Modifier.size(19.dp),
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                    .border(
+                                        PiSpacing.hairlineThin,
+                                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                                        RoundedCornerShape(9.dp),
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Tune,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(17.dp),
+                                )
+                            }
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -654,20 +683,26 @@ internal fun ProviderSheet(
                                         if (custom != null) tr("编辑自定义端点与请求头", "Edit Custom Endpoint & Headers")
                                         else tr("自定义端点与请求头", "Custom Endpoint & Headers"),
                                         style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
-                                        color = palette.text,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f, fill = false),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                     if (custom != null) TagPill(tr("已自定义", "Customized"), tone = palette.accent)
+                                    if (modelOverridesCount > 0) {
+                                        TagPill(tr("覆盖 $modelOverridesCount 项", "$modelOverridesCount overrides"))
+                                    }
                                 }
                                 Text(
-                                    tr("通过 models.json 覆盖 Base URL、请求头或追加自定义模型", "Override base URL, headers, or add custom models via models.json"),
+                                    tr("通过 models.json 覆盖 Base URL、请求头、compat 参数或追加自定义模型", "Override base URL, headers, compat options, or add custom models via models.json"),
                                     style = PiTheme.text.meta,
-                                    color = palette.dim,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                             Icon(
                                 Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                 contentDescription = null,
-                                tint = palette.dim,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
                                 modifier = Modifier.size(18.dp),
                             )
                         }
@@ -677,7 +712,7 @@ internal fun ProviderSheet(
                             Text(
                                 tr("当前凭据来自环境变量，需在环境变量配置中修改。", "Credentials come from environment variables and must be updated there."),
                                 style = PiTheme.text.meta,
-                                color = palette.dim,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(ModelsCardPadding),
                             )
                         }
@@ -692,12 +727,25 @@ internal fun ProviderSheet(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.Logout,
-                                    contentDescription = null,
-                                    tint = palette.error,
-                                    modifier = Modifier.size(19.dp),
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(RoundedCornerShape(9.dp))
+                                        .background(palette.error.copy(alpha = 0.08f))
+                                        .border(
+                                            PiSpacing.hairlineThin,
+                                            palette.error.copy(alpha = 0.28f),
+                                            RoundedCornerShape(9.dp),
+                                        ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.Logout,
+                                        contentDescription = null,
+                                        tint = palette.error,
+                                        modifier = Modifier.size(17.dp),
+                                    )
+                                }
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                                     Text(
                                         if (provider.usingOAuth) tr("退出登录", "Sign Out") else tr("移除已保存凭据", "Remove Saved Credentials"),
@@ -707,7 +755,7 @@ internal fun ProviderSheet(
                                     Text(
                                         tr("从 auth.json 中清除该供应商的登录状态或 API Key", "Removes this provider's token or API key from auth.json"),
                                         style = PiTheme.text.meta,
-                                        color = palette.dim,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             }
@@ -716,7 +764,7 @@ internal fun ProviderSheet(
                 }
             }
 
-            // ---- 5. 模型目录 ----
+            // ---- 5. 模型目录（卡片化懒加载列表，兼顾大目录性能与旗舰视觉） ----
             item(key = "models-head") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ModelsSectionLabel(
@@ -740,11 +788,26 @@ internal fun ProviderSheet(
 
             val filtered = searchModels(allModels, emptyMap(), modelQuery)
             if (filtered.isNotEmpty()) {
-                items(
+                itemsIndexed(
                     items = filtered,
-                    key = { m -> "m:${m.provider}/${m.id}" },
-                ) { m ->
-                    Box(Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal)) {
+                    key = { _, m -> "m:${m.provider}/${m.id}" },
+                ) { idx, m ->
+                    val isFirst = idx == 0
+                    val isLast = idx == filtered.lastIndex
+                    val sliceShape = RoundedCornerShape(
+                        topStart = if (isFirst) PiSettingsMetrics.cardRadius else 0.dp,
+                        topEnd = if (isFirst) PiSettingsMetrics.cardRadius else 0.dp,
+                        bottomStart = if (isLast) PiSettingsMetrics.cardRadius else 0.dp,
+                        bottomEnd = if (isLast) PiSettingsMetrics.cardRadius else 0.dp,
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = PiSettingsMetrics.pageHorizontal)
+                            .clip(sliceShape)
+                            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                    ) {
+                        if (!isFirst) ModelsDivider()
                         ModelRow(
                             model = m,
                             current = current?.let { m.sameAs(it.first, it.second) } == true,
@@ -758,7 +821,7 @@ internal fun ProviderSheet(
                     Text(
                         tr("没有匹配「${modelQuery.trim()}」的模型。", "No models matching \"${modelQuery.trim()}\"."),
                         style = PiTheme.text.meta,
-                        color = palette.dim,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
                     )
                 }

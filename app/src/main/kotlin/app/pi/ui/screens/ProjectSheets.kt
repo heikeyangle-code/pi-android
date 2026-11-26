@@ -1,5 +1,6 @@
 package app.pi.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -7,38 +8,49 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AlternateEmail
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileCopy
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.FolderSpecial
+import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +61,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -78,6 +91,8 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateTone
 import java.io.File
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 // ================================================================ 浮层：切换工作区
 
@@ -276,18 +291,20 @@ internal fun WorkspaceRowMenuSheet(
         subtitle = app.pi.runtime.GuestWorkspacePath.shortenForDisplay(entry.guestPath),
         subtitleMono = true,
     ) {
-        MenuAction(
-            tr("重命名显示名", "Rename"),
-            onRename,
-            icon = Icons.Filled.DriveFileRenameOutline,
-        )
-        WsHairline()
-        MenuAction(
-            if (entry.external) tr("从列表移除", "Remove from list") else tr("删除项目", "Delete project"),
-            onDelete,
-            tone = PiTheme.palette.error,
-            icon = Icons.Filled.Delete,
-        )
+        WsCard {
+            MenuAction(
+                tr("重命名显示名", "Rename"),
+                onRename,
+                icon = Icons.Filled.DriveFileRenameOutline,
+            )
+            WsHairline(startInset = WsIconHairlineStart)
+            MenuAction(
+                if (entry.external) tr("从列表移除", "Remove from list") else tr("删除项目", "Delete project"),
+                onDelete,
+                destructive = true,
+                icon = Icons.Filled.Delete,
+            )
+        }
     }
 }
 
@@ -324,29 +341,6 @@ internal fun menuTargetFor(path: String, file: File, fromSession: Boolean): Work
         modifiedAt = file.lastModified(),
     )
 
-/**
- * 行尾 ⋮ 的底部菜单。
- *
- * 稿子的动作表：③ 的行与 ④ 一样，④ 的文件是
- * 「打开 / 编辑 / 重命名 / 删除 / 复制路径」，④ 的目录是「进入 / 重命名 / 删除 / 复制路径」。
- * 删除用错误色（它是唯一不可逆的那一个）。
- *
- * ## 「用其他应用打开」与「导出到 Download」是这张菜单加的两条（稿子的动作表里没有）
- *
- * 放在这里而不是查看器的正文里，正因为这张 sheet 是**两个入口共用**的：文件列表行的 ⋮，
- * 以及查看器的 ⋮（查看器的 `onMore` 落回这一屏的 `menuFor`）。加一次，文本、代码、markdown、
- * HTML、空文件、超大、图片、二进制 —— **每一种**都拿得到这两条路；各支正文再各画一遍就会有
- * 七八个说法，第一个改的人只会改自己看见的那一个。
- *
- * 两条都只对**文件**存在（目录没有"用别的应用打开"这回事）。这两个 lambda 的实现都在
- * `WorkspaceViewer.kt` 里（`openWithOtherApp` / `exportWorkspaceFile`）—— 查看器二进制那一支
- * 用的是同一对函数，所以两条入口的行为不可能漂移。「导出到 Download」也是真的一条路：
- * 「用其他应用打开」在没人能接时说的那句「先导出到 Download」，指的就是同一张菜单里的这一条。
- *
- * 壳是 [WsSheet]：标题是 `mid(文件名, 22)`（稿子 `:1613`），副标题是**等宽**的完整路径
- * （稿子那儿是一个 `span.mono`），动作行自己带 `10px 14px` 的内边距（见 [MenuAction]），
- * 所以头下面不再垫一个空档 —— 头的 8 加上行的 10 就是面板头到第一条动作的那道缝。
- */
 @Composable
 internal fun WorkspaceMenuSheet(
     target: WorkspaceMenuTarget,
@@ -355,55 +349,105 @@ internal fun WorkspaceMenuSheet(
     onEdit: () -> Unit,
     onOpenWithApp: () -> Unit,
     onShareFile: () -> Unit,
+    onCopy: () -> Unit,
+    onCut: () -> Unit,
     onDuplicate: () -> Unit,
+    onCompress: () -> Unit,
+    onExtractZip: (() -> Unit)? = null,
     onExport: () -> Unit,
     onEnter: () -> Unit,
     onOpenAsProject: (() -> Unit)? = null,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onCopyPath: () -> Unit,
+    onProperties: () -> Unit,
     onMention: () -> Unit,
 ) {
-    val palette = PiTheme.palette
     WsSheet(
         title = WorkspaceFiles.middleEllipsis(target.file.name, MENU_TITLE_MAX_CHARS),
         onClose = onClose,
         subtitle = target.path,
         subtitleMono = true,
+        maxBodyHeight = ROOT_SHEET_BODY_MAX,
     ) {
         if (target.isDirectory) {
-            MenuAction(tr("进入文件夹", "Open Folder"), onEnter, icon = Icons.Filled.FolderOpen)
-            if (onOpenAsProject != null) {
-                MenuAction(
-                    tr("设为当前项目", "Set as Active Project"),
-                    onOpenAsProject,
-                    tone = palette.accent,
-                    icon = Icons.Filled.SwapHoriz,
-                )
+            WsCard {
+                MenuAction(tr("进入文件夹", "Open Folder"), onEnter, icon = Icons.Filled.FolderOpen)
+                if (onOpenAsProject != null) {
+                    WsHairline(startInset = WsIconHairlineStart)
+                    MenuAction(
+                        tr("设为当前项目", "Set as Active Project"),
+                        onOpenAsProject,
+                        icon = Icons.Filled.SwapHoriz,
+                    )
+                }
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("在对话里引用（@）", "Mention in chat (@)"), onMention, icon = Icons.Filled.AlternateEmail)
             }
-            MenuAction(tr("在对话里引用（@）", "Mention in chat (@)"), onMention, icon = Icons.Filled.AlternateEmail)
-            WsHairline()
-            MenuAction(tr("复制副本", "Duplicate"), onDuplicate, icon = Icons.Filled.FileCopy)
-            MenuAction(tr("重命名", "Rename"), onRename, icon = Icons.Filled.DriveFileRenameOutline)
-            MenuAction(tr("复制路径", "Copy path"), onCopyPath, icon = Icons.Filled.ContentCopy)
-            WsHairline()
-            MenuAction(tr("删除文件夹", "Delete folder"), onDelete, tone = palette.error, icon = Icons.Filled.Delete)
+            Spacer(Modifier.height(10.dp))
+            WsCard {
+                MenuAction(tr("复制", "Copy"), onCopy, icon = Icons.Filled.ContentCopy)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("剪切 / 移动", "Cut / Move"), onCut, icon = Icons.Filled.ContentCut)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("创建副本", "Duplicate"), onDuplicate, icon = Icons.Filled.FileCopy)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("重命名", "Rename"), onRename, icon = Icons.Filled.DriveFileRenameOutline)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("压缩为 ZIP", "Compress to ZIP"), onCompress, icon = Icons.Filled.FolderZip)
+            }
+            Spacer(Modifier.height(10.dp))
+            WsCard {
+                MenuAction(tr("复制路径", "Copy path"), onCopyPath, icon = Icons.Filled.ContentCopy)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("属性与详情", "Properties & details"), onProperties, icon = Icons.Filled.Info)
+            }
+            Spacer(Modifier.height(10.dp))
+            WsCard {
+                MenuAction(tr("删除文件夹", "Delete folder"), onDelete, destructive = true, icon = Icons.Filled.Delete)
+            }
         } else {
-            MenuAction(tr("打开查看", "Open"), onOpen, icon = Icons.Filled.Visibility)
-            if (WorkspaceFiles.editableAsText(target.kind)) {
-                MenuAction(tr("编辑", "Edit"), onEdit, icon = Icons.Filled.Edit)
+            WsCard {
+                MenuAction(tr("打开查看", "Open"), onOpen, icon = Icons.Filled.Visibility)
+                if (WorkspaceFiles.editableAsText(target.kind)) {
+                    WsHairline(startInset = WsIconHairlineStart)
+                    MenuAction(tr("编辑", "Edit"), onEdit, icon = Icons.Filled.Edit)
+                }
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("在对话里引用（@）", "Mention in chat (@)"), onMention, icon = Icons.Filled.AlternateEmail)
             }
-            MenuAction(tr("在对话里引用（@）", "Mention in chat (@)"), onMention, tone = palette.accent, icon = Icons.Filled.AlternateEmail)
-            WsHairline()
-            MenuAction(tr("分享文件", "Share file"), onShareFile, icon = Icons.Filled.Share)
-            MenuAction(tr("用其他应用打开", "Open with another app"), onOpenWithApp, icon = Icons.AutoMirrored.Filled.OpenInNew)
-            MenuAction(tr("导出到 Download", "Export to Downloads"), onExport, icon = Icons.Filled.Download)
-            WsHairline()
-            MenuAction(tr("复制副本", "Duplicate"), onDuplicate, icon = Icons.Filled.FileCopy)
-            MenuAction(tr("重命名", "Rename"), onRename, icon = Icons.Filled.DriveFileRenameOutline)
-            MenuAction(tr("复制路径", "Copy path"), onCopyPath, icon = Icons.Filled.ContentCopy)
-            WsHairline()
-            MenuAction(tr("删除文件", "Delete file"), onDelete, tone = palette.error, icon = Icons.Filled.Delete)
+            Spacer(Modifier.height(10.dp))
+            WsCard {
+                MenuAction(tr("复制", "Copy"), onCopy, icon = Icons.Filled.ContentCopy)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("剪切 / 移动", "Cut / Move"), onCut, icon = Icons.Filled.ContentCut)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("创建副本", "Duplicate"), onDuplicate, icon = Icons.Filled.FileCopy)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("重命名", "Rename"), onRename, icon = Icons.Filled.DriveFileRenameOutline)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("压缩为 ZIP", "Compress to ZIP"), onCompress, icon = Icons.Filled.FolderZip)
+                if (onExtractZip != null) {
+                    WsHairline(startInset = WsIconHairlineStart)
+                    MenuAction(tr("解压到当前目录", "Extract here"), onExtractZip, icon = Icons.Filled.Unarchive)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            WsCard {
+                MenuAction(tr("分享文件", "Share file"), onShareFile, icon = Icons.Filled.Share)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("用其他应用打开", "Open with another app"), onOpenWithApp, icon = Icons.AutoMirrored.Filled.OpenInNew)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("导出到 Download", "Export to Downloads"), onExport, icon = Icons.Filled.Download)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("复制路径", "Copy path"), onCopyPath, icon = Icons.Filled.ContentCopy)
+                WsHairline(startInset = WsIconHairlineStart)
+                MenuAction(tr("属性与详情", "Properties & details"), onProperties, icon = Icons.Filled.Info)
+            }
+            Spacer(Modifier.height(10.dp))
+            WsCard {
+                MenuAction(tr("删除文件", "Delete file"), onDelete, destructive = true, icon = Icons.Filled.Delete)
+            }
         }
     }
 }
@@ -415,33 +459,58 @@ private const val MENU_TITLE_MAX_CHARS = 22
 private fun MenuAction(
     label: String,
     onClick: () -> Unit,
-    tone: androidx.compose.ui.graphics.Color? = null,
-    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    destructive: Boolean = false,
+    icon: ImageVector? = null,
 ) {
-    val fg = tone ?: MaterialTheme.colorScheme.onSurface
+    val haptics = LocalHapticFeedback.current
+    val fg = if (destructive) PiTheme.palette.error else MaterialTheme.colorScheme.onSurface
+    val wellBg = if (destructive) {
+        PiTheme.palette.error.copy(alpha = 0.12f)
+    } else {
+        PiSheetChromeMetrics.sheetControlBg
+    }
+    val iconTint = if (destructive) {
+        PiTheme.palette.error
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
             .padding(
                 horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                vertical = 11.dp,
+                vertical = 10.dp,
             ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (icon != null) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(19.dp),
-                tint = tone ?: PiTheme.palette.muted,
-            )
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(wellBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                    tint = iconTint,
+                )
+            }
         }
         Text(
             label,
+            modifier = Modifier.weight(1f),
             style = PiType.rowTitle,
             color = fg,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -465,33 +534,35 @@ internal fun WorkspaceNewSheet(
         onClose = onClose,
         subtitle = tr("当前目录：$where", "Directory: $where"),
     ) {
-        NewChoice(
-            title = tr("新建文件", "New File"),
-            supporting = tr("建完直接进编辑态，写什么由你。", "Opens directly in the editor after creation."),
-            glyph = { EntryGlyph(WorkspaceEntryKind.Text) },
-            onClick = onNewFile,
-        )
-        WsHairline()
-        NewChoice(
-            title = tr("新建文件夹", "New Folder"),
-            supporting = tr("放在当前目录下。", "Created in the current directory."),
-            glyph = { EntryGlyph(WorkspaceEntryKind.Directory) },
-            onClick = onNewDir,
-        )
-        WsHairline()
-        NewChoice(
-            title = tr("从手机导入文件", "Import Files from Device"),
-            supporting = tr("支持多选任意文档、图片或代码，自动防重名。", "Select one or more files from your phone; auto-renames on conflict."),
-            glyph = {
-                Icon(
-                    Icons.Filled.UploadFile,
-                    contentDescription = null,
-                    modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-                    tint = PiTheme.palette.accent,
-                )
-            },
-            onClick = onImportFiles,
-        )
+        WsCard {
+            NewChoice(
+                title = tr("新建文件", "New File"),
+                supporting = tr("建完直接进编辑态，写什么由你。", "Opens directly in the editor after creation."),
+                glyph = { EntryGlyph(WorkspaceEntryKind.Text) },
+                onClick = onNewFile,
+            )
+            WsHairline(startInset = WsIconHairlineStart)
+            NewChoice(
+                title = tr("新建文件夹", "New Folder"),
+                supporting = tr("放在当前目录下。", "Created in the current directory."),
+                glyph = { EntryGlyph(WorkspaceEntryKind.Directory) },
+                onClick = onNewDir,
+            )
+            WsHairline(startInset = WsIconHairlineStart)
+            NewChoice(
+                title = tr("从手机导入文件", "Import Files from Device"),
+                supporting = tr("支持多选任意文档、图片或代码，自动防重名。", "Select one or more files from your phone; auto-renames on conflict."),
+                glyph = {
+                    Icon(
+                        Icons.Filled.UploadFile,
+                        contentDescription = null,
+                        modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
+                    )
+                },
+                onClick = onImportFiles,
+            )
+        }
     }
 }
 
@@ -502,22 +573,33 @@ private fun NewChoice(
     glyph: @Composable () -> Unit,
     onClick: () -> Unit,
 ) {
+    val haptics = LocalHapticFeedback.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
             .padding(
                 horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                vertical = PiSettingsMetrics.rowPaddingVertical,
+                vertical = 11.dp,
             ),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.searchIconGap),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        glyph()
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(PiSheetChromeMetrics.sheetControlBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            glyph()
+        }
         Column(Modifier.weight(1f)) {
             Text(
                 title,
-                // 与 `MenuAction` / 设置面的行标题同一个角色：`PiType.rowTitle`（15/23 Medium）。
                 style = PiType.rowTitle,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -528,15 +610,20 @@ private fun NewChoice(
                 color = PiTheme.palette.muted,
             )
         }
-        Text("›", style = PiTheme.text.mono, color = PiTheme.palette.muted, maxLines = 1)
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = PiTheme.palette.dim,
+        )
     }
 }
 
 // ================================================================ 浮层：名字输入
 
-internal enum class WorkspaceInputKind { NewFile, NewDir, Rename, RenameWorkspace, NewWorkspace }
+internal enum class WorkspaceInputKind { NewFile, NewDir, Rename, RenameWorkspace, NewWorkspace, CompressZip }
 
-/** 新建文件 / 新建文件夹 / 重命名 / 重命名工作区共用的一支输入框（稿子就是这么复用的）。 */
+/** 新建文件 / 新建文件夹 / 重命名 / 重命名工作区 / 压缩命名共用的一支输入框。 */
 internal data class WorkspaceInputDialog(
     val kind: WorkspaceInputKind,
     val title: String,
@@ -544,12 +631,14 @@ internal data class WorkspaceInputDialog(
     val where: String,
     /** 相对工作区的父目录；只有新建文件 / 文件夹用它。 */
     val relativeParent: String?,
-    /** 绝对父目录；文件重命名用它。 */
+    /** 绝对父目录；文件重命名 / 压缩用它。 */
     val absoluteParent: File?,
     val initial: String,
     val dialogSub: String? = null,
     /** 要改显示名的那个工作区（目录名 = identity）；只有重命名工作区用它。 */
     val workspaceName: String? = null,
+    /** 压缩为 ZIP 时的源文件列表。 */
+    val compressSources: List<File> = emptyList(),
 )
 
 @Composable
@@ -559,13 +648,15 @@ internal fun WorkspaceNameDialog(
     onPickDeviceLocation: () -> Unit = {},
     onSubmit: (String) -> Unit,
 ) {
+    val haptics = LocalHapticFeedback.current
     var field by remember(dialog) {
         val dot = dialog.initial.lastIndexOf('.')
-        val end = if (dialog.kind == WorkspaceInputKind.Rename && dot > 0) dot else dialog.initial.length
+        val selectStem = dialog.kind == WorkspaceInputKind.Rename || dialog.kind == WorkspaceInputKind.CompressZip
+        val end = if (selectStem && dot > 0) dot else dialog.initial.length
         mutableStateOf(
             androidx.compose.ui.text.input.TextFieldValue(
                 dialog.initial,
-                if (dialog.kind == WorkspaceInputKind.RenameWorkspace || dialog.kind == WorkspaceInputKind.Rename) {
+                if (dialog.kind == WorkspaceInputKind.RenameWorkspace || selectStem) {
                     androidx.compose.ui.text.TextRange(0, end)
                 } else {
                     androidx.compose.ui.text.TextRange(dialog.initial.length)
@@ -575,43 +666,59 @@ internal fun WorkspaceNameDialog(
     }
     var newInDevice by remember(dialog) { mutableStateOf(false) }
     val name = field.text
-    val focus = remember(dialog) { androidx.compose.ui.focus.FocusRequester() }
+    val focus = remember(dialog) { FocusRequester() }
     if (!(dialog.kind == WorkspaceInputKind.NewWorkspace && newInDevice)) {
         PiAutoFocus(focus)
     }
     PiDialog(onDismissRequest = onClose) {
         PiDialogTitle(title = dialog.title)
         if (dialog.kind == WorkspaceInputKind.NewWorkspace) {
-            val palette = PiTheme.palette
-            Row(
+            val isDark = PiTheme.isDark
+            val trackBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceContainer
+            val activeBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerHighest else Color.White
+            val trackBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f)
+            val activeBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.75f else 0.90f)
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 6.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                    .padding(3.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    .padding(top = 6.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = trackBg,
+                border = BorderStroke(PiSpacing.hairlineThin, trackBorder),
             ) {
-                listOf(
-                    false to tr("应用沙盒（高速）", "App Sandbox (Fast)"),
-                    true to tr("设备存储（自选位置）", "Device Storage"),
-                ).forEach { (isDevice, label) ->
-                    val selected = newInDevice == isDevice
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (selected) palette.accent.copy(alpha = 0.18f) else androidx.compose.ui.graphics.Color.Transparent)
-                            .clickable { newInDevice = isDevice }
-                            .padding(vertical = 8.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = label,
-                            style = PiTheme.text.meta.copy(fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium),
-                            color = if (selected) palette.accent else palette.muted,
-                            maxLines = 1,
-                        )
+                Row(
+                    modifier = Modifier.padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    listOf(
+                        false to tr("应用沙盒（高速）", "App Sandbox (Fast)"),
+                        true to tr("设备存储（自选位置）", "Device Storage"),
+                    ).forEach { (isDevice, label) ->
+                        val selected = newInDevice == isDevice
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(7.dp),
+                            color = if (selected) activeBg else Color.Transparent,
+                            border = if (selected) BorderStroke(PiSpacing.hairlineThin, activeBorder) else null,
+                            onClick = {
+                                if (!selected) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    newInDevice = isDevice
+                                }
+                            },
+                        ) {
+                            Box(
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = PiTheme.text.meta.copy(fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium),
+                                    color = if (selected) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -643,12 +750,13 @@ internal fun WorkspaceNameDialog(
             WorkspaceInputKind.NewWorkspace ->
                 if (trimmed.isEmpty()) null
                 else WorkspaceChoice.nameProblem(trimmed)
-                    ?: if (java.io.File(WorkspaceStore.root(LocalContext.current), trimmed).exists()) tr("已经有叫「$trimmed」的项目了。", "A project named \"$trimmed\" already exists.") else null
+                    ?: if (File(WorkspaceStore.root(LocalContext.current), trimmed).exists()) tr("已经有叫「$trimmed」的项目了。", "A project named \"$trimmed\" already exists.") else null
+            WorkspaceInputKind.CompressZip -> WorkspaceFiles.nameProblem(name)
             else -> WorkspaceFiles.nameProblem(name) ?: run {
                 val parent = dialog.absoluteParent
                 if (parent != null && trimmed.isNotEmpty() &&
                     !(dialog.kind == WorkspaceInputKind.Rename && trimmed == dialog.initial) &&
-                    java.io.File(parent, trimmed).exists()
+                    File(parent, trimmed).exists()
                 ) {
                     tr("这里已经有叫「$trimmed」的文件或文件夹了。", "A file or folder named \"$trimmed\" already exists here.")
                 } else {
@@ -667,7 +775,7 @@ internal fun WorkspaceNameDialog(
                 .background(MaterialTheme.colorScheme.surfaceContainerLow)
                 .border(
                     PiSettingsMetrics.hairline,
-                    if (showProblem) PiTheme.palette.error else PiTheme.palette.borderAccent,
+                    if (showProblem) PiTheme.palette.error else MaterialTheme.colorScheme.outlineVariant,
                     RoundedCornerShape(NAME_FIELD_RADIUS),
                 ),
             contentAlignment = Alignment.CenterStart,
@@ -705,6 +813,7 @@ internal fun WorkspaceNameDialog(
                                     WorkspaceInputKind.Rename -> tr("新名字", "New name")
                                     WorkspaceInputKind.RenameWorkspace -> tr("项目显示名", "Project display name")
                                     WorkspaceInputKind.NewWorkspace -> tr("项目名称，例如 my-app", "Project name, e.g. my-app")
+                                    WorkspaceInputKind.CompressZip -> tr("压缩包名称，例如 archive.zip", "Archive name, e.g. archive.zip")
                                 },
                                 style = PiTheme.text.mono.copy(fontSize = 17.sp),
                                 color = PiTheme.palette.muted,
@@ -724,6 +833,7 @@ internal fun WorkspaceNameDialog(
                     WorkspaceInputKind.Rename -> tr("只改文件名，内容不动。", "Renames the file only; contents remain unchanged.")
                     WorkspaceInputKind.NewWorkspace -> tr("保存在应用高速沙盒内（原生 ext4 速度，支持完整 git/npm，无需权限）。", "Created in fast app sandbox (native speed, full git/npm support, no permissions needed).")
                     WorkspaceInputKind.RenameWorkspace -> tr("只改显示名，目录路径不变，会话记录与项目信任不会丢失。", "Changes display name only; folder path, sessions, and project trust stay intact.")
+                    WorkspaceInputKind.CompressZip -> tr("打包到当前目录下（若同名将自动编号防覆盖）。", "Creates a .zip archive in the current directory (auto-renamed if duplicate).")
                     else -> tr("建在当前目录下。", "Created in the current directory.")
                 }
             },
@@ -734,7 +844,11 @@ internal fun WorkspaceNameDialog(
         PiDialogActions {
             PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = onClose)
             PiDialogAction(
-                label = if (dialog.kind == WorkspaceInputKind.NewWorkspace) tr("创建并切换", "Create & Open") else tr("确定", "OK"),
+                label = when (dialog.kind) {
+                    WorkspaceInputKind.NewWorkspace -> tr("创建并切换", "Create & Open")
+                    WorkspaceInputKind.CompressZip -> tr("开始压缩", "Compress")
+                    else -> tr("确定", "OK")
+                },
                 primary = true,
                 enabled = canSubmit,
                 onClick = { onSubmit(trimmed) },
@@ -1146,54 +1260,495 @@ private fun QuickLocationTile(
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
+    val isDark = PiTheme.isDark
+    val haptics = LocalHapticFeedback.current
     val shape = RoundedCornerShape(12.dp)
-    val bg = if (item.active) palette.accent.copy(alpha = 0.12f) else PiSheetChromeMetrics.sheetCardBg
-    val borderColor = if (item.active) palette.accent.copy(alpha = 0.45f) else palette.borderMuted.copy(alpha = 0.50f)
-    Row(
-        modifier = modifier
-            .clip(shape)
-            .background(bg)
-            .border(if (item.active) 1.dp else PiSpacing.hairlineThin, borderColor, shape)
-            .clickable(onClick = item.onClick)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    val bg = if (item.active) {
+        if (isDark) MaterialTheme.colorScheme.surfaceContainerHighest else Color.White
+    } else {
+        PiSheetChromeMetrics.sheetCardBg
+    }
+    val borderColor = if (item.active) {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
+    } else {
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.45f else 0.70f)
+    }
+    Surface(
+        modifier = modifier,
+        shape = shape,
+        color = bg,
+        border = BorderStroke(if (item.active) 1.dp else PiSpacing.hairlineThin, borderColor),
+        onClick = {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            item.onClick()
+        },
     ) {
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(
-                    if (item.active) palette.accent.copy(alpha = 0.18f)
-                    else PiSheetChromeMetrics.sheetControlBg,
-                ),
-            contentAlignment = Alignment.Center,
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
         ) {
-            Icon(
-                imageVector = item.icon,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-                tint = if (item.active) palette.accent else palette.muted,
-            )
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (item.active) MaterialTheme.colorScheme.onSurface
+                        else PiSheetChromeMetrics.sheetControlBg,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = item.icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = if (item.active) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.80f),
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(1.dp),
+            ) {
+                Text(
+                    text = item.title,
+                    style = PiType.rowTitle.copy(
+                        fontSize = 13.sp,
+                        fontWeight = if (item.active) FontWeight.SemiBold else FontWeight.Medium,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = item.subtitle,
+                    style = PiTheme.text.monoSmall,
+                    color = palette.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(1.dp),
+    }
+}
+
+// ================================================================ 剪贴板与批量操作悬浮条
+
+internal enum class WorkspaceClipboardMode { Copy, Cut }
+
+internal data class WorkspaceClipboard(
+    val mode: WorkspaceClipboardMode,
+    val files: List<File>,
+)
+
+/**
+ * 悬浮在底部的文件剪贴板条：跨目录/跨存储复制或剪切后，在任意目标目录一键「粘贴到这里」。
+ */
+@Composable
+internal fun WorkspaceClipboardBar(
+    clipboard: WorkspaceClipboard,
+    modifier: Modifier = Modifier,
+    onPaste: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val isDark = PiTheme.isDark
+    val haptics = LocalHapticFeedback.current
+    val shape = RoundedCornerShape(16.dp)
+    val surfaceBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerHighest else Color.White
+    val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.65f else 0.85f)
+    val count = clipboard.files.size
+    val headline = when (clipboard.mode) {
+        WorkspaceClipboardMode.Copy -> tr("已复制 $count 项", if (count == 1) "1 item copied" else "$count items copied")
+        WorkspaceClipboardMode.Cut -> tr("已剪切 $count 项", if (count == 1) "1 item cut" else "$count items cut")
+    }
+    val sub = if (count == 1) clipboard.files.first().name else tr("浏览到目标目录后点击粘贴", "Navigate to destination and tap Paste")
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+        shape = shape,
+        color = surfaceBg,
+        shadowElevation = if (isDark) 4.dp else 8.dp,
+        border = BorderStroke(PiSpacing.hairlineThin, borderColor),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                text = item.title,
-                style = PiType.rowTitle.copy(fontSize = 13.sp),
-                color = if (item.active) palette.accent else MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (clipboard.mode == WorkspaceClipboardMode.Copy) Icons.Filled.ContentCopy else Icons.Filled.ContentCut,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
+                )
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = headline,
+                    style = PiType.rowTitle.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = sub,
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = MaterialTheme.colorScheme.onSurface,
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onPaste()
+                },
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ContentPaste,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.surface,
+                    )
+                    Text(
+                        text = tr("粘贴到这里", "Paste here"),
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.surface,
+                        maxLines = 1,
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .clickable(onClickLabel = tr("取消", "Cancel"), onClick = onCancel),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = tr("取消", "Cancel"),
+                    modifier = Modifier.size(17.dp),
+                    tint = PiTheme.palette.muted,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 多选模式底部悬浮操作栏：一键批量 @引用、复制、剪切、打包 ZIP、删除。
+ */
+@Composable
+internal fun WorkspaceBatchActionBar(
+    selectedCount: Int,
+    modifier: Modifier = Modifier,
+    onMentionAll: () -> Unit,
+    onCopy: () -> Unit,
+    onCut: () -> Unit,
+    onCompress: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val isDark = PiTheme.isDark
+    val enabled = selectedCount > 0
+    val shape = RoundedCornerShape(16.dp)
+    val surfaceBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerHighest else Color.White
+    val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.65f else 0.85f)
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+        shape = shape,
+        color = surfaceBg,
+        shadowElevation = if (isDark) 4.dp else 8.dp,
+        border = BorderStroke(PiSpacing.hairlineThin, borderColor),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BatchDockAction(
+                icon = Icons.Filled.AlternateEmail,
+                label = tr("@引用", "Mention"),
+                enabled = enabled,
+                destructive = false,
+                onClick = onMentionAll,
+                modifier = Modifier.weight(1f),
             )
-            Text(
-                text = item.subtitle,
-                style = PiTheme.text.monoSmall,
-                color = palette.muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            BatchDockAction(
+                icon = Icons.Filled.ContentCopy,
+                label = tr("复制", "Copy"),
+                enabled = enabled,
+                destructive = false,
+                onClick = onCopy,
+                modifier = Modifier.weight(1f),
+            )
+            BatchDockAction(
+                icon = Icons.Filled.ContentCut,
+                label = tr("剪切", "Cut"),
+                enabled = enabled,
+                destructive = false,
+                onClick = onCut,
+                modifier = Modifier.weight(1f),
+            )
+            BatchDockAction(
+                icon = Icons.Filled.FolderZip,
+                label = tr("压缩", "Zip"),
+                enabled = enabled,
+                destructive = false,
+                onClick = onCompress,
+                modifier = Modifier.weight(1f),
+            )
+            BatchDockAction(
+                icon = Icons.Filled.Delete,
+                label = tr("删除", "Delete"),
+                enabled = enabled,
+                destructive = true,
+                onClick = onDelete,
+                modifier = Modifier.weight(1f),
             )
         }
     }
 }
+
+@Composable
+private fun BatchDockAction(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    destructive: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = LocalHapticFeedback.current
+    val fg = if (destructive) PiTheme.palette.error else MaterialTheme.colorScheme.onSurface
+    Column(
+        modifier = modifier
+            .alpha(if (enabled) 1f else 0.36f)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(enabled = enabled) {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
+            .padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            modifier = Modifier.size(19.dp),
+            tint = fg,
+        )
+        Text(
+            text = label,
+            style = PiTheme.text.meta.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+            color = fg,
+            maxLines = 1,
+        )
+    }
+}
+
+// ================================================================ 浮层：文件/目录属性详情
+
+@Composable
+internal fun WorkspacePropertiesSheet(
+    file: File,
+    guestRootfs: File?,
+    onClose: () -> Unit,
+    onCopyText: (String) -> Unit,
+) {
+    var props by remember(file.absolutePath) { mutableStateOf<FileProperties?>(null) }
+    LaunchedEffect(file.absolutePath) {
+        props = withContext(Dispatchers.IO) { WorkspaceFiles.inspectProperties(file, guestRootfs) }
+    }
+    WsSheet(
+        title = WorkspaceFiles.middleEllipsis(file.name.ifEmpty { "/" }, MENU_TITLE_MAX_CHARS),
+        onClose = onClose,
+        subtitle = tr("文件与目录属性", "File & folder properties"),
+        maxBodyHeight = ROOT_SHEET_BODY_MAX,
+    ) {
+        val p = props
+        if (p == null) {
+            WsCard {
+                WsRow(
+                    title = tr("正在统计文件属性…", "Inspecting properties…"),
+                    meta = tr("大目录需要短暂扫描子项体积", "Calculating folder size and counts"),
+                )
+            }
+            return@WsSheet
+        }
+        val kindText = when {
+            p.isSymlink -> tr("符号链接", "Symbolic link")
+            p.isDirectory -> tr("文件夹", "Folder")
+            WorkspaceFiles.isZipFile(file) -> tr("ZIP 压缩包", "ZIP archive")
+            p.kind == WorkspaceEntryKind.Image -> tr("图片文件", "Image")
+            p.kind == WorkspaceEntryKind.Html -> tr("HTML 网页", "HTML document")
+            p.kind == WorkspaceEntryKind.Binary -> WorkspaceFiles.binaryLabel(file)
+            else -> tr("文本文件", "Text file")
+        }
+        WsCard {
+            PropertyRow(label = tr("类型", "Type"), value = kindText)
+            WsHairline()
+            PropertyRow(
+                label = tr("大小", "Size"),
+                value = buildString {
+                    if (p.statsTruncated) append("≥ ")
+                    append(WorkspaceFiles.formatSize(p.sizeBytes))
+                    append(" (${p.sizeBytes} B)")
+                },
+                mono = true,
+            )
+            if (p.isDirectory) {
+                WsHairline()
+                PropertyRow(
+                    label = tr("包含内容", "Contents"),
+                    value = buildString {
+                        if (p.statsTruncated) append("≥ ")
+                        append(
+                            tr(
+                                "${p.fileCount} 个文件 · ${p.dirCount} 个文件夹",
+                                "${p.fileCount} ${if (p.fileCount == 1) "file" else "files"} · ${p.dirCount} ${if (p.dirCount == 1) "folder" else "folders"}",
+                            ),
+                        )
+                    },
+                )
+            } else if (p.lineCount != null) {
+                WsHairline()
+                PropertyRow(
+                    label = tr("文本行数", "Lines"),
+                    value = tr("${p.lineCount} 行", "${p.lineCount} lines"),
+                    mono = true,
+                )
+            }
+            WsHairline()
+            PropertyRow(label = tr("权限", "Permissions"), value = p.permissions, mono = true)
+            WsHairline()
+            PropertyRow(label = tr("修改时间", "Modified"), value = WorkspaceFiles.formatTime(p.modifiedAt))
+            if (!p.symlinkTarget.isNullOrEmpty()) {
+                WsHairline()
+                PropertyRow(label = tr("链接目标", "Link target"), value = p.symlinkTarget, mono = true)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        WsCard {
+            val guest = p.guestPath?.takeIf { it != p.hostPath }
+            if (guest != null) {
+                PropertyPathRow(
+                    label = tr("容器内路径", "Container path"),
+                    path = guest,
+                    onCopy = { onCopyText(guest) },
+                )
+                WsHairline()
+            }
+            PropertyPathRow(
+                label = tr("宿主路径", "Host path"),
+                path = p.hostPath,
+                onCopy = { onCopyText(p.hostPath) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PropertyRow(
+    label: String,
+    value: String,
+    mono: Boolean = false,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = label,
+            style = PiTheme.text.meta,
+            color = PiTheme.palette.muted,
+            maxLines = 1,
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            text = value,
+            style = if (mono) PiTheme.text.monoSmall else PiTheme.text.prose,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun PropertyPathRow(
+    label: String,
+    path: String,
+    onCopy: () -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onCopy()
+            }
+            .padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = label,
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
+            )
+            Text(
+                text = path,
+                style = PiTheme.text.monoSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(PiSheetChromeMetrics.sheetControlBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.ContentCopy,
+                contentDescription = tr("复制路径", "Copy path"),
+                modifier = Modifier.size(15.dp),
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.80f),
+            )
+        }
+    }
+}
+

@@ -23,9 +23,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
@@ -291,6 +292,10 @@ internal fun ChatTopBar(
             toolsExpanded = toolsExpanded,
             toolDisplayMode = toolDisplayMode,
             onDismiss = { commandCenterOpen = false },
+            onOpenWorkspace = {
+                commandCenterOpen = false
+                onOpenWorkspace()
+            },
             onToggleSearch = {
                 commandCenterOpen = false
                 onToggleSearch(true)
@@ -365,6 +370,7 @@ private fun ChatCommandCenterSheet(
     toolsExpanded: Boolean,
     toolDisplayMode: String,
     onDismiss: () -> Unit,
+    onOpenWorkspace: () -> Unit,
     onToggleSearch: () -> Unit,
     onJumpQuestion: (forward: Boolean) -> Unit,
     onToggleTools: () -> Unit,
@@ -372,23 +378,26 @@ private fun ChatCommandCenterSheet(
     onAction: (ChatAction) -> Unit,
 ) {
     val palette = PiTheme.palette
+    val isDark = PiTheme.isDark
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val statusColor = stateToneColor(engineStateTone(engineLabel), palette)
     PiSheet(onDismiss = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 560.dp)
+                .heightIn(max = 580.dp)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = PiSpacing.pageHorizontal)
                 .padding(bottom = 22.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            // 顶部会话抬头 + 可点工作区入口 + 静谧状态胶囊
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
                         text = sessionTitle ?: tr("当前对话", "Current Chat"),
                         style = PiType.title,
@@ -397,28 +406,71 @@ private fun ChatCommandCenterSheet(
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (!workspaceName.isNullOrBlank()) {
-                        Text(
-                            text = workspaceName,
-                            style = PiTheme.text.monoSmall,
-                            color = palette.muted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(
+                                    onClickLabel = tr("打开项目与文件", "Open project & files"),
+                                    onClick = {
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                        onOpenWorkspace()
+                                    },
+                                )
+                                .padding(vertical = 1.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.FolderOpen,
+                                contentDescription = null,
+                                modifier = Modifier.size(13.dp),
+                                tint = palette.muted,
+                            )
+                            Text(
+                                text = workspaceName,
+                                style = PiTheme.text.monoSmall,
+                                color = palette.muted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                modifier = Modifier.size(13.dp),
+                                tint = palette.dim,
+                            )
+                        }
                     }
                 }
-                Text(
-                    text = engineLabel,
+                Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(999.dp))
                         .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
-                        .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
-                        .padding(horizontal = 9.dp, vertical = 3.dp),
-                    style = PiTheme.text.meta,
-                    color = stateToneColor(engineStateTone(engineLabel), palette),
-                )
+                        .border(
+                            PiSpacing.hairlineThin,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f),
+                            RoundedCornerShape(999.dp),
+                        )
+                        .padding(horizontal = 9.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(statusColor),
+                    )
+                    Text(
+                        text = engineLabel,
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                        maxLines = 1,
+                    )
+                }
             }
 
-            // 顶部 2×3 快捷磁贴网格（高频核心入口，零重复）
+            // 顶部 2×3 极简单色高频入口（与设置页视觉语言 100% 统一，零六色彩块噪音）
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -427,21 +479,18 @@ private fun ChatCommandCenterSheet(
                     QuickTile(
                         icon = Icons.Filled.AccountTree,
                         label = tr("会话树", "Session Tree"),
-                        tint = palette.accent,
                         modifier = Modifier.weight(1f),
                         onClick = { onAction(ChatAction.OpenTree) },
                     )
                     QuickTile(
                         icon = Icons.AutoMirrored.Filled.Article,
                         label = tr("系统提示词", "System Prompt"),
-                        tint = palette.borderAccent,
                         modifier = Modifier.weight(1f),
                         onClick = { onAction(ChatAction.ViewSystemPrompt) },
                     )
                     QuickTile(
                         icon = Icons.Filled.Refresh,
                         label = tr("重载扩展", "Reload"),
-                        tint = palette.success,
                         modifier = Modifier.weight(1f),
                         onClick = { onAction(ChatAction.ReloadResources) },
                     )
@@ -453,28 +502,25 @@ private fun ChatCommandCenterSheet(
                     QuickTile(
                         icon = Icons.Filled.Share,
                         label = tr("导出会话", "Export"),
-                        tint = palette.mdLink,
                         modifier = Modifier.weight(1f),
                         onClick = { onAction(ChatAction.ExportSession) },
                     )
                     QuickTile(
                         icon = Icons.Filled.Info,
                         label = tr("会话统计", "Session Stats"),
-                        tint = palette.warning,
                         modifier = Modifier.weight(1f),
                         onClick = { onAction(ChatAction.SessionStats) },
                     )
                     QuickTile(
                         icon = Icons.Filled.Settings,
                         label = tr("设置", "Settings"),
-                        tint = palette.muted,
                         modifier = Modifier.weight(1f),
                         onClick = { onAction(ChatAction.OpenSettings) },
                     )
                 }
             }
 
-            // 显示与导航组
+            // 视图与定位组
             val isCompactMode = ActivityDisplayMode.isCompact(toolDisplayMode)
             ActionGroupCard(title = tr("视图与定位", "View & Navigation")) {
                 ToolDisplayModeSwitchRow(
@@ -490,50 +536,34 @@ private fun ChatCommandCenterSheet(
                 SheetActionRow(
                     icon = Icons.Filled.Search,
                     label = if (searchOpen) tr("关闭对话内查找", "Close search") else tr("查找内容 / 快速定位提问", "Search chat / jump prompts"),
+                    showChevron = !searchOpen,
                     onClick = onToggleSearch,
                 )
                 SheetHairline()
-                // 并排双按钮连续跳提问，点击不强关面板，带触感反馈
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
-                            .clickable {
-                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                onJumpQuestion(false)
-                            }
-                            .padding(vertical = 8.dp, horizontal = 10.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Filled.KeyboardArrowUp, contentDescription = null, modifier = Modifier.size(17.dp), tint = palette.accent)
-                        Spacer(Modifier.width(4.dp))
-                        Text(tr("上一条提问", "Prev prompt"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
-                    }
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
-                            .clickable {
-                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                onJumpQuestion(true)
-                            }
-                            .padding(vertical = 8.dp, horizontal = 10.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(17.dp), tint = palette.accent)
-                        Spacer(Modifier.width(4.dp))
-                        Text(tr("下一条提问", "Next prompt"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
-                    }
+                    PromptJumpButton(
+                        icon = Icons.Filled.KeyboardArrowUp,
+                        label = tr("上一条提问", "Prev prompt"),
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            onJumpQuestion(false)
+                        },
+                    )
+                    PromptJumpButton(
+                        icon = Icons.Filled.KeyboardArrowDown,
+                        label = tr("下一条提问", "Next prompt"),
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            onJumpQuestion(true)
+                        },
+                    )
                 }
                 SheetHairline()
                 SheetActionRow(
@@ -555,11 +585,12 @@ private fun ChatCommandCenterSheet(
                 )
             }
 
-            // 会话与策略组
+            // 当前会话与策略组
             ActionGroupCard(title = tr("当前会话与策略", "Session & Policy")) {
                 SheetActionRow(
                     icon = Icons.Filled.Edit,
                     label = tr("重命名会话", "Rename session"),
+                    showChevron = true,
                     onClick = { onAction(ChatAction.RenameSession) },
                 )
                 SheetHairline()
@@ -567,6 +598,7 @@ private fun ChatCommandCenterSheet(
                     icon = Icons.Filled.AccountTree,
                     label = tr("从历史消息分叉", "Fork from message"),
                     subtitle = tr("回到某条用户消息创建独立分支会话", "Branch into a new session from an earlier prompt"),
+                    showChevron = true,
                     onClick = { onAction(ChatAction.PickFork) },
                 )
                 SheetHairline()
@@ -587,12 +619,14 @@ private fun ChatCommandCenterSheet(
                     icon = Icons.Filled.Tune,
                     label = tr("队列与自动容错策略", "Queue & Auto-Policy"),
                     subtitle = tr("引导/后续投递方式、自动压缩与自动重试开关", "Steering/follow-up mode, auto-compaction & auto-retry"),
+                    showChevron = true,
                     onClick = { onAction(ChatAction.ToolsSheet) },
                 )
                 SheetHairline()
                 SheetActionRow(
                     icon = Icons.Filled.FileUpload,
                     label = tr("导入 JSONL 会话文件", "Import JSONL session"),
+                    showChevron = true,
                     onClick = { onAction(ChatAction.ImportSession) },
                 )
             }
@@ -601,36 +635,82 @@ private fun ChatCommandCenterSheet(
 }
 
 @Composable
-private fun QuickTile(
+private fun PromptJumpButton(
     icon: ImageVector,
     label: String,
-    tint: Color,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    val isDark = PiTheme.isDark
+    val shape = RoundedCornerShape(10.dp)
+    val bg = if (isDark) MaterialTheme.colorScheme.surfaceContainerHighest else Color.White
+    val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.80f)
+    Row(
+        modifier = modifier
+            .clip(shape)
+            .background(bg)
+            .border(PiSpacing.hairlineThin, borderColor, shape)
+            .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 10.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = label,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun QuickTile(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val isDark = PiTheme.isDark
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val shape = RoundedCornerShape(14.dp)
+    val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.50f else 0.72f)
     Column(
         modifier = modifier
             .clip(shape)
             .background(app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg)
-            .border(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.45f), shape)
-            .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
+            .border(PiSpacing.hairlineThin, borderColor, shape)
+            .clickable(
+                role = Role.Button,
+                onClickLabel = label,
+                onClick = {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                    onClick()
+                },
+            )
             .padding(vertical = 12.dp, horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         Box(
             modifier = Modifier
                 .size(34.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(tint.copy(alpha = 0.14f)),
+                .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 modifier = Modifier.size(18.dp),
-                tint = tint,
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
             )
         }
         Text(
@@ -648,11 +728,13 @@ private fun ActionGroupCard(
     title: String,
     content: @Composable () -> Unit,
 ) {
+    val isDark = PiTheme.isDark
     val shape = RoundedCornerShape(14.dp)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.50f else 0.72f)
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Text(
             text = title,
-            modifier = Modifier.padding(start = 4.dp),
+            modifier = Modifier.padding(start = 6.dp),
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
             color = PiTheme.palette.muted,
         )
@@ -661,7 +743,7 @@ private fun ActionGroupCard(
                 .fillMaxWidth()
                 .clip(shape)
                 .background(app.pi.ui.components.PiSheetChromeMetrics.sheetCardBg)
-                .border(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.45f), shape),
+                .border(PiSpacing.hairlineThin, borderColor, shape),
         ) {
             content()
         }
@@ -674,6 +756,7 @@ private fun SheetActionRow(
     label: String,
     subtitle: String? = null,
     trailingBadge: String? = null,
+    showChevron: Boolean = false,
     onClick: () -> Unit,
 ) {
     Row(
@@ -690,7 +773,7 @@ private fun SheetActionRow(
             modifier = Modifier.size(19.dp),
             tint = PiTheme.palette.muted,
         )
-        Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = label,
                 style = PiType.rowTitle,
@@ -714,11 +797,18 @@ private fun SheetActionRow(
                 modifier = Modifier
                     .clip(RoundedCornerShape(999.dp))
                     .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
-                    .border(PiSpacing.hairlineThin, PiTheme.palette.borderMuted.copy(alpha = 0.42f), RoundedCornerShape(999.dp))
+                    .border(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f), RoundedCornerShape(999.dp))
                     .padding(horizontal = 8.dp, vertical = 2.dp),
                 style = PiTheme.text.meta,
                 color = PiTheme.palette.muted,
                 maxLines = 1,
+            )
+        } else if (showChevron) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = PiTheme.palette.dim,
             )
         }
     }
@@ -730,8 +820,13 @@ private fun ToolDisplayModeSwitchRow(
     onSelect: (String) -> Unit,
 ) {
     val palette = PiTheme.palette
+    val isDark = PiTheme.isDark
     val normalized = ActivityDisplayMode.normalize(selectedMode)
     val isCompact = normalized == ActivityDisplayMode.COMPACT
+    val trackBg = if (isDark) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surfaceContainerHigh
+    val activeBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerHighest else Color.White
+    val trackBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f)
+    val activeBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.75f else 0.90f)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -749,7 +844,7 @@ private fun ToolDisplayModeSwitchRow(
                 modifier = Modifier.size(19.dp),
                 tint = palette.muted,
             )
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     text = tr("工具与过程展示", "Tool & Process Display"),
                     style = PiType.rowTitle,
@@ -771,57 +866,49 @@ private fun ToolDisplayModeSwitchRow(
             }
         }
         val trackShape = RoundedCornerShape(10.dp)
-        val itemShape = RoundedCornerShape(8.dp)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(trackShape)
-                .background(app.pi.ui.components.PiSheetChromeMetrics.sheetControlBg)
-                .padding(3.dp),
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        val itemShape = RoundedCornerShape(7.dp)
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = trackShape,
+            color = trackBg,
+            border = BorderStroke(PiSpacing.hairlineThin, trackBorder),
         ) {
-            val options = listOf(
-                ActivityDisplayMode.CARDS to tr("Pi 原版", "Pi Original"),
-                ActivityDisplayMode.COMPACT to tr("专注折叠", "Compact"),
-            )
-            for ((value, label) in options) {
-                val selected = normalized == value
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(itemShape)
-                        .then(
-                            if (selected) {
-                                Modifier
-                                    .background(palette.accent.copy(alpha = 0.14f))
-                                    .border(0.5.dp, palette.accent.copy(alpha = 0.42f), itemShape)
-                            } else {
-                                Modifier
-                            },
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                val options = listOf(
+                    ActivityDisplayMode.CARDS to tr("Pi 原版", "Pi Original"),
+                    ActivityDisplayMode.COMPACT to tr("专注折叠", "Compact"),
+                )
+                for ((value, label) in options) {
+                    val selected = normalized == value
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(itemShape)
+                            .background(if (selected) activeBg else Color.Transparent)
+                            .border(
+                                width = if (selected) PiSpacing.hairlineThin else 0.dp,
+                                color = if (selected) activeBorder else Color.Transparent,
+                                shape = itemShape,
+                            )
+                            .clickable(role = Role.RadioButton, onClick = { onSelect(value) })
+                            .padding(vertical = 8.dp, horizontal = 8.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = label,
+                            style = PiTheme.text.meta.copy(
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            ),
+                            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
-                        .clickable(role = Role.RadioButton, onClick = { onSelect(value) })
-                        .padding(vertical = 7.dp, horizontal = 8.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (selected) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(palette.accent),
-                        )
-                        Spacer(Modifier.width(6.dp))
                     }
-                    Text(
-                        text = label,
-                        style = PiTheme.text.meta.copy(
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                        ),
-                        color = if (selected) palette.accent else palette.muted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
                 }
             }
         }
