@@ -1672,20 +1672,46 @@ internal fun ChatBody(
             }
             val listTopInWindowRef = remember { floatArrayOf(0f) }
             val latestFollowing by rememberUpdatedState(following)
+            val latestTopChromePx by rememberUpdatedState(topChromeHeightPx.toFloat())
             val viewportTopCompensator = remember(listState) {
+                var lastBaseIndex = -1
+                var lastBaseOffset = -1
+                var lastBatchNanos = 0L
+                var pendingDeltaPx = 0
                 { blockBottomInWindowPx: Float, deltaHeightPx: Int ->
-                    // 仅当发生高度变化的异步块完全位于列表视口顶缘之上，且当前处于非触底、非拖动、
-                    // 首行已向上滚出一截（firstVisibleItemScrollOffset > 0）状态时，同向平移偏移量，
+                    // 仅当发生高度变化的异步块完全位于可视正文区顶缘（悬浮顶栏下方）之上，
+                    // 且当前处于非触底、非拖动、首行已向上滚出一截（firstVisibleItemScrollOffset > 0）时，
+                    // 同向累积平移偏移量（同一布局帧内多个富块同时定稿时累加，避免后一次覆盖前一次），
                     // 锁定正在阅读的下半部分（如表格）像素位置不跳屏。
+                    val visibleTopPx = listTopInWindowRef[0] + latestTopChromePx + 4f
                     if (
                         deltaHeightPx != 0 &&
-                        blockBottomInWindowPx <= listTopInWindowRef[0] + 4f &&
+                        blockBottomInWindowPx <= visibleTopPx &&
                         !latestFollowing &&
-                        !listState.isScrollInProgress &&
-                        listState.firstVisibleItemScrollOffset > 0
+                        !listState.isScrollInProgress
                     ) {
-                        val targetOffset = (listState.firstVisibleItemScrollOffset + deltaHeightPx).coerceAtLeast(0)
-                        listState.requestScrollToItem(listState.firstVisibleItemIndex, targetOffset)
+                        val (baseIndex, baseOffset) = androidx.compose.runtime.snapshots.Snapshot
+                            .withoutReadObservation {
+                                listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+                            }
+                        if (baseOffset > 0) {
+                            val nowNanos = System.nanoTime()
+                            val sameBatch = baseIndex == lastBaseIndex &&
+                                baseOffset == lastBaseOffset &&
+                                (nowNanos - lastBatchNanos) < 16_000_000L
+                            if (sameBatch) {
+                                pendingDeltaPx += deltaHeightPx
+                            } else {
+                                lastBaseIndex = baseIndex
+                                lastBaseOffset = baseOffset
+                                pendingDeltaPx = deltaHeightPx
+                            }
+                            lastBatchNanos = nowNanos
+                            val targetOffset = (baseOffset + pendingDeltaPx).coerceAtLeast(0)
+                            if (targetOffset != baseOffset) {
+                                listState.requestScrollToItem(baseIndex, targetOffset)
+                            }
+                        }
                     }
                 }
             }

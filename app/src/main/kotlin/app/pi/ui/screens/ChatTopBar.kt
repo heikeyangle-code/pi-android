@@ -187,9 +187,9 @@ internal fun ChatTopBar(
                         if (!subtitleText.isNullOrBlank()) {
                             Text(
                                 text = subtitleText,
-                                style = PiTheme.text.monoSmall.copy(
-                                    fontSize = 10.5.sp,
-                                    lineHeight = 12.sp,
+                                style = PiTheme.text.meta.copy(
+                                    fontSize = 11.sp,
+                                    lineHeight = 13.5.sp,
                                 ),
                                 color = palette.muted,
                                 maxLines = 1,
@@ -428,7 +428,7 @@ private fun ChatCommandCenterSheet(
                             )
                             Text(
                                 text = workspaceName,
-                                style = PiTheme.text.monoSmall,
+                                style = PiTheme.text.meta,
                                 color = palette.muted,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -667,6 +667,7 @@ private fun PromptJumpButton(
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

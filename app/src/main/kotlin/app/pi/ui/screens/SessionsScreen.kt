@@ -960,7 +960,7 @@ private fun SessionSearchField(query: String, loading: Boolean, onChange: (Strin
             ),
     ) {
         Surface(
-            modifier = Modifier.fillMaxWidth().height(40.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surfaceContainerLow,
             border = if (error != null) {
@@ -973,7 +973,7 @@ private fun SessionSearchField(query: String, loading: Boolean, onChange: (Strin
             },
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 12.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {

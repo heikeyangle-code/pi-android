@@ -335,7 +335,7 @@ fun PiMermaidView(
                 val canvasHeight = (targetWidthDp / aspect.coerceIn(0.08f, 30f))
                     .coerceIn(96.dp, heightCap)
                 val heightKey = "mermaid:${widthPx}:${source.hashCode()}:${source.length}"
-                app.pi.ui.render.PiRichBlockHeightCache.put(heightKey, canvasHeight.value)
+                app.pi.ui.render.PiRichBlockHeightCache.put(heightKey, canvasHeight.value + 16f)
                 val maxFitScale = Float.POSITIVE_INFINITY
                 Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)) {
                     Canvas(

@@ -1,5 +1,6 @@
 package app.pi.ui.screens
 
+import android.animation.ValueAnimator
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -52,11 +53,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -242,8 +245,13 @@ private fun BootEmblem(
         return
     }
 
-    val pulseTransition = rememberInfiniteTransition(label = "boot-emblem-pulse")
-    val haloScale by pulseTransition.animateFloat(
+    val animEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
+    val pulseTransition = if (working && animEnabled) {
+        rememberInfiniteTransition(label = "boot-emblem-pulse")
+    } else {
+        null
+    }
+    val haloScaleState = pulseTransition?.animateFloat(
         initialValue = 1.0f,
         targetValue = 1.15f,
         animationSpec = infiniteRepeatable(
@@ -252,7 +260,7 @@ private fun BootEmblem(
         ),
         label = "halo-scale",
     )
-    val haloAlpha by pulseTransition.animateFloat(
+    val haloAlphaState = pulseTransition?.animateFloat(
         initialValue = 0.16f,
         targetValue = 0.04f,
         animationSpec = infiniteRepeatable(
@@ -267,20 +275,28 @@ private fun BootEmblem(
         contentAlignment = Alignment.Center,
     ) {
         if (working) {
+            val haloAccent = palette.accent
             Box(
                 modifier = Modifier
                     .size(76.dp)
                     .graphicsLayer {
-                        scaleX = haloScale
-                        scaleY = haloScale
+                        val s = haloScaleState?.value ?: 1.05f
+                        scaleX = s
+                        scaleY = s
                     }
-                    .clip(RoundedCornerShape(24.dp))
-                    .border(
-                        width = 1.5.dp,
-                        color = palette.accent.copy(alpha = haloAlpha * 2.2f),
-                        shape = RoundedCornerShape(24.dp),
-                    )
-                    .background(palette.accent.copy(alpha = haloAlpha)),
+                    .drawBehind {
+                        val alpha = haloAlphaState?.value ?: 0.10f
+                        val radius = CornerRadius(24.dp.toPx(), 24.dp.toPx())
+                        drawRoundRect(
+                            color = haloAccent.copy(alpha = alpha),
+                            cornerRadius = radius,
+                        )
+                        drawRoundRect(
+                            color = haloAccent.copy(alpha = (alpha * 2.2f).coerceIn(0f, 1f)),
+                            cornerRadius = radius,
+                            style = Stroke(width = 1.5.dp.toPx()),
+                        )
+                    },
             )
         }
         Surface(
@@ -402,16 +418,20 @@ private fun ContinuousProgressBar(
     trackColor: Color,
     fillColor: Color,
 ) {
-    val sheenTransition = rememberInfiniteTransition(label = "boot-bar-sheen")
-    val sheenOffset by sheenTransition.animateFloat(
-        initialValue = -0.35f,
-        targetValue = 1.35f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1600, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "sheen-offset",
-    )
+    val animEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
+    val sheenState = if (animEnabled) {
+        rememberInfiniteTransition(label = "boot-bar-sheen").animateFloat(
+            initialValue = -0.35f,
+            targetValue = 1.35f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1600, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "sheen-offset",
+        )
+    } else {
+        null
+    }
 
     Canvas(
         modifier = Modifier
@@ -431,7 +451,8 @@ private fun ContinuousProgressBar(
             size = Size(fillWidth, size.height),
             cornerRadius = radius,
         )
-        if (fillWidth > size.height * 2f) {
+        val sheenOffset = sheenState?.value
+        if (sheenOffset != null && fillWidth > size.height * 2f) {
             val shimmerCenter = fillWidth * sheenOffset
             val shimmerHalf = (fillWidth * 0.24f).coerceAtLeast(24f)
             drawRoundRect(

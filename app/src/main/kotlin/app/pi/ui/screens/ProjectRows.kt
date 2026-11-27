@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -905,7 +906,7 @@ internal fun WorkspaceFilterField(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(42.dp),
+                .heightIn(min = 42.dp),
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surfaceContainerLow,
             border = BorderStroke(
@@ -914,7 +915,7 @@ internal fun WorkspaceFilterField(
             ),
         ) {
             Row(
-                modifier = Modifier.padding(start = 12.dp, end = 6.dp),
+                modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -1421,7 +1422,7 @@ internal fun WorkspacePathBar(
         val locShape = RoundedCornerShape(8.dp)
         Row(
             modifier = Modifier
-                .height(30.dp)
+                .heightIn(min = 30.dp)
                 .clip(locShape)
                 .background(MaterialTheme.colorScheme.surfaceContainerLow)
                 .border(
@@ -1430,7 +1431,7 @@ internal fun WorkspacePathBar(
                     locShape,
                 )
                 .clickable(onClick = onOpenLocations)
-                .padding(start = 8.dp, end = 5.dp),
+                .padding(start = 8.dp, end = 5.dp, top = 3.dp, bottom = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {

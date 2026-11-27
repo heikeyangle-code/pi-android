@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -297,10 +298,19 @@ fun PiSvgFenceView(
                 val playingSvg = if (decided) PiSvgAnimationSlots.isActive(animKey) else room
                 val animSvgDesc = tr("动画 SVG", "Animated SVG")
                 val staticSvgDesc = tr("SVG 渲染图", "SVG image")
+                val svgHeightKey = "svg:${widthPx}:${source.hashCode()}:${source.length}"
                 if (isAnimatedSvg && playingSvg) {
                     PiSvgAnimatedView(
                         svg = image.animatedSvg,
                         modifier = Modifier
+                            .onSizeChanged { size ->
+                                if (size.height > 0) {
+                                    app.pi.ui.render.PiRichBlockHeightCache.put(
+                                        svgHeightKey,
+                                        with(density) { size.height.toDp().value },
+                                    )
+                                }
+                            }
                             .padding(8.dp)
                             .heightIn(min = PI_SVG_MIN_IMAGE_HEIGHT, max = PI_SVG_MAX_IMAGE_HEIGHT)
                             .fillMaxWidth()
@@ -309,7 +319,16 @@ fun PiSvgFenceView(
                             .clipToBounds()
                             .semantics { contentDescription = animSvgDesc },
                     )
-                } else Box {
+                } else Box(
+                    modifier = Modifier.onSizeChanged { size ->
+                        if (size.height > 0) {
+                            app.pi.ui.render.PiRichBlockHeightCache.put(
+                                svgHeightKey,
+                                with(density) { size.height.toDp().value },
+                            )
+                        }
+                    },
+                ) {
                 Canvas(
                     modifier = Modifier
                         .padding(8.dp)
@@ -370,11 +389,14 @@ fun PiSvgFenceView(
                 }
                 }
             } else if (draw == PiSvgDraw.Rendering && pinned != true) {
-                // 已在渲染、还没回答：固定高度占位，而不是先摊一整块源码再缩成图（行高突变、列表跳动）。
+                // 已在渲染、还没回答：优先沿用该 SVG 上次成品高度（再回落固定占位），避免缓存回收后重滚跳屏。
+                val svgHeightKey = "svg:${widthPx}:${source.hashCode()}:${source.length}"
+                val placeholderHeight = app.pi.ui.render.PiRichBlockHeightCache.get(svgHeightKey)?.dp
+                    ?: PI_SVG_PLACEHOLDER_HEIGHT
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(PI_SVG_PLACEHOLDER_HEIGHT),
+                        .height(placeholderHeight),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
