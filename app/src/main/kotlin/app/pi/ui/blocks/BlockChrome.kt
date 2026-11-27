@@ -540,6 +540,23 @@ internal class TranscriptRowAnchor(
             listState.requestScrollToItem(index, 0)
         }
     }
+
+    /**
+     * Called right before a nested collapsible block (e.g. a Markdown/HTML `<details>` card)
+     * inside a larger transcript row expands or collapses.
+     *
+     * Unlike [onBeforeToggle] (which is for whole-row collapsible cards like Tool/Thinking where
+     * tapping deep inside the body can happen while the row's top is off-screen), a nested
+     * `<details>` card toggles from its own visible header inside a potentially multi-screen
+     * message row. Calling `requestScrollToItem(index, 0)` here would yank the viewport back to
+     * the top of the enclosing message (jumping up several screens). Evicting the cached row
+     * height and holding tail-follow in place keeps the viewport anchored right where the user
+     * tapped.
+     */
+    fun onBeforeNestedToggle() {
+        onEvictHeight()
+        onLocalLayoutToggle()
+    }
 }
 
 /**

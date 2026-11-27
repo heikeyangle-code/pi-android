@@ -171,24 +171,46 @@ internal fun groupMarkdownBlocks(
 
     val out = ArrayList<PiGroupedBlock>(visible.size)
     var i = 0
-    while (i < visible.size) {
-        val node = visible[i]
-        if (node.type != MarkdownElementTypes.HTML_BLOCK) {
-            out.add(PiGroupedBlock.Single(node, stableKey = node.startOffset))
-            i++
-            continue
+    var pendingHtml: String? = null
+    var pendingOffset = 0
+    while (pendingHtml != null || i < visible.size) {
+        val currentNode: ASTNode?
+        val rawHtml: String
+        val baseOffset: Int
+        val nextIndex: Int
+
+        if (pendingHtml != null) {
+            currentNode = null
+            rawHtml = pendingHtml
+            baseOffset = pendingOffset
+            pendingHtml = null
+            nextIndex = i
+        } else {
+            val node = visible[i]
+            if (node.type != MarkdownElementTypes.HTML_BLOCK) {
+                out.add(PiGroupedBlock.Single(node, stableKey = node.startOffset))
+                i++
+                continue
+            }
+            currentNode = node
+            rawHtml = extractHtmlBlockText(content, node, stripQuotePrefix)
+            baseOffset = node.startOffset
+            nextIndex = i + 1
         }
 
-        val rawHtml = extractHtmlBlockText(content, node, stripQuotePrefix)
         if (rawHtml.isEmpty() || isInertHtmlWrapperBlock(rawHtml)) {
-            i++
+            i = nextIndex
             continue
         }
 
         val tags = DETAILS_TAG_REGEX.findAll(rawHtml).toList()
         if (tags.isEmpty()) {
-            out.add(PiGroupedBlock.Single(node, stableKey = node.startOffset))
-            i++
+            if (currentNode != null) {
+                out.add(PiGroupedBlock.Single(currentNode, stableKey = baseOffset))
+            } else {
+                out.add(PiGroupedBlock.RawHtml(rawHtml, stableKey = baseOffset))
+            }
+            i = nextIndex
             continue
         }
 
@@ -196,42 +218,79 @@ internal fun groupMarkdownBlocks(
         val closeCount = tags.count { it.groupValues[1].isNotEmpty() }
         val netDelta = openCount - closeCount
 
-        // Single-block `<details>...</details>` (no blank lines inside):
-        // If its body contains plain Markdown (no block HTML tags), render via native Markdown so
-        // lists / bold / inline code / tables inside `<details>` aren't flattened by jsoup.
-        if (netDelta == 0 && openCount == 1 && closeCount == 1) {
-            val openTag = tags[0]
-            val closeTag = tags[1]
-            if (openTag.groupValues[1].isEmpty() && closeTag.groupValues[1].isNotEmpty() && openTag.range.last < closeTag.range.first) {
+        // Balanced single-block `<details>...</details>` (including multiple back-to-back blocks
+        // with no blank line between them): peel off the first top-level `<details>...</details>`
+        // pair so plain Markdown bodies render via native Markdown instead of being flattened by
+        // jsoup, and feed any trailing `<details>` into the next iteration via `pendingHtml`.
+        if (netDelta == 0 && openCount >= 1 && closeCount == openCount) {
+            val firstOpenIdx = tags.indexOfFirst { it.groupValues[1].isEmpty() }
+            var matchedCloseIdx = -1
+            if (firstOpenIdx >= 0) {
+                var depth = 0
+                for (tIdx in firstOpenIdx until tags.size) {
+                    if (tags[tIdx].groupValues[1].isEmpty()) {
+                        depth++
+                    } else {
+                        depth--
+                        if (depth == 0) {
+                            matchedCloseIdx = tIdx
+                            break
+                        }
+                    }
+                }
+            }
+            if (firstOpenIdx >= 0 && matchedCloseIdx > firstOpenIdx) {
+                val openTag = tags[firstOpenIdx]
+                val closeTag = tags[matchedCloseIdx]
                 val before = rawHtml.substring(0, openTag.range.first).trim()
                 val inner = rawHtml.substring(openTag.range.last + 1, closeTag.range.first)
                 val after = rawHtml.substring(closeTag.range.last + 1).trim()
                 val parsedInner = parseDetailsHeaderAndRest(openTag.value, inner)
                 val bodyCandidate = parsedInner.rest.trim()
-                if (bodyCandidate.isEmpty() || !BLOCK_HTML_TAG_REGEX.containsMatchIn(bodyCandidate)) {
+                val hasNestedDetailsInInner = matchedCloseIdx > firstOpenIdx + 1
+                val useNativeMarkdown = !hasNestedDetailsInInner &&
+                    (bodyCandidate.isEmpty() || !BLOCK_HTML_TAG_REGEX.containsMatchIn(bodyCandidate))
+
+                if (useNativeMarkdown || after.isNotEmpty()) {
                     if (before.isNotEmpty() && !isInertHtmlWrapperBlock(before)) {
-                        out.add(PiGroupedBlock.RawHtml(before, stableKey = node.startOffset))
+                        out.add(PiGroupedBlock.RawHtml(before, stableKey = baseOffset))
                     }
-                    out.add(
-                        PiGroupedBlock.Details(
-                            open = parsedInner.open,
-                            summary = parsedInner.summary,
-                            leadingHtml = null,
-                            bodyNodes = emptyList(),
-                            bodyMarkdown = bodyCandidate.ifEmpty { null },
-                            trailingHtml = null,
-                            stableKey = node.startOffset + openTag.range.first,
-                        ),
-                    )
+                    if (useNativeMarkdown) {
+                        out.add(
+                            PiGroupedBlock.Details(
+                                open = parsedInner.open,
+                                summary = parsedInner.summary,
+                                leadingHtml = null,
+                                bodyNodes = emptyList(),
+                                bodyMarkdown = bodyCandidate.ifEmpty { null },
+                                trailingHtml = null,
+                                stableKey = baseOffset + openTag.range.first,
+                            ),
+                        )
+                    } else {
+                        val detailsSlice = rawHtml.substring(openTag.range.first, closeTag.range.last + 1).trim()
+                        if (detailsSlice.isNotEmpty()) {
+                            out.add(PiGroupedBlock.RawHtml(detailsSlice, stableKey = baseOffset + openTag.range.first))
+                        }
+                    }
                     if (after.isNotEmpty() && !isInertHtmlWrapperBlock(after)) {
-                        out.add(PiGroupedBlock.RawHtml(after, stableKey = node.startOffset + closeTag.range.last + 1))
+                        if (DETAILS_TAG_REGEX.containsMatchIn(after)) {
+                            pendingHtml = after
+                            pendingOffset = baseOffset + closeTag.range.last + 1
+                        } else {
+                            out.add(PiGroupedBlock.RawHtml(after, stableKey = baseOffset + closeTag.range.last + 1))
+                        }
                     }
-                    i++
+                    i = nextIndex
                     continue
                 }
             }
-            out.add(PiGroupedBlock.Single(node, stableKey = node.startOffset))
-            i++
+            if (currentNode != null) {
+                out.add(PiGroupedBlock.Single(currentNode, stableKey = baseOffset))
+            } else {
+                out.add(PiGroupedBlock.RawHtml(rawHtml, stableKey = baseOffset))
+            }
+            i = nextIndex
             continue
         }
 
@@ -239,25 +298,30 @@ internal fun groupMarkdownBlocks(
         if (netDelta > 0) {
             val firstOpen = tags.firstOrNull { it.groupValues[1].isEmpty() }
             if (firstOpen == null) {
-                out.add(PiGroupedBlock.Single(node, stableKey = node.startOffset))
-                i++
+                if (currentNode != null) {
+                    out.add(PiGroupedBlock.Single(currentNode, stableKey = baseOffset))
+                } else {
+                    out.add(PiGroupedBlock.RawHtml(rawHtml, stableKey = baseOffset))
+                }
+                i = nextIndex
                 continue
             }
             val before = rawHtml.substring(0, firstOpen.range.first).trim()
             if (before.isNotEmpty() && !isInertHtmlWrapperBlock(before)) {
-                out.add(PiGroupedBlock.RawHtml(before, stableKey = node.startOffset))
+                out.add(PiGroupedBlock.RawHtml(before, stableKey = baseOffset))
             }
 
             val afterOpenTag = rawHtml.substring(firstOpen.range.last + 1)
             val header = parseDetailsHeaderAndRest(firstOpen.value, afterOpenTag)
             var summary = header.summary
-            var leadingHtml = header.rest.trim().takeIf { it.isNotEmpty() && !isInertHtmlWrapperBlock(it) }
+            val leadingHtml = header.rest.trim().takeIf { it.isNotEmpty() && !isInertHtmlWrapperBlock(it) }
             val bodyNodes = ArrayList<ASTNode>()
             var trailingHtml: String? = null
             var afterCloseHtml: String? = null
+            var afterCloseOffset = baseOffset + rawHtml.length
 
             var depth = netDelta
-            var j = i + 1
+            var j = nextIndex
             while (j < visible.size && depth > 0) {
                 val sibling = visible[j]
                 if (sibling.type == MarkdownElementTypes.HTML_BLOCK) {
@@ -294,13 +358,16 @@ internal fun groupMarkdownBlocks(
                         val afterClose = sibHtml.substring(matchedClose.range.last + 1).trim()
                         if (afterClose.isNotEmpty() && !isInertHtmlWrapperBlock(afterClose)) {
                             afterCloseHtml = afterClose
+                            afterCloseOffset = sibling.startOffset + matchedClose.range.last + 1
                         }
                         depth = 0
                         j++
                         break
                     } else {
                         depth = runningDepth
-                        bodyNodes.add(sibling)
+                        if (sibTags.isNotEmpty() || !isInertHtmlWrapperBlock(sibHtml)) {
+                            bodyNodes.add(sibling)
+                        }
                         j++
                     }
                 } else {
@@ -317,11 +384,16 @@ internal fun groupMarkdownBlocks(
                     bodyNodes = bodyNodes,
                     bodyMarkdown = null,
                     trailingHtml = trailingHtml,
-                    stableKey = node.startOffset + firstOpen.range.first,
+                    stableKey = baseOffset + firstOpen.range.first,
                 ),
             )
             if (afterCloseHtml != null) {
-                out.add(PiGroupedBlock.RawHtml(afterCloseHtml, stableKey = node.endOffset + 1))
+                if (DETAILS_TAG_REGEX.containsMatchIn(afterCloseHtml)) {
+                    pendingHtml = afterCloseHtml
+                    pendingOffset = afterCloseOffset
+                } else {
+                    out.add(PiGroupedBlock.RawHtml(afterCloseHtml, stableKey = afterCloseOffset))
+                }
             }
             i = j
             continue
@@ -330,9 +402,9 @@ internal fun groupMarkdownBlocks(
         // Unmatched closing `</details>` with other non-inert text attached: strip the stray closing tag.
         val strippedOrphan = DETAILS_TAG_REGEX.replace(rawHtml, "").trim()
         if (strippedOrphan.isNotEmpty() && !isInertHtmlWrapperBlock(strippedOrphan)) {
-            out.add(PiGroupedBlock.RawHtml(strippedOrphan, stableKey = node.startOffset))
+            out.add(PiGroupedBlock.RawHtml(strippedOrphan, stableKey = baseOffset))
         }
-        i++
+        i = nextIndex
     }
     return out
 }
@@ -397,7 +469,7 @@ private fun extractHtmlBlockText(content: String, node: ASTNode, stripQuotePrefi
  * ([PiMarkdownComponents]) and pure HTML `<details>` ([PiHtmlRenderer]):
  *  - Calm `12.dp` hairline container matching Pi's neutral Material 3 card language;
  *  - Tactile `22.dp` chevron well (no double arrows when authors include `▶`/`▸`);
- *  - Haptic feedback + [LocalTranscriptRowAnchor.onBeforeToggle] so toggling never jumps scroll;
+ *  - Haptic feedback + [LocalTranscriptRowAnchor.onBeforeNestedToggle] so toggling never jumps scroll;
  *  - Zero `animateContentSize` inside `LazyColumn` (strict scroll-stability compliance).
  */
 @Composable
@@ -453,7 +525,7 @@ internal fun PiDetailsCardShell(
                         ) {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             val next = !expanded
-                            rowAnchor?.onBeforeToggle(expanding = next)
+                            rowAnchor?.onBeforeNestedToggle()
                             expanded = next
                         }
                     } else {

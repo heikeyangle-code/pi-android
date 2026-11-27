@@ -787,6 +787,67 @@ class PiRichRenderTest {
         assertEquals("▶", stripLeadingDisclosurePrefix("▶"))
     }
 
+    @Test
+    fun `groupMarkdownBlocks handles consecutive details without blank lines and inert-only details body`() {
+        val consecutiveMulti = """
+            <details>
+            <summary>方案 A</summary>
+
+            - 第一项
+            - 第二项
+
+            </details>
+            <details>
+            <summary>方案 B</summary>
+
+            1. 步骤一
+            2. 步骤二
+
+            </details>
+        """.trimIndent()
+        val multiGrouped = groupMarkdownBlocks(consecutiveMulti, parseGfm(consecutiveMulti).children)
+        assertEquals("Expected 2 consecutive multi-block Details, got $multiGrouped", 2, multiGrouped.size)
+        val first = multiGrouped[0] as PiGroupedBlock.Details
+        val second = multiGrouped[1] as PiGroupedBlock.Details
+        assertEquals("方案 A", first.summary)
+        assertEquals(1, first.bodyNodes.size)
+        assertEquals(MarkdownElementTypes.UNORDERED_LIST, first.bodyNodes[0].type)
+        assertEquals("方案 B", second.summary)
+        assertEquals(1, second.bodyNodes.size)
+        assertEquals(MarkdownElementTypes.ORDERED_LIST, second.bodyNodes[0].type)
+
+        val consecutiveSingle = """
+            <details><summary>单块 A</summary>
+            - a1
+            </details>
+            <details><summary>单块 B</summary>
+            - b1
+            </details>
+        """.trimIndent()
+        val singleGrouped = groupMarkdownBlocks(consecutiveSingle, parseGfm(consecutiveSingle).children)
+        assertEquals("Expected 2 consecutive single-block Details, got $singleGrouped", 2, singleGrouped.size)
+        assertEquals("单块 A", (singleGrouped[0] as PiGroupedBlock.Details).summary)
+        assertTrue((singleGrouped[0] as PiGroupedBlock.Details).bodyMarkdown?.contains("- a1") == true)
+        assertEquals("单块 B", (singleGrouped[1] as PiGroupedBlock.Details).summary)
+        assertTrue((singleGrouped[1] as PiGroupedBlock.Details).bodyMarkdown?.contains("- b1") == true)
+
+        val commentOnly = """
+            <details>
+            <summary>空壳</summary>
+
+            <!-- only a comment -->
+
+            </div>
+
+            </details>
+        """.trimIndent()
+        val commentGrouped = groupMarkdownBlocks(commentOnly, parseGfm(commentOnly).children)
+        assertEquals(1, commentGrouped.size)
+        val emptyDetails = commentGrouped[0] as PiGroupedBlock.Details
+        assertEquals("空壳", emptyDetails.summary)
+        assertFalse(emptyDetails.hasBody)
+    }
+
     private fun parseGfm(markdown: String): ASTNode =
         PiSharedMarkdownParser.buildMarkdownTreeFromString(markdown as CharSequence)
 }

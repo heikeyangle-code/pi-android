@@ -188,6 +188,7 @@ private fun PiMarkdownBlockSequence(
     listDepth: Int,
     quoteDepth: Int,
     stripQuotePrefix: Boolean,
+    detailsDepth: Int = 0,
     leadingRendered: Boolean = false,
 ) {
     val grouped = remember(content, children, stripQuotePrefix) {
@@ -211,6 +212,7 @@ private fun PiMarkdownBlockSequence(
                     listDepth = listDepth,
                     isFirstBlock = !renderedAny,
                     quoteDepth = quoteDepth,
+                    detailsDepth = detailsDepth,
                 )
                 is PiGroupedBlock.RawHtml -> PiHtmlTextBlock(text = block.html)
                 is PiGroupedBlock.Details -> PiMarkdownDetailsBlock(
@@ -223,6 +225,7 @@ private fun PiMarkdownBlockSequence(
                     eolAsNewLine = eolAsNewLine,
                     listDepth = listDepth,
                     quoteDepth = quoteDepth,
+                    detailsDepth = detailsDepth,
                     stripQuotePrefix = stripQuotePrefix,
                 )
             }
@@ -242,6 +245,7 @@ private fun PiMarkdownDetailsBlock(
     eolAsNewLine: Boolean,
     listDepth: Int,
     quoteDepth: Int,
+    detailsDepth: Int,
     stripQuotePrefix: Boolean,
 ) {
     val palette = PiTheme.palette
@@ -314,8 +318,9 @@ private fun PiMarkdownDetailsBlock(
                         eolAsNewLine = eolAsNewLine,
                         blockGap = spacing.block,
                         listDepth = listDepth,
-                        quoteDepth = quoteDepth + 1,
+                        quoteDepth = quoteDepth,
                         stripQuotePrefix = stripQuotePrefix,
+                        detailsDepth = detailsDepth + 1,
                         leadingRendered = renderedAny,
                     )
                     renderedAny = true
@@ -331,8 +336,9 @@ private fun PiMarkdownDetailsBlock(
                         eolAsNewLine = eolAsNewLine,
                         blockGap = spacing.block,
                         listDepth = listDepth,
-                        quoteDepth = quoteDepth + 1,
+                        quoteDepth = quoteDepth,
                         stripQuotePrefix = false,
+                        detailsDepth = detailsDepth + 1,
                         leadingRendered = renderedAny,
                     )
                     renderedAny = true
@@ -365,6 +371,7 @@ internal fun PiMarkdownBlock(
     listDepth: Int,
     isFirstBlock: Boolean,
     quoteDepth: Int = 0,
+    detailsDepth: Int = 0,
 ) {
     when (node.type) {
         MarkdownElementTypes.ATX_1 -> PiMarkdownHeading(
@@ -417,6 +424,7 @@ internal fun PiMarkdownBlock(
             referenceLinks = referenceLinks,
             eolAsNewLine = eolAsNewLine,
             quoteDepth = quoteDepth,
+            detailsDepth = detailsDepth,
         )
         MarkdownElementTypes.UNORDERED_LIST -> PiListBlock(
             content = content,
@@ -429,6 +437,7 @@ internal fun PiMarkdownBlock(
             eolAsNewLine = eolAsNewLine,
             depth = listDepth,
             quoteDepth = quoteDepth,
+            detailsDepth = detailsDepth,
         )
         MarkdownElementTypes.ORDERED_LIST -> PiListBlock(
             content = content,
@@ -441,6 +450,7 @@ internal fun PiMarkdownBlock(
             eolAsNewLine = eolAsNewLine,
             depth = listDepth,
             quoteDepth = quoteDepth,
+            detailsDepth = detailsDepth,
         )
         GFMElementTypes.TABLE -> PiTable(
             content = content,
@@ -450,6 +460,7 @@ internal fun PiMarkdownBlock(
             referenceLinks = referenceLinks,
             quoteDepth = quoteDepth,
             listDepth = listDepth,
+            detailsDepth = detailsDepth,
         )
         MarkdownElementTypes.CODE_FENCE -> PiCodeFence(
             content = content,
@@ -828,6 +839,7 @@ private fun PiBlockQuoteOrAlert(
     referenceLinks: Map<String, String>,
     eolAsNewLine: Boolean,
     quoteDepth: Int,
+    detailsDepth: Int = 0,
 ) {
     val quoteSlice = safeSlice(content, node)
     val alert = remember(quoteSlice, node.type) { detectGfmAlert(content, node) }
@@ -842,6 +854,7 @@ private fun PiBlockQuoteOrAlert(
             referenceLinks = referenceLinks,
             eolAsNewLine = eolAsNewLine,
             quoteDepth = quoteDepth,
+            detailsDepth = detailsDepth,
         )
     } else {
         PiBlockQuote(
@@ -853,6 +866,7 @@ private fun PiBlockQuoteOrAlert(
             referenceLinks = referenceLinks,
             eolAsNewLine = eolAsNewLine,
             quoteDepth = quoteDepth,
+            detailsDepth = detailsDepth,
         )
     }
 }
@@ -868,6 +882,7 @@ private fun PiGfmAlertCard(
     referenceLinks: Map<String, String>,
     eolAsNewLine: Boolean,
     quoteDepth: Int,
+    detailsDepth: Int = 0,
 ) {
     val accent: Color
     val icon: ImageVector
@@ -973,6 +988,7 @@ private fun PiGfmAlertCard(
                         listDepth = 0,
                         isFirstBlock = !renderedAny,
                         quoteDepth = quoteDepth + 1,
+                        detailsDepth = detailsDepth,
                     )
                     renderedAny = true
                 }
@@ -991,6 +1007,7 @@ private fun PiBlockQuote(
     referenceLinks: Map<String, String>,
     eolAsNewLine: Boolean,
     quoteDepth: Int,
+    detailsDepth: Int = 0,
 ) {
     val palette = PiTheme.palette
     val quoteColor = colors.quoteText
@@ -1048,6 +1065,7 @@ private fun PiBlockQuote(
             listDepth = 0,
             quoteDepth = quoteDepth + 1,
             stripQuotePrefix = true,
+            detailsDepth = detailsDepth,
         )
     }
 }
@@ -1066,6 +1084,7 @@ private fun PiListBlock(
     eolAsNewLine: Boolean,
     depth: Int,
     quoteDepth: Int,
+    detailsDepth: Int = 0,
 ) {
     val items = remember(node) {
         node.children.filter { it.type == MarkdownElementTypes.LIST_ITEM }
@@ -1090,6 +1109,7 @@ private fun PiListBlock(
                     referenceLinks = referenceLinks,
                     eolAsNewLine = eolAsNewLine,
                     quoteDepth = quoteDepth,
+                    detailsDepth = detailsDepth,
                 )
             }
         }
@@ -1109,6 +1129,7 @@ private fun PiListItemRow(
     referenceLinks: Map<String, String>,
     eolAsNewLine: Boolean,
     quoteDepth: Int,
+    detailsDepth: Int = 0,
 ) {
     val checkboxNode = item.findChildOfType(GFMTokenTypes.CHECK_BOX)
     val numberText = if (!ordered) {
@@ -1234,6 +1255,7 @@ private fun PiListItemRow(
                 listDepth = depth + 1,
                 quoteDepth = quoteDepth,
                 stripQuotePrefix = quoteDepth > 0,
+                detailsDepth = detailsDepth,
             )
         }
     }
@@ -1468,6 +1490,7 @@ private fun PiTable(
     referenceLinks: Map<String, String>,
     quoteDepth: Int = 0,
     listDepth: Int = 0,
+    detailsDepth: Int = 0,
 ) {
     val palette = PiTheme.palette
     val density = LocalDensity.current
@@ -1494,7 +1517,7 @@ private fun PiTable(
         maxChars.toList()
     }
 
-    val nestedInsetDp = (quoteDepth * 26 + listDepth * 22).dp
+    val nestedInsetDp = (quoteDepth * 26 + listDepth * 22 + detailsDepth * 28).dp
     val available = (LocalConfiguration.current.screenWidthDp.dp - 32.dp - nestedInsetDp).coerceAtLeast(180.dp)
 
     val tableFontSp = typography.table.fontSize.value.takeIf { it.isFinite() && it > 0f } ?: 14f
