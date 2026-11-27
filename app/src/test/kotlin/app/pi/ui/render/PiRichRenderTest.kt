@@ -678,6 +678,115 @@ class PiRichRenderTest {
         assertEquals(CsvParseResult.Failure(CsvFailure.Malformed), badRes)
     }
 
+    @Test
+    fun `groupMarkdownBlocks reassembles blank-line details with Markdown list and drops orphan closing tag`() {
+        val md = """
+            <details>
+            <summary>▶ 点击展开：备选方案</summary>
+
+            1. 方案 A：快但不稳
+            2. 方案 B：稳但慢
+            3. 方案 C：折中
+
+            </details>
+
+            后文段落
+        """.trimIndent()
+        val tree = parseGfm(md)
+        val grouped = groupMarkdownBlocks(md, tree.children)
+        assertEquals("Expected Details + trailing paragraph only, got $grouped", 2, grouped.size)
+        val details = grouped[0] as PiGroupedBlock.Details
+        assertFalse(details.open)
+        assertEquals("点击展开：备选方案", details.summary)
+        assertTrue(details.hasBody)
+        assertEquals(1, details.bodyNodes.size)
+        assertEquals(MarkdownElementTypes.ORDERED_LIST, details.bodyNodes[0].type)
+        val trailing = grouped[1] as PiGroupedBlock.Single
+        assertEquals(MarkdownElementTypes.PARAGRAPH, trailing.node.type)
+    }
+
+    @Test
+    fun `groupMarkdownBlocks supports open attribute, blank line before summary, nested details, and streaming unclosed details`() {
+        val nestedMd = """
+            <details open>
+
+            <summary>▸ 外层 **标题**</summary>
+
+            外层正文
+
+            <details>
+            <summary>▼ 内层方案</summary>
+
+            - 内层项 1
+            - 内层项 2
+
+            </details>
+
+            </details>
+        """.trimIndent()
+        val tree = parseGfm(nestedMd)
+        val outerList = groupMarkdownBlocks(nestedMd, tree.children)
+        assertEquals(1, outerList.size)
+        val outer = outerList[0] as PiGroupedBlock.Details
+        assertTrue(outer.open)
+        assertEquals("外层 **标题**", outer.summary)
+        val innerGrouped = groupMarkdownBlocks(nestedMd, outer.bodyNodes)
+        assertEquals(2, innerGrouped.size)
+        assertEquals(MarkdownElementTypes.PARAGRAPH, (innerGrouped[0] as PiGroupedBlock.Single).node.type)
+        val inner = innerGrouped[1] as PiGroupedBlock.Details
+        assertFalse(inner.open)
+        assertEquals("内层方案", inner.summary)
+        assertEquals(1, inner.bodyNodes.size)
+        assertEquals(MarkdownElementTypes.UNORDERED_LIST, inner.bodyNodes[0].type)
+
+        // Streaming unclosed `<details>` still wraps its body cleanly
+        val streamingMd = "<details>\n<summary>流式思考</summary>\n\n正在输出内容"
+        val streamingGrouped = groupMarkdownBlocks(streamingMd, parseGfm(streamingMd).children)
+        assertEquals(1, streamingGrouped.size)
+        val streamingDetails = streamingGrouped[0] as PiGroupedBlock.Details
+        assertEquals("流式思考", streamingDetails.summary)
+        assertEquals(1, streamingDetails.bodyNodes.size)
+    }
+
+    @Test
+    fun `groupMarkdownBlocks distinguishes plain Markdown vs HTML bodies in single-block details and skips inert wrappers`() {
+        val mdSingle = "<details>\n<summary>▶ 选项</summary>\n1. 方案 A\n2. 方案 B\n</details>"
+        val mdSingleGrouped = groupMarkdownBlocks(mdSingle, parseGfm(mdSingle).children)
+        assertEquals(1, mdSingleGrouped.size)
+        val mdDetails = mdSingleGrouped[0] as PiGroupedBlock.Details
+        assertEquals("选项", mdDetails.summary)
+        assertTrue(mdDetails.bodyMarkdown?.contains("1. 方案 A") == true)
+
+        val htmlSingle = "<details><summary>HTML</summary><ul><li>Item</li></ul></details>"
+        val htmlSingleGrouped = groupMarkdownBlocks(htmlSingle, parseGfm(htmlSingle).children)
+        assertEquals(1, htmlSingleGrouped.size)
+        assertTrue(htmlSingleGrouped[0] is PiGroupedBlock.Single)
+
+        val wrappedMd = """
+            <div align="center">
+
+            中间正文
+
+            </div>
+
+            <br/>
+
+            </details>
+        """.trimIndent()
+        val wrappedGrouped = groupMarkdownBlocks(wrappedMd, parseGfm(wrappedMd).children)
+        assertEquals(1, wrappedGrouped.size)
+        assertEquals(MarkdownElementTypes.PARAGRAPH, (wrappedGrouped[0] as PiGroupedBlock.Single).node.type)
+
+        assertTrue(isInertHtmlWrapperBlock("</details>"))
+        assertTrue(isInertHtmlWrapperBlock("<div align=\"center\">\n</div>"))
+        assertTrue(isInertHtmlWrapperBlock("<br/>"))
+        assertFalse(isInertHtmlWrapperBlock("<hr/>"))
+        assertFalse(isInertHtmlWrapperBlock("<script>alert(1)</script>"))
+        assertEquals("标题", stripLeadingDisclosurePrefix("▶ 点击".replace("点击", "标题")))
+        assertEquals("Title", stripLeadingDisclosurePrefix("  ▸▸  Title  "))
+        assertEquals("▶", stripLeadingDisclosurePrefix("▶"))
+    }
+
     private fun parseGfm(markdown: String): ASTNode =
         PiSharedMarkdownParser.buildMarkdownTreeFromString(markdown as CharSequence)
 }

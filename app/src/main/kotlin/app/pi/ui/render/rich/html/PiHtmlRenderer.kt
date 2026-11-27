@@ -474,69 +474,59 @@ private fun inlineImageLabel(node: PiHtmlNode.Image): String {
 @Composable
 private fun HtmlDetails(node: PiHtmlNode.Details, style: TextStyle) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(12.dp)
-    var expanded by rememberSaveable(node.summary.hashCode(), node.body.hashCode()) {
-        mutableStateOf(node.open)
-    }
-    val headerBg = remember(palette) { lerp(palette.cardBg, palette.text, 0.03f) }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(palette.cardBg)
-            .border(0.5.dp, palette.borderMuted.copy(alpha = 0.56f), shape),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 42.dp)
-                .background(if (expanded) headerBg else Color.Transparent)
-                .clickable(
-                    onClickLabel = if (expanded) tr("收起详情", "Collapse details") else tr("展开详情", "Expand details"),
-                ) { expanded = !expanded }
-                .padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = if (expanded) Icons.Filled.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = palette.muted,
-                modifier = Modifier
-                    .padding(end = 6.dp)
-                    .size(18.dp),
-            )
-            if (node.summary.isEmpty()) {
+    val cleanSummary = remember(node.summary) { stripLeadingDisclosureFromHtmlInlines(node.summary) }
+    val summaryKey = remember(node.open, cleanSummary) { "${node.open}:${cleanSummary.hashCode()}" }
+    app.pi.ui.render.PiDetailsCardShell(
+        saveKey = summaryKey,
+        initialOpen = node.open,
+        hasBody = node.body.isNotEmpty(),
+        summaryContent = { expanded ->
+            val summaryColor = if (expanded) palette.mdHeading else palette.text
+            if (cleanSummary.isEmpty()) {
                 Text(
                     text = tr("详情", "Details"),
                     style = style.copy(
-                        color = palette.mdHeading,
-                        fontWeight = FontWeight.SemiBold,
+                        color = summaryColor,
+                        fontWeight = FontWeight.Medium,
                     ),
                 )
             } else {
                 InlineArea(
-                    nodes = node.summary,
+                    nodes = cleanSummary,
                     style = style.copy(
-                        color = palette.mdHeading,
-                        fontWeight = FontWeight.SemiBold,
+                        color = summaryColor,
+                        fontWeight = FontWeight.Medium,
                     ),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
-        }
-        if (expanded) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(0.5.dp)
-                    .background(palette.borderMuted.copy(alpha = 0.42f)),
-            )
+        },
+        bodyContent = {
             RenderBlocks(
                 nodes = node.body,
                 style = style,
-                modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 12.dp),
             )
+        },
+    )
+}
+
+private fun stripLeadingDisclosureFromHtmlInlines(nodes: PiHtmlNodes): PiHtmlNodes {
+    if (nodes.isEmpty()) return nodes
+    val first = nodes.first()
+    return when (first) {
+        is PiHtmlNode.Text -> {
+            val cleaned = app.pi.ui.render.stripLeadingDisclosurePrefix(first.text)
+            if (cleaned != first.text) listOf(PiHtmlNode.Text(cleaned)) + nodes.drop(1) else nodes
         }
+        is PiHtmlNode.Inline -> {
+            val cleanedChildren = stripLeadingDisclosureFromHtmlInlines(first.children)
+            if (cleanedChildren !== first.children) {
+                listOf(first.copy(children = cleanedChildren)) + nodes.drop(1)
+            } else {
+                nodes
+            }
+        }
+        else -> nodes
     }
 }
 

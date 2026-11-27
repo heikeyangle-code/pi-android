@@ -159,28 +159,191 @@ internal fun PiMarkdownDocument(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
-        var renderedCount = 0
-        root.children.forEachIndexed { index, child ->
-            if (!isVisibleBlockNode(child)) return@forEachIndexed
-            key(index, child.type) {
-                if (renderedCount > 0) {
-                    Spacer(Modifier.height(spacing.block))
-                }
-                PiMarkdownBlock(
+        PiMarkdownBlockSequence(
+            content = content,
+            children = root.children,
+            colors = colors,
+            typography = typography,
+            spacing = spacing,
+            referenceLinks = referenceLinks,
+            eolAsNewLine = eolAsNewLine,
+            blockGap = spacing.block,
+            listDepth = 0,
+            quoteDepth = 0,
+            stripQuotePrefix = false,
+        )
+    }
+}
+
+@Composable
+private fun PiMarkdownBlockSequence(
+    content: String,
+    children: List<ASTNode>,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    spacing: PiMarkdownSpacing,
+    referenceLinks: Map<String, String>,
+    eolAsNewLine: Boolean,
+    blockGap: Dp,
+    listDepth: Int,
+    quoteDepth: Int,
+    stripQuotePrefix: Boolean,
+    leadingRendered: Boolean = false,
+) {
+    val grouped = remember(content, children, stripQuotePrefix) {
+        groupMarkdownBlocks(content, children, stripQuotePrefix = stripQuotePrefix)
+    }
+    var renderedAny = leadingRendered
+    grouped.forEachIndexed { idx, block ->
+        key(idx, block.stableKey) {
+            if (renderedAny) {
+                Spacer(Modifier.height(blockGap))
+            }
+            when (block) {
+                is PiGroupedBlock.Single -> PiMarkdownBlock(
                     content = content,
-                    node = child,
+                    node = block.node,
                     colors = colors,
                     typography = typography,
                     spacing = spacing,
                     referenceLinks = referenceLinks,
                     eolAsNewLine = eolAsNewLine,
-                    listDepth = 0,
-                    isFirstBlock = renderedCount == 0,
+                    listDepth = listDepth,
+                    isFirstBlock = !renderedAny,
+                    quoteDepth = quoteDepth,
+                )
+                is PiGroupedBlock.RawHtml -> PiHtmlTextBlock(text = block.html)
+                is PiGroupedBlock.Details -> PiMarkdownDetailsBlock(
+                    content = content,
+                    details = block,
+                    colors = colors,
+                    typography = typography,
+                    spacing = spacing,
+                    referenceLinks = referenceLinks,
+                    eolAsNewLine = eolAsNewLine,
+                    listDepth = listDepth,
+                    quoteDepth = quoteDepth,
+                    stripQuotePrefix = stripQuotePrefix,
                 )
             }
-            renderedCount++
+        }
+        renderedAny = true
+    }
+}
+
+@Composable
+private fun PiMarkdownDetailsBlock(
+    content: String,
+    details: PiGroupedBlock.Details,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    spacing: PiMarkdownSpacing,
+    referenceLinks: Map<String, String>,
+    eolAsNewLine: Boolean,
+    listDepth: Int,
+    quoteDepth: Int,
+    stripQuotePrefix: Boolean,
+) {
+    val palette = PiTheme.palette
+    val summaryText = details.summary?.takeIf { it.isNotBlank() } ?: tr("详情", "Details")
+    val summarySaveKey = remember(details.stableKey, details.open, summaryText) {
+        "md-details:${details.stableKey}:${details.open}:$summaryText"
+    }
+    val hasInlineSummarySyntax = remember(summaryText) {
+        summaryText.contains('*') ||
+            summaryText.contains('`') ||
+            summaryText.contains('[') ||
+            summaryText.contains('~') ||
+            summaryText.contains('_')
+    }
+    val summaryInlineNode = remember(summaryText, hasInlineSummarySyntax) {
+        if (!hasInlineSummarySyntax) {
+            null
+        } else {
+            val root = PiSharedMarkdownParser.buildMarkdownTreeFromString(summaryText as CharSequence)
+            root.children.firstOrNull { it.type == MarkdownElementTypes.PARAGRAPH } ?: root
         }
     }
+    val inlineMarkdownBodyRoot = remember(details.bodyMarkdown) {
+        details.bodyMarkdown?.let { md ->
+            PiSharedMarkdownParser.buildMarkdownTreeFromString(md as CharSequence)
+        }
+    }
+
+    PiDetailsCardShell(
+        saveKey = summarySaveKey,
+        initialOpen = details.open,
+        hasBody = details.hasBody,
+        summaryContent = { expanded ->
+            val summaryStyle = typography.paragraph.copy(
+                color = if (expanded) palette.mdHeading else palette.text,
+                fontWeight = FontWeight.Medium,
+            )
+            if (summaryInlineNode != null) {
+                PiInlineMarkdownText(
+                    content = summaryText,
+                    node = summaryInlineNode,
+                    style = summaryStyle,
+                    colors = colors,
+                    typography = typography,
+                    referenceLinks = referenceLinks,
+                    eolAsNewLine = false,
+                )
+            } else {
+                Text(
+                    text = summaryText,
+                    style = summaryStyle,
+                )
+            }
+        },
+        bodyContent = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                var renderedAny = false
+                if (!details.leadingHtml.isNullOrBlank()) {
+                    PiHtmlTextBlock(text = details.leadingHtml)
+                    renderedAny = true
+                }
+                if (details.bodyNodes.isNotEmpty()) {
+                    PiMarkdownBlockSequence(
+                        content = content,
+                        children = details.bodyNodes,
+                        colors = colors,
+                        typography = typography,
+                        spacing = spacing,
+                        referenceLinks = referenceLinks,
+                        eolAsNewLine = eolAsNewLine,
+                        blockGap = spacing.block,
+                        listDepth = listDepth,
+                        quoteDepth = quoteDepth + 1,
+                        stripQuotePrefix = stripQuotePrefix,
+                        leadingRendered = renderedAny,
+                    )
+                    renderedAny = true
+                }
+                if (inlineMarkdownBodyRoot != null && !details.bodyMarkdown.isNullOrBlank()) {
+                    PiMarkdownBlockSequence(
+                        content = details.bodyMarkdown,
+                        children = inlineMarkdownBodyRoot.children,
+                        colors = colors,
+                        typography = typography,
+                        spacing = spacing,
+                        referenceLinks = referenceLinks,
+                        eolAsNewLine = eolAsNewLine,
+                        blockGap = spacing.block,
+                        listDepth = listDepth,
+                        quoteDepth = quoteDepth + 1,
+                        stripQuotePrefix = false,
+                        leadingRendered = renderedAny,
+                    )
+                    renderedAny = true
+                }
+                if (!details.trailingHtml.isNullOrBlank()) {
+                    if (renderedAny) Spacer(Modifier.height(spacing.block))
+                    PiHtmlTextBlock(text = details.trailingHtml)
+                }
+            }
+        },
+    )
 }
 
 private fun isVisibleBlockNode(node: ASTNode): Boolean = when (node.type) {
@@ -873,29 +1036,19 @@ private fun PiBlockQuote(
             )
             .semantics { contentDescription = quoteDesc },
     ) {
-        var renderedAny = false
-        node.children.forEachIndexed { index, child ->
-            if (child.type == MarkdownTokenTypes.BLOCK_QUOTE ||
-                child.type == MarkdownTokenTypes.EOL ||
-                child.type == MarkdownTokenTypes.WHITE_SPACE
-            ) return@forEachIndexed
-            key(index, child.type) {
-                if (renderedAny) Spacer(Modifier.height(6.dp))
-                PiMarkdownBlock(
-                    content = content,
-                    node = child,
-                    colors = colors,
-                    typography = quoteTypo,
-                    spacing = spacing,
-                    referenceLinks = referenceLinks,
-                    eolAsNewLine = eolAsNewLine,
-                    listDepth = 0,
-                    isFirstBlock = !renderedAny,
-                    quoteDepth = quoteDepth + 1,
-                )
-                renderedAny = true
-            }
-        }
+        PiMarkdownBlockSequence(
+            content = content,
+            children = node.children,
+            colors = colors,
+            typography = quoteTypo,
+            spacing = spacing,
+            referenceLinks = referenceLinks,
+            eolAsNewLine = eolAsNewLine,
+            blockGap = 6.dp,
+            listDepth = 0,
+            quoteDepth = quoteDepth + 1,
+            stripQuotePrefix = true,
+        )
     }
 }
 
@@ -1069,23 +1222,19 @@ private fun PiListItemRow(
         }
 
         Column(modifier = Modifier.weight(1f)) {
-            bodyChildren.forEachIndexed { idx, child ->
-                key(idx, child.type) {
-                    if (idx > 0) Spacer(Modifier.height(spacing.listItem.coerceAtLeast(4.dp)))
-                    PiMarkdownBlock(
-                        content = content,
-                        node = child,
-                        colors = colors,
-                        typography = typography,
-                        spacing = spacing,
-                        referenceLinks = referenceLinks,
-                        eolAsNewLine = eolAsNewLine,
-                        listDepth = depth + 1,
-                        isFirstBlock = idx == 0,
-                        quoteDepth = quoteDepth,
-                    )
-                }
-            }
+            PiMarkdownBlockSequence(
+                content = content,
+                children = bodyChildren,
+                colors = colors,
+                typography = typography,
+                spacing = spacing,
+                referenceLinks = referenceLinks,
+                eolAsNewLine = eolAsNewLine,
+                blockGap = spacing.listItem.coerceAtLeast(4.dp),
+                listDepth = depth + 1,
+                quoteDepth = quoteDepth,
+                stripQuotePrefix = quoteDepth > 0,
+            )
         }
     }
 }
@@ -1614,7 +1763,12 @@ private fun PiHtmlBlock(content: String, node: ASTNode) {
     val text = remember(content, node) {
         PiHtml.blockTextAt(content, node.startOffset, node.endOffset)
     }
-    if (text.isEmpty() || isPureHtmlComment(text)) return
+    PiHtmlTextBlock(text = text)
+}
+
+@Composable
+private fun PiHtmlTextBlock(text: String) {
+    if (text.isEmpty() || isPureHtmlComment(text) || isInertHtmlWrapperBlock(text)) return
     if (isSingleSvgRoot(text)) {
         PiSvgFenceView(source = text, settled = !LocalPiMarkdownStreaming.current)
         return
