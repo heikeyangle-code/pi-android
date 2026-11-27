@@ -126,8 +126,16 @@ fun CompactionBlock(
                 // branch is a single [ProseText] — one scope covers both shapes, and
                 // neither branch contains another one, so nothing is nested.
                 if (expanded) {
+                    val transform = app.pi.ui.extension.LocalMarkdownTransform.current
+                    val transformedSummary by androidx.compose.runtime.produceState(item.summary, item.key, item.summary, transform) {
+                        value = if (item.summary.isEmpty() || transform == null) {
+                            item.summary
+                        } else {
+                            transform.transform(item.summary, "summary", item.key)
+                        }
+                    }
                     PiMarkdownText(
-                        markdown = item.summary,
+                        markdown = transformedSummary,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = PiSpacing.tiny),

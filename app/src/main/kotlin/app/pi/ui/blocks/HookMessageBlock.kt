@@ -124,20 +124,30 @@ fun HookMessageBlock(
                                     collapsedLimit = COLLAPSED_MESSAGE_LINES,
                                     expandHint = { hidden -> tr("还有 $hidden 行，点击展开", "$hidden more lines, tap to expand") },
                                 )
-                            } else if (expanded || !collapsible) {
-                                PiMarkdownText(
-                                    markdown = item.markdown.ifEmpty { tr("（空消息）", "(Empty message)") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    textColor = palette.customMessageText,
-                                    immediate = expanded,
-                                )
                             } else {
-                                ProseText(
-                                    text = item.markdown.ifEmpty { tr("（空消息）", "(Empty message)") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = palette.customMessageText,
-                                    maxLines = COLLAPSED_MESSAGE_LINES,
-                                )
+                                val transform = app.pi.ui.extension.LocalMarkdownTransform.current
+                                val transformedMarkdown by produceState(item.markdown, item.key, item.markdown, transform) {
+                                    value = if (item.markdown.isEmpty() || transform == null) {
+                                        item.markdown
+                                    } else {
+                                        transform.transform(item.markdown, "custom", item.key)
+                                    }
+                                }
+                                if (expanded || !collapsible) {
+                                    PiMarkdownText(
+                                        markdown = transformedMarkdown.ifEmpty { tr("（空消息）", "(Empty message)") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        textColor = palette.customMessageText,
+                                        immediate = expanded,
+                                    )
+                                } else {
+                                    ProseText(
+                                        text = transformedMarkdown.ifEmpty { tr("（空消息）", "(Empty message)") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        color = palette.customMessageText,
+                                        maxLines = COLLAPSED_MESSAGE_LINES,
+                                    )
+                                }
                             }
                         }
                     }

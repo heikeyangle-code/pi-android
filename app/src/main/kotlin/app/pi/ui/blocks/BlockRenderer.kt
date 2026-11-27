@@ -136,23 +136,28 @@ fun BlockRenderer(
         // it (`:266-292`, appended at `:158`/`:166-173`), which is what every block now
         // does through [ToolImages]. `onImageClick` therefore reaches all of them, exactly
         // as it reached the generic card before.
-        is ToolCall -> when (item.toolName) {
-            "read" -> ReadBlock(item, modifier, toolsDefaultExpanded, onImageClick)
-            "write" -> WriteBlock(item, modifier, toolsDefaultExpanded, onImageClick)
-            "edit" -> EditBlock(item, modifier, toolsDefaultExpanded, pairedDiff = pairedDiff, onImageClick = onImageClick)
-            "grep" -> GrepBlock(item, modifier, toolsDefaultExpanded, onImageClick)
-            "find" -> FindBlock(item, modifier, toolsDefaultExpanded, onImageClick)
-            "ls" -> LsBlock(item, modifier, toolsDefaultExpanded, onImageClick)
-            // pi's two shells share one renderer factory (`index.ts:35-36`): the prompt
-            // is the only difference between them, so they share one block here too.
-            "bash", "powershell" -> ShellBlock(
-                item,
-                modifier,
-                toolsDefaultExpanded,
-                onImageClick = onImageClick,
-                nowMs = nowMs,
-            )
-            else -> ToolCallBlock(item, modifier, toolsDefaultExpanded, onImageClick, nowMs = nowMs)
+        is ToolCall -> {
+            val overriddenNativeTools = app.pi.ui.extension.LocalOverriddenNativeTools.current
+            if (item.toolName in overriddenNativeTools) {
+                ToolCallBlock(item, modifier, toolsDefaultExpanded, onImageClick, nowMs = nowMs)
+            } else when (item.toolName) {
+                "read" -> ReadBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+                "write" -> WriteBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+                "edit" -> EditBlock(item, modifier, toolsDefaultExpanded, pairedDiff = pairedDiff, onImageClick = onImageClick)
+                "grep" -> GrepBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+                "find" -> FindBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+                "ls" -> LsBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+                // pi's two shells share one renderer factory (`index.ts:35-36`): the prompt
+                // is the only difference between them, so they share one block here too.
+                "bash", "powershell" -> ShellBlock(
+                    item,
+                    modifier,
+                    toolsDefaultExpanded,
+                    onImageClick = onImageClick,
+                    nowMs = nowMs,
+                )
+                else -> ToolCallBlock(item, modifier, toolsDefaultExpanded, onImageClick, nowMs = nowMs)
+            }
         }
 
         is ToolDiff -> DiffBlock(item, modifier, toolsDefaultExpanded)

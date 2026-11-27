@@ -139,7 +139,7 @@ fun ThinkingBlockBlock(
                         value = if (item.streaming || item.text.isEmpty() || transform == null) {
                             item.text
                         } else {
-                            transform.transform(item.text, "thinking", item.key)
+                            transform.transform(item.text, "assistant-thinking", item.key)
                         }
                     }
                     val bodyText = transformed.ifEmpty {

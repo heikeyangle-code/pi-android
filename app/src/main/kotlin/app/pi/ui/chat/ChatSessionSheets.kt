@@ -752,7 +752,14 @@ internal fun ChangelogSheet(
             )
         } else {
             runCatching { cmds.changelog() }
-                .onSuccess { result = it }
+                .onSuccess { raw ->
+                    val transformed = if (raw.markdown.isNotBlank()) {
+                        session.markdownTransform.transform(raw.markdown, "changelog", "changelog")
+                    } else {
+                        raw.markdown
+                    }
+                    result = if (transformed == raw.markdown) raw else raw.copy(markdown = transformed)
+                }
                 .onFailure { error = it.message ?: tr("读取更新日志失败", "Failed to read changelog") }
         }
         loading = false

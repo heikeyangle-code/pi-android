@@ -198,9 +198,10 @@ function resolveOverlayOptions(opts, termWidth, termHeight) {
 }
 
 export class Surfaces {
-  constructor(hub, theme) {
+  constructor(hub, theme, themeHandle = null) {
     this.hub = hub;
     this.theme = theme;
+    this.themeHandle = themeHandle;
     /** @type {Map<string, any>} surfaceId → surface */
     this.byId = new Map();
     /** @type {Map<string, string>} key → surfaceId */
@@ -209,6 +210,38 @@ export class Surfaces {
     this.height = DEFAULT_HEIGHT;
     this.focusedId = null;
     this.lastBellAt = 0;
+    this.toolsExpanded = false;
+    this.colorSchemeListeners = new Set();
+    this.lastAppearance = theme?.appearance === "light" ? "light" : "dark";
+  }
+
+  /** 通知所有 `tui.onTerminalColorSchemeChange` 订阅者（仅当 dark/light 实际变化时触发）。 */
+  notifyColorScheme(appearance) {
+    const scheme = appearance === "light" ? "light" : "dark";
+    if (scheme === this.lastAppearance) return;
+    this.lastAppearance = scheme;
+    for (const listener of [...this.colorSchemeListeners]) {
+      try {
+        listener(scheme);
+      } catch (error) {
+        process.stderr.write(`[host] colorSchemeListener failed: ${error?.stack ?? error}\n`);
+      }
+    }
+  }
+
+  /** 官方 `setToolsExpanded`：同步通知所有实现了 `setExpanded(boolean)` 的已挂载表面组件。 */
+  setExpandedAll(expanded) {
+    const next = Boolean(expanded);
+    this.toolsExpanded = next;
+    for (const surface of this.byId.values()) {
+      if (surface.closed || typeof surface.component?.setExpanded !== "function") continue;
+      try {
+        surface.component.setExpanded(next);
+        this.#schedule(surface);
+      } catch (error) {
+        process.stderr.write(`[host] setExpanded failed: ${error?.stack ?? error}\n`);
+      }
+    }
   }
 
   /** 向 App 发送一次终端响铃事件（带 60ms 节流，防止游戏高频触发刷爆协议流）。 */
@@ -252,6 +285,7 @@ export class Surfaces {
       onClose,
       childOverlays: new Set(),
       inputListeners: new Set(),
+      colorSchemeUnsubscribers: new Set(),
       lastLineCount: 0,
       fullRedraws: 0,
       showHardwareCursor: false,
@@ -284,10 +318,36 @@ export class Surfaces {
         surfaces.#setFocusId(surface.id);
         surfaces.paint(surface);
       },
-      unfocus() {
-        if (surfaces.focusedId === surface.id) {
-          surfaces.#setFocusId(null);
-          surfaces.paint(surface);
+      unfocus(options) {
+        if (surfaces.focusedId !== surface.id) return;
+        let nextId = null;
+        let externalTarget = null;
+        if (options && typeof options === "object" && "target" in options) {
+          const target = options.target;
+          if (target != null) {
+            for (const candidate of surfaces.byId.values()) {
+              if (!candidate.closed && (candidate.component === target || candidate.handle === target)) {
+                nextId = candidate.id;
+                break;
+              }
+            }
+            if (nextId === null) externalTarget = target;
+          }
+        } else {
+          const fallback = [...surfaces.byId.values()]
+            .reverse()
+            .find((s) => {
+              if (s.id === surface.id || s.closed || s.hidden || s.mode !== "custom") return false;
+              const resolved = resolveOverlayOptions(s.overlayOptions, s.overrideWidth ?? surfaces.width, s.overrideHeight ?? surfaces.height);
+              return resolved.visible && !resolved.nonCapturing;
+            });
+          if (fallback) nextId = fallback.id;
+        }
+        surfaces.#setFocusId(nextId, externalTarget);
+        surfaces.paint(surface);
+        if (nextId) {
+          const targetSurf = surfaces.byId.get(nextId);
+          if (targetSurf && !targetSurf.closed) surfaces.paint(targetSurf);
         }
       },
       isFocused: () => !surface.closed && !surface.hidden && surfaces.focusedId === surface.id,
@@ -371,20 +431,44 @@ export class Surfaces {
       setClearOnShrink(enabled) {
         surface.clearOnShrink = Boolean(enabled);
       },
-      onTerminalColorSchemeChange: () => () => {},
-      queryTerminalColors: () => Promise.resolve(null),
+      onTerminalColorSchemeChange(listener) {
+        if (typeof listener !== "function") return () => {};
+        surfaces.colorSchemeListeners.add(listener);
+        const unsub = () => {
+          surfaces.colorSchemeListeners.delete(listener);
+          surface.colorSchemeUnsubscribers.delete(unsub);
+        };
+        surface.colorSchemeUnsubscribers.add(unsub);
+        return unsub;
+      },
+      setTerminalColorSchemeNotifications() {},
+      queryTerminalColors: () => Promise.resolve(surfaces.themeHandle?.getTerminalColors?.() ?? {}),
       showOverlay(component, opts) {
         // 允许组件内部通过 `tui.showOverlay(child, opts)` 叠加二级浮层，关闭父表面时一并清理。
+        // 在异步 mount 完成前暂存同步调用（hide/setHidden/focus/unfocus），避免首 tick 调用丢失。
         let childHandle = null;
         let childId = null;
+        let pendingClose = false;
+        let pendingHidden = null;
+        let pendingFocus = null;
         const placeholder = {
           hide: () => {
             if (childHandle) childHandle.hide();
+            else pendingClose = true;
           },
-          setHidden: (h) => childHandle?.setHidden(h),
-          isHidden: () => (childHandle ? childHandle.isHidden() : true),
-          focus: () => childHandle?.focus(),
-          unfocus: () => childHandle?.unfocus(),
+          setHidden: (h) => {
+            if (childHandle) childHandle.setHidden(h);
+            else pendingHidden = Boolean(h);
+          },
+          isHidden: () => (childHandle ? childHandle.isHidden() : pendingClose || Boolean(pendingHidden)),
+          focus: () => {
+            if (childHandle) childHandle.focus();
+            else pendingFocus = { op: "focus" };
+          },
+          unfocus: (unfocusOpts) => {
+            if (childHandle) childHandle.unfocus(unfocusOpts);
+            else pendingFocus = { op: "unfocus", opts: unfocusOpts };
+          },
           isFocused: () => (childHandle ? childHandle.isFocused() : false),
           getBounds: () => (childHandle ? childHandle.getBounds() : { row: 0, col: 0, width: surfaces.width, height: surfaces.height }),
         };
@@ -401,10 +485,18 @@ export class Surfaces {
           .then((child) => {
             childId = child.id;
             childHandle = child.handle;
-            if (surface.closed) {
+            if (surface.closed || pendingClose) {
               surfaces.close(child.id);
-            } else {
-              surface.childOverlays.add(child.id);
+              return;
+            }
+            surface.childOverlays.add(child.id);
+            if (pendingHidden !== null) {
+              childHandle.setHidden(pendingHidden);
+            }
+            if (pendingFocus?.op === "focus") {
+              childHandle.focus();
+            } else if (pendingFocus?.op === "unfocus") {
+              childHandle.unfocus(pendingFocus.opts);
             }
           });
         return placeholder;
@@ -433,6 +525,13 @@ export class Surfaces {
       surface.component?.dispose?.();
       return surface;
     }
+    if (typeof surface.component?.setExpanded === "function") {
+      try {
+        surface.component.setExpanded(this.toolsExpanded);
+      } catch {
+        // ignore initial setExpanded failure
+      }
+    }
     this.byId.set(surface.id, surface);
     if (key) this.byKey.set(key, surface.id);
     const resolvedOpts = resolveOverlayOptions(surface.overlayOptions, this.width, this.height);
@@ -450,9 +549,13 @@ export class Surfaces {
     return surface;
   }
 
-  #setFocusId(nextId) {
-    if (this.focusedId === nextId) return;
-    if (this.focusedId) {
+  #setFocusId(nextId, externalTarget = null) {
+    if (this.focusedId === nextId && this.externalFocus === externalTarget) return;
+    if (this.externalFocus && this.externalFocus !== externalTarget) {
+      setComponentFocus(this.externalFocus, false);
+      this.externalFocus = null;
+    }
+    if (this.focusedId && this.focusedId !== nextId) {
       const prev = this.byId.get(this.focusedId);
       if (prev) {
         prev.focused = false;
@@ -466,6 +569,9 @@ export class Surfaces {
         curr.focused = true;
         setComponentFocus(curr.component, true);
       }
+    } else if (externalTarget) {
+      this.externalFocus = externalTarget;
+      setComponentFocus(externalTarget, true);
     }
   }
 
@@ -568,6 +674,8 @@ export class Surfaces {
     for (const childId of [...surface.childOverlays]) this.close(childId);
     surface.childOverlays.clear();
     surface.inputListeners.clear();
+    for (const unsub of [...surface.colorSchemeUnsubscribers]) unsub();
+    surface.colorSchemeUnsubscribers.clear();
     this.byId.delete(surface.id);
     if (surface.key && this.byKey.get(surface.key) === surface.id) this.byKey.delete(surface.key);
     if (this.focusedId === surface.id) {
@@ -659,13 +767,13 @@ export class Surfaces {
       }
       const explicitHandled = Boolean(result && (result.handled || result.focus || result.capture || "target" in result));
       if (eventType === "wheel") {
-        const prevKey = surface.frameKey;
+        const prevKey = surface.lastFrameKey;
         if (result?.focus && surface.mode === "custom") this.#setFocusId(surface.id);
         if (!surface.closed && result?.render !== false && (explicitHandled || result === undefined)) {
           this.paint(surface);
         }
         // wheel 返回 { handled: true } 或实际改变了画面（void handleMouse）才算已处理；否则视为未处理，交给 ↑/↓ 回退。
-        handled = explicitHandled || (result === undefined && surface.frameKey !== prevKey);
+        handled = explicitHandled || (result === undefined && surface.lastFrameKey !== prevKey);
       } else {
         handled = result === undefined ? true : explicitHandled;
         if (result?.focus && surface.mode === "custom") this.#setFocusId(surface.id);

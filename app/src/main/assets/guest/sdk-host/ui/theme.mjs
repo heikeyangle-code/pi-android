@@ -180,6 +180,7 @@ export function createTheme(initial = DEFAULT_PALETTE, initialName) {
       : resolvePaletteAppearance(palette);
   let sdkRef = null;
   let officialInstance = null;
+  let customInstanceOverride = null;
   let fingerprint = "";
   const builtinCache = new Map();
 
@@ -193,6 +194,11 @@ export function createTheme(initial = DEFAULT_PALETTE, initialName) {
   fingerprint = computeFingerprint();
 
   const syncOfficial = () => {
+    if (customInstanceOverride) {
+      officialInstance = customInstanceOverride;
+      installGlobalSdkTheme(officialInstance);
+      return officialInstance;
+    }
     if (!sdkRef) return null;
     process.env.COLORTERM ||= "truecolor";
     officialInstance = buildSdkThemeInstance(sdkRef, palette, themeName);
@@ -328,6 +334,8 @@ export function createTheme(initial = DEFAULT_PALETTE, initialName) {
     },
     /** App 主题变化时调用：更新色板并同步重建官方 `sdk.Theme`，返回是否实际发生变化。 */
     setPalette(next, name) {
+      const hadCustomOverride = customInstanceOverride !== null;
+      customInstanceOverride = null;
       if (typeof name === "string" && name.trim()) themeName = name.trim();
       if (next && typeof next === "object") {
         palette = { ...palette, ...next };
@@ -339,7 +347,7 @@ export function createTheme(initial = DEFAULT_PALETTE, initialName) {
         }
       }
       const nextFp = computeFingerprint();
-      const changed = nextFp !== fingerprint;
+      const changed = hadCustomOverride || nextFp !== fingerprint;
       fingerprint = nextFp;
       if (sdkRef && (changed || !officialInstance || globalThis[THEME_KEY] !== officialInstance)) {
         syncOfficial();
@@ -349,10 +357,33 @@ export function createTheme(initial = DEFAULT_PALETTE, initialName) {
     setName(name) {
       if (typeof name !== "string" || !name.trim()) return;
       const next = name.trim();
-      if (next === themeName) return;
+      const hadCustomOverride = customInstanceOverride !== null;
+      customInstanceOverride = null;
+      if (!hadCustomOverride && next === themeName) return;
       themeName = next;
       fingerprint = computeFingerprint();
       if (sdkRef) syncOfficial();
+    },
+    /** 扩展调用 `ctx.ui.setTheme(themeInstance)` 时仅替换当前运行时主题实例（与官方一致，不持久化写入 settings.json）。 */
+    setCustomThemeInstance(instance) {
+      if (!instance || typeof instance !== "object" || typeof instance.fg !== "function") return false;
+      customInstanceOverride = instance;
+      officialInstance = instance;
+      if (typeof instance.name === "string" && instance.name.trim()) {
+        themeName = instance.name.trim();
+      }
+      installGlobalSdkTheme(instance);
+      fingerprint = computeFingerprint() + "|custom:" + Date.now();
+      return true;
+    },
+    /** 按官方 `TerminalColors` 契约返回当前前景/背景 RGB，供 `tui.queryTerminalColors()` 使用。 */
+    getTerminalColors() {
+      const fg = parseHexRgb(palette.text ?? DEFAULT_PALETTE.text);
+      const bg = parseHexRgb(palette.pageBg ?? DEFAULT_PALETTE.pageBg);
+      const out = {};
+      if (fg) out.foreground = { r: fg[0], g: fg[1], b: fg[2] };
+      if (bg) out.background = { r: bg[0], g: bg[1], b: bg[2] };
+      return out;
     },
     /** 读取官方内置 `dark`/`light`（或 `system`）的独立只读 `sdk.Theme` 实例，供 `ctx.ui.getTheme(name)` 使用。 */
     getBuiltinTheme(name) {

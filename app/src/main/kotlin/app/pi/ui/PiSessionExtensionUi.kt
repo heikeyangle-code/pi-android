@@ -281,6 +281,7 @@ internal fun PiSessionViewModel.clearExtensionChrome() {
     _entryRenderable.value = emptySet()
     _state.update { s -> s.copy(
         ext = ExtUiState(),
+        overriddenNativeTools = emptySet(),
         windowTitle = null,
         composerFill = null,
     ) }

@@ -360,8 +360,19 @@ internal fun ChatBody(
     var toolsExpanded by rememberSaveable(prefs.expandToolsByDefault) {
         mutableStateOf(prefs.expandToolsByDefault)
     }
+    var lastSyncedToolsPref by remember { mutableStateOf(prefs.expandToolsByDefault) }
+    val engineReadyForToolsSync = state.engine == app.pi.engine.PiEngineSession.EngineState.Ready ||
+        state.engine == app.pi.engine.PiEngineSession.EngineState.Busy
     LaunchedEffect(state.ext.toolsExpanded) {
         state.ext.toolsExpanded?.let { toolsExpanded = it }
+    }
+    LaunchedEffect(engineReadyForToolsSync, prefs.expandToolsByDefault) {
+        if (!engineReadyForToolsSync) return@LaunchedEffect
+        val prefChanged = prefs.expandToolsByDefault != lastSyncedToolsPref
+        lastSyncedToolsPref = prefs.expandToolsByDefault
+        if (prefChanged || (state.ext.toolsExpanded == null && prefs.expandToolsByDefault)) {
+            session.setToolsExpandedRemote(prefs.expandToolsByDefault)
+        }
     }
     // 把输入框内容同步给宿主，确保扩展调用 `ctx.ui.getEditorText()` 读到真实文本。
     LaunchedEffect(draft) {
@@ -1770,6 +1781,7 @@ internal fun ChatBody(
             }
             CompositionLocalProvider(
                 app.pi.ui.extension.LocalToolRenderer provides sharedToolRenderer,
+                app.pi.ui.extension.LocalOverriddenNativeTools provides state.overriddenNativeTools,
                 app.pi.ui.extension.LocalEntryRenderer provides sharedEntryRenderer,
                 app.pi.ui.extension.LocalMarkdownTransform provides session.markdownTransform,
                 app.pi.ui.extension.LocalMessageRenderer provides sharedMessageRenderer,

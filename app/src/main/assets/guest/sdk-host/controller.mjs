@@ -164,6 +164,24 @@ export class Controller {
       getResourceLoader: () => this.session?.resourceLoader ?? null,
       getSettingsManager: () => this.session?.settingsManager ?? null,
       emitThemeChanged: (name) => this.hub.emit("settings.changed", { key: "theme", value: name }),
+      dispatchExtensionShortcut: (data) => {
+        const s = this.session;
+        const runner = s?.extensionRunner;
+        if (!runner || typeof runner.getShortcuts !== "function") return false;
+        const kbConfig = this.ui?.keybindings?.getEffectiveConfig?.() ?? {};
+        const map = runner.getShortcuts(kbConfig);
+        const key = String(data ?? "").trim().toLowerCase();
+        const entry = map.get(key);
+        if (!entry || typeof entry.handler !== "function") return false;
+        void Promise.resolve(entry.handler(runner.createContext())).catch((error) => {
+          this.hub.emit("ext.error", {
+            extensionPath: entry.extensionPath ?? "",
+            event: `shortcut:${key}`,
+            error: String(error?.stack ?? error),
+          });
+        });
+        return true;
+      },
     });
   }
 

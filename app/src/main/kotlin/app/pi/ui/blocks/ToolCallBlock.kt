@@ -184,13 +184,16 @@ fun ToolCallBlock(
         item.elapsedMs
     }
     val toolRenderer = app.pi.ui.extension.LocalToolRenderer.current
+    val isNativeOverridden = item.toolName in app.pi.ui.extension.LocalOverriddenNativeTools.current
+    val canUseExtensionRenderer = toolRenderer != null && (item.toolName !in NATIVE_TOOL_NAMES || isNativeOverridden)
     val rendered by androidx.compose.runtime.produceState<app.pi.host.HostCommands.ToolRender?>(
         initialValue = null,
         key1 = app.pi.ui.extension.toolRenderKey(item, expanded),
         key2 = toolRenderer,
+        key3 = canUseExtensionRenderer,
     ) {
-        value = if (toolRenderer == null || item.toolName in NATIVE_TOOL_NAMES) null
-        else toolRenderer.render(item, expanded) ?: value
+        value = if (!canUseExtensionRenderer) null
+        else toolRenderer?.render(item, expanded) ?: value
     }
     val effectiveTitle = remember(rendered?.label, title) {
         rendered?.label?.takeIf { it.isNotBlank() } ?: title

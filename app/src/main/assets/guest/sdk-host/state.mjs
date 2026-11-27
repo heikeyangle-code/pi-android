@@ -19,6 +19,34 @@ export const STATE_EVENTS = new Set([
 
 const PUSH_DEBOUNCE_MS = 100;
 
+/** Built-in tools that the Android UI renders with dedicated native cards unless an extension overrides them. */
+const NATIVE_TOOL_NAMES = ["read", "write", "edit", "grep", "find", "ls", "bash", "powershell", "codemode"];
+
+function detectOverriddenNativeTools(s) {
+  const runner = s.extensionRunner;
+  if (!runner) return [];
+  const overridden = [];
+  for (const name of NATIVE_TOOL_NAMES) {
+    const extToolDef = runner.getToolDefinition?.(name);
+    if (extToolDef && (typeof extToolDef.renderCall === "function" || typeof extToolDef.renderResult === "function")) {
+      overridden.push(name);
+      continue;
+    }
+    if (typeof runner.resolveToolRenderers === "function") {
+      const baseDef = s.getToolDefinition?.(name);
+      try {
+        const resolved = runner.resolveToolRenderers(name, () => baseDef);
+        if (resolved && resolved !== baseDef && (typeof resolved.renderCall === "function" || typeof resolved.renderResult === "function")) {
+          overridden.push(name);
+        }
+      } catch {
+        // Ignore buggy extension resolver when building the state snapshot.
+      }
+    }
+  }
+  return overridden;
+}
+
 function serializeModel(m) {
   if (!m) return null;
   return {
@@ -75,7 +103,10 @@ export function snapshotOf(controller, { messages = false } = {}) {
       toolResults: stats.toolResults ?? 0,
       total: stats.totalMessages,
     },
-    extensions: { bound: controller.extensionsBound },
+    extensions: {
+      bound: controller.extensionsBound,
+      overriddenNativeTools: detectOverriddenNativeTools(s),
+    },
     ...(messages ? { messages: s.messages } : {}),
   };
 }

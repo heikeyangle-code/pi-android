@@ -294,6 +294,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         /** `setStatus` entries, oldest key first. */
         /** 扩展 UI 的全部状态（状态行、小组件、header/footer、custom 表面、工作中提示……），来自宿主 `ui.*` 事件。 */
         val ext: ExtUiState = ExtUiState(),
+        /** 被扩展接管渲染的内置工具名集合（来自宿主 `state.extensions.overriddenNativeTools`）。 */
+        val overriddenNativeTools: Set<String> = emptySet(),
         /** `setWidget` panels. Empty lines cleared the key, so none here are empty. */
         /** `setTitle`: the name pi wants this session shown under. */
         val windowTitle: String? = null,
@@ -3291,6 +3293,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     routedModel = if (hostState != null) routed else current.routedModel,
                     supportsThinking = resolvedSupportsThinking,
                 ),
+                overriddenNativeTools = hostState?.overriddenNativeTools ?: s.overriddenNativeTools,
             )
         }
     }

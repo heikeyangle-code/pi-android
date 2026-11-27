@@ -177,6 +177,7 @@ export function createUiContext({ hub, surfaces, theme, themeHandle = null, flag
     getToolsExpanded: () => state.toolsExpanded,
     setToolsExpanded(expanded) {
       state.toolsExpanded = Boolean(expanded);
+      surfaces.setExpandedAll?.(state.toolsExpanded);
       hub.emit("ui.toolsExpanded", { expanded: state.toolsExpanded });
     },
 
@@ -315,10 +316,19 @@ export function createUiContext({ hub, surfaces, theme, themeHandle = null, flag
       return undefined;
     },
     setTheme(themeOrName) {
-      const name = typeof themeOrName === "string" ? themeOrName.trim() : typeof themeOrName?.name === "string" ? themeOrName.name.trim() : "";
+      // 对照官方 interactive-mode.js:2258：传入 Theme 对象实例时仅做运行时实例切换，不持久化写入 settings.json。
+      if (themeOrName && typeof themeOrName === "object" && typeof themeOrName.fg === "function") {
+        const applied = themeHandle?.setCustomThemeInstance?.(themeOrName);
+        if (!applied) return { success: false, error: "无效的 Theme 实例" };
+        surfaces.notifyColorScheme?.(theme.appearance);
+        hub.emit("render.invalidate", { kind: "theme" });
+        surfaces.repaintAll();
+        return { success: true };
+      }
+      const name = typeof themeOrName === "string" ? themeOrName.trim() : "";
       if (!name) return { success: false, error: "主题名不能为空" };
       const all = this.getAllThemes();
-      if (typeof themeOrName === "string" && !all.some((t) => t.name === name)) {
+      if (!all.some((t) => t.name === name)) {
         return { success: false, error: `未知主题：${name}` };
       }
       const sm = sessionHooks.getSettingsManager?.();
@@ -488,12 +498,32 @@ export function createUiContext({ hub, surfaces, theme, themeHandle = null, flag
           }
         }
         if (comp && typeof comp === "object") {
+          const autocomplete = getAutocompleteChain();
+          if (autocomplete && typeof comp.setAutocompleteProvider === "function") {
+            try {
+              comp.setAutocompleteProvider(autocomplete);
+            } catch {
+              // ignore provider wiring error
+            }
+          }
           const prevSubmit = typeof comp.onSubmit === "function" ? comp.onSubmit.bind(comp) : null;
           comp.onSubmit = (value) => {
             syncBack(typeof value === "string" ? value : null);
             prevSubmit?.(value);
             surfaces.close(surf.id);
           };
+          // 对照官方 interactive-mode.js:2342：继承 CustomEditor 的组件补齐 onEscape 与 onExtensionShortcut 兜底。
+          if ("actionHandlers" in comp && comp.actionHandlers instanceof Map) {
+            if (!comp.onEscape) {
+              comp.onEscape = () => {
+                syncBack(null);
+                surfaces.close(surf.id);
+              };
+            }
+            if (!comp.onExtensionShortcut && typeof sessionHooks.dispatchExtensionShortcut === "function") {
+              comp.onExtensionShortcut = (data) => sessionHooks.dispatchExtensionShortcut(data);
+            }
+          }
         }
         return comp;
       },

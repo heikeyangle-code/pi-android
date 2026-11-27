@@ -1098,15 +1098,6 @@ private fun SurfaceGridRowItem(
                     },
                 )
             }
-    } else if (interactive) {
-        Modifier
-            .fillMaxWidth()
-            .pointerInput(rowIndex, measuredCols, charWidthPx, totalRows) {
-                detectTapGestures { offset ->
-                    val col = (offset.x / charWidthPx).toInt().coerceIn(0, (measuredCols - 1).coerceAtLeast(0))
-                    onMouseCell(col, rowIndex, "click")
-                }
-            }
     } else {
         Modifier.fillMaxWidth()
     }

@@ -69,6 +69,7 @@ export function register(reg, { controller, hub, surfaces, ui, themeHandle }) {
     if (typeof args.palette !== "object" || args.palette === null) throw new HostError(ERR.BAD_ARGS, "palette 必须是对象");
     const name = typeof args.name === "string" && args.name.trim() ? args.name.trim() : undefined;
     const changed = themeHandle.setPalette(args.palette, name);
+    surfaces.notifyColorScheme?.(themeHandle.theme.appearance);
     if (changed && controller.sdk) {
       controller.hub.emit("render.invalidate", { kind: "theme" });
     }

@@ -21,6 +21,9 @@ fun interface ToolRenderer {
 
 val LocalToolRenderer = staticCompositionLocalOf<ToolRenderer?> { null }
 
+/** 被扩展显式覆盖渲染器（`registerToolRenderer` 或 `registerTool`）的内置工具集合。 */
+val LocalOverriddenNativeTools = staticCompositionLocalOf<Set<String>> { emptySet() }
+
 /** 工具卡重新取渲染结果的依据：只有这些变了才值得再问宿主一次。 */
 internal data class ToolRenderKey(
     val toolCallId: String,

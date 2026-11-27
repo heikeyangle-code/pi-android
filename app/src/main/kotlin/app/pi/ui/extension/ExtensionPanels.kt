@@ -107,7 +107,7 @@ fun ExtensionFooterStatusStrip(
                 Row(
                     modifier = Modifier
                         .clip(pillShape)
-                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                        .background(palette.cardBg)
                         .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.45f), pillShape)
                         .clickable(role = Role.Button, onClickLabel = tr("打开扩展中心", "Open extensions"), onClick = onOpenHub)
                         .padding(horizontal = 8.dp, vertical = 4.dp),
@@ -373,7 +373,7 @@ fun ExtensionWidgetsSheet(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(rowShape)
-                                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                                    .background(palette.cardBg)
                                     .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.45f), rowShape)
                                     .padding(horizontal = 12.dp, vertical = 9.dp),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -649,17 +649,16 @@ fun ExtensionWorkingStrip(
                 richStyle = true,
             )
         }
-        if (message != null) {
-            ExtensionSpans(
-                spans = remember(message) { chromeSpans(message) },
-                defaultColor = palette.text,
-                style = PiTheme.text.meta,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                richStyle = true,
-            )
-        }
+        val displayMessage = message ?: tr("处理中…", "Working…")
+        ExtensionSpans(
+            spans = remember(displayMessage) { chromeSpans(displayMessage) },
+            defaultColor = if (message != null) palette.text else palette.muted,
+            style = PiTheme.text.meta,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            richStyle = true,
+        )
     }
 }
 

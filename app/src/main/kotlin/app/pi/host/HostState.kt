@@ -65,6 +65,14 @@ class HostState(val raw: JsonObject) {
         return PiResponses.sessionState(shaped)
     }
 
+    /** 被扩展通过 `registerToolRenderer` 或 `registerTool` 接管渲染的内置工具名集合。 */
+    val overriddenNativeTools: Set<String>
+        get() {
+            val ext = raw["extensions"] as? JsonObject ?: return emptySet()
+            val arr = ext["overriddenNativeTools"] as? JsonArray ?: return emptySet()
+            return arr.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }.toSet()
+        }
+
     /** 上下文占用；宿主没给（模型未知等）为 null。 */
     val contextUsage: JsonObject? get() = raw["contextUsage"] as? JsonObject
     val tokens: JsonObject? get() = raw["tokens"] as? JsonObject

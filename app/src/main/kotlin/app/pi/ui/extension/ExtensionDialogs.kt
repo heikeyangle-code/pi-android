@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -211,7 +212,7 @@ private fun SelectBody(
             .fillMaxWidth()
             .heightIn(max = DialogListMaxHeight)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .background(palette.cardBg)
             .border(PiSpacing.hairlineThin, palette.borderMuted.copy(alpha = 0.55f), shape),
     ) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
@@ -310,6 +311,8 @@ private fun EditorSheetBody(
         Column(
             Modifier
                 .fillMaxWidth()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = PiSettingsMetrics.pageHorizontal)
                 .padding(top = PiSettingsMetrics.sheetHeadTop),
         ) {

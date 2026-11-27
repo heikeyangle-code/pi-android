@@ -1414,6 +1414,109 @@ try {
     );
     mockSurfaces.close(nativeWheelSurf.id);
 
+    // Void handleMouse(wheel) that updates rendered output must NOT trigger arrow fallback (lastFrameKey regression).
+    let voidWheelPos = 0;
+    const voidWheelInputs = [];
+    const voidWheelSurf = await mockSurfaces.mount({
+      mode: "custom",
+      overlay: true,
+      build: () => ({
+        render: () => [`scroll=${voidWheelPos}`],
+        handleMouse: (ev) => {
+          if (ev.type === "wheel") voidWheelPos += ev.wheelDelta ?? 0;
+        },
+        handleInput: (data) => voidWheelInputs.push(data),
+      }),
+    });
+    const voidWheelHandled = mockSurfaces.mouse(voidWheelSurf.id, { type: "wheel", x: 0, y: 0, wheelDelta: 2 });
+    expect(
+      "Surfaces.mouse 对返回 void 但已重绘的 wheel 不再重复回退 ↑/↓（lastFrameKey 修复）",
+      voidWheelHandled === true && voidWheelPos === 2 && voidWheelInputs.length === 0,
+      JSON.stringify({ voidWheelHandled, voidWheelPos, voidWheelInputs }),
+    );
+    mockSurfaces.close(voidWheelSurf.id);
+
+    // tui.showOverlay synchronous hide() before async mount resolves + OverlayHandle.unfocus({ target }).
+    let parentTui = null;
+    const unfocusTarget = { focused: false, render: () => ["target"] };
+    const parentSurf = await mockSurfaces.mount({
+      mode: "custom",
+      overlay: true,
+      build: (tui) => {
+        parentTui = tui;
+        return { render: () => ["parent"] };
+      },
+    });
+    const immediateHideHandle = parentTui.showOverlay({ render: () => ["ephemeral"] }, { nonCapturing: false });
+    immediateHideHandle.hide();
+    await new Promise((r) => setTimeout(r, 15));
+    expect(
+      "tui.showOverlay 在异步 mount 前同步 hide() 不残留孤儿浮层",
+      parentSurf.childOverlays.size === 0 && immediateHideHandle.isHidden() === true,
+      JSON.stringify({ childCount: parentSurf.childOverlays.size, hidden: immediateHideHandle.isHidden() }),
+    );
+    parentSurf.handle.unfocus({ target: unfocusTarget });
+    expect(
+      "OverlayHandle.unfocus({ target }) 将焦点切到指定组件",
+      parentSurf.handle.isFocused() === false && unfocusTarget.focused === true,
+      JSON.stringify({ focused: parentSurf.handle.isFocused(), targetFocused: unfocusTarget.focused }),
+    );
+    mockSurfaces.close(parentSurf.id);
+
+    // tui.queryTerminalColors() + onTerminalColorSchemeChange() + setExpandedAll().
+    const { createTheme: createTheme2 } = await import(
+      new URL("../../app/src/main/assets/guest/sdk-host/ui/theme.mjs", import.meta.url).href
+    );
+    const { loadSdk: loadSdk2 } = await import(
+      new URL("../../app/src/main/assets/guest/sdk-host/sdk.mjs", import.meta.url).href
+    );
+    const th2 = createTheme2();
+    th2.attachSdk(await loadSdk2(pi));
+    const themedSurfaces = new Surfaces({ emit: () => {} }, th2.theme, th2);
+    const schemeEvents = [];
+    const expandedCalls = [];
+    let queriedColors = null;
+    const colorSurf = await themedSurfaces.mount({
+      mode: "custom",
+      overlay: true,
+      build: async (tui) => {
+        queriedColors = await tui.queryTerminalColors();
+        tui.onTerminalColorSchemeChange((scheme) => schemeEvents.push(scheme));
+        return {
+          render: () => ["themed"],
+          setExpanded: (exp) => expandedCalls.push(exp),
+        };
+      },
+    });
+    themedSurfaces.notifyColorScheme("light");
+    themedSurfaces.setExpandedAll(true);
+    themedSurfaces.close(colorSurf.id);
+    themedSurfaces.notifyColorScheme("dark");
+    expect(
+      "tui.queryTerminalColors / onTerminalColorSchemeChange / setExpandedAll 正常工作并在关闭后退订",
+      typeof queriedColors?.foreground?.r === "number" &&
+        typeof queriedColors?.background?.r === "number" &&
+        JSON.stringify(schemeEvents) === JSON.stringify(["light"]) &&
+        JSON.stringify(expandedCalls) === JSON.stringify([false, true]),
+      JSON.stringify({ queriedColors, schemeEvents, expandedCalls }),
+    );
+
+    // themeHandle.setCustomThemeInstance updates runtime global slot without breaking subsequent setPalette.
+    const customInst = th2.getBuiltinTheme("light");
+    const customApplied = th2.setCustomThemeInstance(customInst);
+    const globalAfterCustom = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
+    expect(
+      "ui/theme.mjs setCustomThemeInstance 直接替换运行时全局主题实例",
+      customApplied === true && globalAfterCustom === customInst,
+      JSON.stringify({ customApplied, same: globalAfterCustom === customInst }),
+    );
+    const snapExt = await h.call("session.snapshot");
+    expect(
+      "session.snapshot 透出 extensions.overriddenNativeTools 数组",
+      snapExt.ok && Array.isArray(snapExt.data?.extensions?.overriddenNativeTools),
+      JSON.stringify(snapExt.data?.extensions),
+    );
+
     const exportJsonlPath = join(h.root, "exported-session.jsonl");
     const ej = await h.call("session.export", { outputPath: exportJsonlPath });
     expect(

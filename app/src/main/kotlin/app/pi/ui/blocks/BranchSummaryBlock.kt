@@ -110,8 +110,16 @@ fun BranchSummaryBlock(
                 )
             }
             if (expanded) {
+                val transform = app.pi.ui.extension.LocalMarkdownTransform.current
+                val transformedSummary by androidx.compose.runtime.produceState(item.summary, item.key, item.summary, transform) {
+                    value = if (item.summary.isEmpty() || transform == null) {
+                        item.summary
+                    } else {
+                        transform.transform(item.summary, "summary", item.key)
+                    }
+                }
                 PiMarkdownText(
-                    markdown = item.summary.ifEmpty { tr("（无摘要）", "(No summary)") },
+                    markdown = transformedSummary.ifEmpty { tr("（无摘要）", "(No summary)") },
                     modifier = Modifier.fillMaxWidth(),
                     textColor = palette.customMessageText,
                     immediate = true,

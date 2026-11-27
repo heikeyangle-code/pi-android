@@ -92,7 +92,7 @@ try {
 }
 
 const themeHandle = createTheme();
-const surfaces = new Surfaces(hub, themeHandle.theme);
+const surfaces = new Surfaces(hub, themeHandle.theme, themeHandle);
 setStdoutHook((text) => surfaces.handleTerminalOutput(text, "stdout"));
 const ui = createUiContext({ hub, surfaces, theme: themeHandle.theme, themeHandle, flags: {} });
 const controller = new Controller({ hub, transport, ui, surfaces, cfg, themeHandle });

@@ -38,8 +38,15 @@ async function loadBuiltins(controller) {
 
 export function register(reg, { controller }) {
   // `get_commands` 的同款拼装；多带 sourceInfo 以外的 invocationName，App 不必再猜前缀。
+  async function ensureKeybindingsReady() {
+    if (!controller.keybindings) {
+      await Promise.resolve(controller.ensureKeybindings?.());
+    }
+  }
+
   reg.add("catalog.commands", async () => {
     const s = controller.requireSession();
+    await ensureKeybindingsReady();
     const commands = [];
     for (const c of s.extensionRunner.getRegisteredCommands()) {
       commands.push({
@@ -81,10 +88,14 @@ export function register(reg, { controller }) {
     }));
   }
 
-  reg.add("catalog.shortcuts", () => ({ shortcuts: listExtensionShortcuts(controller) }));
+  reg.add("catalog.shortcuts", async () => {
+    await ensureKeybindingsReady();
+    return { shortcuts: listExtensionShortcuts(controller) };
+  });
 
   reg.add("catalog.triggerShortcut", async (args) => {
     const s = controller.requireSession();
+    await ensureKeybindingsReady();
     const runner = s.extensionRunner;
     const requested = str(args, "shortcut").trim().toLowerCase();
     const kbConfig = controller.ui?.keybindings?.getEffectiveConfig?.() ?? {};
@@ -243,9 +254,13 @@ export function register(reg, { controller }) {
   });
 
   // 扩展快捷键：手机没有物理键盘，但外接键盘时有意义；同时把冲突诊断一并给出。
-  reg.add("catalog.diagnostics", () => {
+  reg.add("catalog.diagnostics", async () => {
     const s = controller.requireSession();
+    await ensureKeybindingsReady();
     const runner = s.extensionRunner;
+    if (typeof runner.getShortcuts === "function") {
+      runner.getShortcuts(controller.ui?.keybindings?.getEffectiveConfig?.() ?? {});
+    }
     return {
       commands: runner.getCommandDiagnostics(),
       shortcuts: runner.getShortcutDiagnostics(),
@@ -291,11 +306,12 @@ export function register(reg, { controller }) {
     },
   });
 
-  reg.add("render.message", (args) => {
+  reg.add("render.message", async (args) => {
     const s = controller.requireSession();
     const customType = str(args, "customType");
     const renderer = s.extensionRunner.getMessageRenderer(customType);
     if (!renderer) return { lines: null, reason: "no_renderer" };
+    await ensureKeybindingsReady();
     officialTheme();
     const { CustomMessageComponent } = controller.sdk;
     const message = { ...args.message, customType };
@@ -320,6 +336,7 @@ export function register(reg, { controller }) {
     const customType = str(args, "customType");
     const renderer = s.extensionRunner.getEntryRenderer(customType);
     if (!renderer) return { lines: null, reason: "no_renderer" };
+    await ensureKeybindingsReady();
     officialTheme();
     const CustomEntryComponent = await loadCustomEntryComponent();
     const entry = { type: "custom", id: str(args, "id") || "entry", parentId: null, timestamp: new Date().toISOString(), customType, data: args.data };
@@ -407,7 +424,7 @@ export function register(reg, { controller }) {
     return { version, markdown: raw, path: changelogPath, truncated: false };
   });
 
-  reg.add("render.tool", (args) => {
+  reg.add("render.tool", async (args) => {
     const s = controller.requireSession();
     const name = str(args, "toolName");
     // 与 TUI 同一条解析链：扩展用 `registerToolRenderer` 注册的 resolver 先于工具自带的渲染器
@@ -417,6 +434,7 @@ export function register(reg, { controller }) {
     if (!def || (!def.renderCall && !def.renderResult)) {
       return { call: null, result: null, shell: null, hasRenderer: false, label: toolDef?.label ?? null, reason: "no_renderer" };
     }
+    await ensureKeybindingsReady();
     officialTheme();
     const width = Number(args.width) || controller.surfaces.width;
     const id = typeof args.toolCallId === "string" && args.toolCallId ? args.toolCallId : name;
