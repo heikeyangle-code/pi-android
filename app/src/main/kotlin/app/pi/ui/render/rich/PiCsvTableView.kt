@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -102,8 +103,8 @@ fun PiCsvTableView(
 
     val clipboard = LocalClipboardManager.current
     var feedback by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(feedback) {
-        if (feedback != null) {
+    if (feedback != null) {
+        LaunchedEffect(feedback) {
             delay(1500)
             feedback = null
         }
@@ -160,8 +161,11 @@ fun PiCsvTableBody(
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
-    val cellStyle = PiTheme.typography.styles.code.copy(color = palette.text)
-    val headerStyle = cellStyle.copy(fontWeight = FontWeight.SemiBold)
+    val codeBase = PiTheme.typography.styles.code
+    val cellStyle = remember(codeBase, palette.text) { codeBase.copy(color = palette.text) }
+    val numericCellStyle = remember(cellStyle) { cellStyle.copy(textAlign = androidx.compose.ui.text.style.TextAlign.End) }
+    val headerStyle = remember(cellStyle) { cellStyle.copy(fontWeight = FontWeight.SemiBold) }
+    val numericHeaderStyle = remember(headerStyle) { headerStyle.copy(textAlign = androidx.compose.ui.text.style.TextAlign.End) }
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val widths = remember(table, cellStyle, measurer, density) {
@@ -192,23 +196,29 @@ fun PiCsvTableBody(
                 androidx.compose.ui.graphics.lerp(palette.cardBg, palette.text, if (darkTheme) 0.032f else 0.025f)
             }
             Column(Modifier.width(tableWidth)) {
+                val copyCellLabel = tr("复制单元格", "Copy cell")
                 CsvRow(
-                    cells = List(table.columnCount) { table.header.getOrNull(it) ?: "" },
+                    cells = table.header,
+                    columnCount = table.columnCount,
                     widths = widths,
                     numeric = numeric,
                     style = headerStyle,
+                    numericStyle = numericHeaderStyle,
                     background = headerBg,
+                    copyCellLabel = copyCellLabel,
                     onCopyCell = onCopyCell,
                 )
                 CsvDivider()
                 for (rowIndex in 0 until visibleRows) {
-                    val row = table.rows[rowIndex]
                     CsvRow(
-                        cells = List(table.columnCount) { row.getOrNull(it) ?: "" },
+                        cells = table.rows[rowIndex],
+                        columnCount = table.columnCount,
                         widths = widths,
                         numeric = numeric,
                         style = cellStyle,
+                        numericStyle = numericCellStyle,
                         background = if (rowIndex % 2 == 1) zebraBg else Color.Transparent,
+                        copyCellLabel = copyCellLabel,
                         onCopyCell = onCopyCell,
                     )
                 }
@@ -233,22 +243,22 @@ fun PiCsvTableBody(
 @Composable
 private fun CsvRow(
     cells: List<String>,
+    columnCount: Int,
     widths: List<Dp>,
     numeric: BooleanArray,
     style: TextStyle,
+    numericStyle: TextStyle,
     background: Color,
+    copyCellLabel: String,
     onCopyCell: (String) -> Unit,
 ) {
     Row(modifier = Modifier.background(background), verticalAlignment = Alignment.Top) {
-        cells.forEachIndexed { column, cell ->
-            val width = widths.getOrNull(column) ?: return@forEachIndexed
-            Text(
+        for (column in 0 until columnCount) {
+            val width = widths.getOrNull(column) ?: break
+            val cell = cells.getOrNull(column) ?: ""
+            BasicText(
                 text = cell,
-                style = if (column < numeric.size && numeric[column]) {
-                    style.copy(textAlign = androidx.compose.ui.text.style.TextAlign.End)
-                } else {
-                    style
-                },
+                style = if (column < numeric.size && numeric[column]) numericStyle else style,
                 maxLines = PI_CSV_CELL_MAX_LINES,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
@@ -257,7 +267,7 @@ private fun CsvRow(
                         if (cell.isEmpty()) {
                             Modifier
                         } else {
-                            Modifier.clickable(onClickLabel = tr("复制单元格", "Copy cell")) { onCopyCell(cell) }
+                            Modifier.clickable(onClickLabel = copyCellLabel) { onCopyCell(cell) }
                         },
                     )
                     .padding(

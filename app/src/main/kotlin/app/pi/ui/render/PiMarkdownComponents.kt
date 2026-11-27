@@ -10,7 +10,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -23,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Announcement
 import androidx.compose.material.icons.outlined.ErrorOutline
@@ -939,7 +939,7 @@ private fun PiGfmAlertCard(
         }
     }
 
-    val shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 12.dp, bottomEnd = 12.dp)
+    val shape = ALERT_CARD_SHAPE
     val bgAlpha = if (colors.darkTheme) 0.11f else 0.08f
     val borderAlpha = if (colors.darkTheme) 0.28f else 0.22f
 
@@ -1053,7 +1053,7 @@ private fun PiBlockQuote(
             list = typography.list.copy(color = quoteColor, fontSize = qSize, lineHeight = qLine),
         )
     }
-    val shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 10.dp, bottomEnd = 10.dp)
+    val shape = BLOCKQUOTE_CARD_SHAPE
     val quoteDesc = tr("引用内容", "Block quote")
 
     Column(
@@ -1408,7 +1408,7 @@ private fun PiBlockImageSurface(
     loadState: PiImageLoadState,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(12.dp)
+    val shape = BLOCK_IMAGE_SHAPE
     val caption = remember(alt) { meaningfulImageCaption(alt) }
     Box(
         modifier = Modifier
@@ -1505,6 +1505,9 @@ internal fun PiImageViewerTap(link: String?, content: @Composable () -> Unit) {
 
 // ------------------------------------------------------------------ Tables (Proportional + Inline Math!)
 
+private val ALERT_CARD_SHAPE = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 12.dp, bottomEnd = 12.dp)
+private val BLOCKQUOTE_CARD_SHAPE = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 10.dp, bottomEnd = 10.dp)
+private val BLOCK_IMAGE_SHAPE = RoundedCornerShape(12.dp)
 private val TABLE_CARD_SHAPE = RoundedCornerShape(12.dp)
 
 @Composable
@@ -1519,7 +1522,6 @@ private fun PiTable(
     detailsDepth: Int = 0,
 ) {
     val palette = PiTheme.palette
-    val density = LocalDensity.current
     val inlineMath = LocalPiInlineMathTable.current
     val tableSlice = safeSlice(content, node)
     val headerNode = node.findChildOfType(GFMElementTypes.HEADER) ?: return
@@ -1569,10 +1571,7 @@ private fun PiTable(
         ).map { it.dp }
     }
     val totalWidth = colWidthsDp.fold(0.dp) { acc, w -> acc + w }.coerceAtLeast(available)
-    val maxColWidthPx = with(density) {
-        (colWidthsDp.maxOfOrNull { it } ?: 120.dp).roundToPx()
-    }.coerceAtLeast(1)
-    val cellImageLoader = rememberPiGuestImageTransformer(maxColWidthPx)
+    val hasTableImages = remember(tableSlice) { tableSlice.indexOf("![") >= 0 }
 
     val tableShape = TABLE_CARD_SHAPE
     val scrollState = rememberScrollState()
@@ -1587,7 +1586,22 @@ private fun PiTable(
     val rowHairlineColor = palette.borderMuted.copy(alpha = 0.30f)
     val colHairlineColor = palette.borderMuted.copy(alpha = 0.18f)
 
-    CompositionLocalProvider(LocalPiImageTransformer provides cellImageLoader) {
+    // Precompute column-aligned header/body TextStyles once per column instead of copying TextStyle
+    // on every cell during scroll composition.
+    val headerColStyles = remember(typography.table, palette.text, alignments, columns) {
+        val base = typography.table.copy(fontWeight = FontWeight.SemiBold, color = palette.text)
+        List(columns) { col ->
+            alignments.alignAt(col).textAlign?.let { base.copy(textAlign = it) } ?: base
+        }
+    }
+    val bodyColStyles = remember(typography.table, colors.text, alignments, columns) {
+        val base = if (typography.table.color.alpha > 0f) typography.table else typography.table.copy(color = colors.text)
+        List(columns) { col ->
+            alignments.alignAt(col).textAlign?.let { base.copy(textAlign = it) } ?: base
+        }
+    }
+
+    val renderTable: @Composable () -> Unit = {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1649,12 +1663,22 @@ private fun PiTable(
                             }
                         },
                 ) {
-                    // Header row
+                    // Header row (draws its own 0.5dp bottom hairline without an extra divider Box node)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(headerBg),
+                            .background(headerBg)
+                            .drawBehind {
+                                val strokePx = 0.5.dp.toPx()
+                                val y = size.height - strokePx * 0.5f
+                                drawLine(
+                                    color = borderStrokeColor,
+                                    start = Offset(0f, y),
+                                    end = Offset(size.width, y),
+                                    strokeWidth = strokePx,
+                                )
+                            },
                     ) {
                         for (col in 0 until columns) {
                             val colW = colWidthsDp[col]
@@ -1677,11 +1701,7 @@ private fun PiTable(
                                     PiTableCellContent(
                                         content = content,
                                         cell = cell,
-                                        style = typography.table.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = palette.text,
-                                        ),
-                                        align = align,
+                                        style = headerColStyles[col],
                                         colors = colors,
                                         typography = typography,
                                         referenceLinks = referenceLinks,
@@ -1692,28 +1712,31 @@ private fun PiTable(
                         }
                     }
 
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(0.5.dp)
-                            .background(borderStrokeColor),
-                    )
-
-                    // Data rows
+                    // Data rows (draw 0.5dp top hairline via drawBehind, avoiding N-1 extra Box layout nodes)
                     rowCellsList.forEachIndexed { rowIdx, rowCells ->
-                        if (rowIdx > 0) {
-                            Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(0.5.dp)
-                                    .background(rowHairlineColor),
-                            )
+                        val rowBg = if (rowIdx % 2 == 1) zebraBg else Color.Transparent
+                        val rowMod = if (rowIdx > 0) {
+                            Modifier
+                                .fillMaxWidth()
+                                .background(rowBg)
+                                .drawBehind {
+                                    val strokePx = 0.5.dp.toPx()
+                                    val y = strokePx * 0.5f
+                                    drawLine(
+                                        color = rowHairlineColor,
+                                        start = Offset(0f, y),
+                                        end = Offset(size.width, y),
+                                        strokeWidth = strokePx,
+                                    )
+                                }
+                        } else {
+                            Modifier
+                                .fillMaxWidth()
+                                .background(rowBg)
                         }
                         Row(
                             verticalAlignment = Alignment.Top,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(if (rowIdx % 2 == 1) zebraBg else Color.Transparent),
+                            modifier = rowMod,
                         ) {
                             for (col in 0 until columns) {
                                 val colW = colWidthsDp[col]
@@ -1735,8 +1758,7 @@ private fun PiTable(
                                         PiTableCellContent(
                                             content = content,
                                             cell = cell,
-                                            style = typography.table,
-                                            align = align,
+                                            style = bodyColStyles[col],
                                             colors = colors,
                                             typography = typography,
                                             referenceLinks = referenceLinks,
@@ -1751,6 +1773,19 @@ private fun PiTable(
             }
         }
     }
+
+    if (hasTableImages) {
+        val density = LocalDensity.current
+        val maxColWidthPx = with(density) {
+            (colWidthsDp.maxOfOrNull { it } ?: 120.dp).roundToPx()
+        }.coerceAtLeast(1)
+        val cellImageLoader = rememberPiGuestImageTransformer(maxColWidthPx)
+        CompositionLocalProvider(LocalPiImageTransformer provides cellImageLoader) {
+            renderTable()
+        }
+    } else {
+        renderTable()
+    }
 }
 
 @Composable
@@ -1758,13 +1793,11 @@ private fun PiTableCellContent(
     content: String,
     cell: ASTNode,
     style: TextStyle,
-    align: PiTableAlign,
     colors: PiMarkdownColors,
     typography: PiMarkdownTypography,
     referenceLinks: Map<String, String>,
     cellContentWidthDp: Float,
 ) {
-    val textAlign = align.textAlign
     val inlineMath = LocalPiInlineMathTable.current
     val raw = safeSlice(content, cell).trim()
     val isPlain = raw.isEmpty() || (
@@ -1773,14 +1806,8 @@ private fun PiTableCellContent(
             cell.children.all { it.children.isEmpty() }
         )
     if (isPlain) {
-        val fgColor = if (style.color.alpha > 0f) style.color else colors.text
-        val resolvedStyle = when {
-            textAlign != null && style.color.alpha > 0f -> style.copy(textAlign = textAlign)
-            textAlign != null -> style.copy(color = fgColor, textAlign = textAlign)
-            style.color.alpha > 0f -> style
-            else -> style.copy(color = fgColor)
-        }
-        Text(
+        val resolvedStyle = if (style.color.alpha > 0f) style else style.copy(color = colors.text)
+        BasicText(
             text = raw,
             style = resolvedStyle,
             maxLines = TABLE_MAX_LINES,
@@ -1792,7 +1819,7 @@ private fun PiTableCellContent(
     PiInlineMarkdownText(
         content = content,
         node = cell,
-        style = if (textAlign != null) style.copy(textAlign = textAlign) else style,
+        style = style,
         colors = colors,
         typography = typography,
         referenceLinks = referenceLinks,

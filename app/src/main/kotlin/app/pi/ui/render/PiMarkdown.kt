@@ -177,45 +177,47 @@ internal fun PiMarkdownText(
     var retainedDoc by remember { mutableStateOf<ParsedMarkdownDoc?>(null) }
     var parseFailed by remember { mutableStateOf(false) }
 
-    // Conflated channel decouples incoming streaming tokens from the background parse loop:
-    // the worker finishes its current parse uninterrupted and immediately grabs the latest snapshot.
-    val asyncQueue = remember { Channel<MarkdownParseRequest>(Channel.CONFLATED) }
-
-    SideEffect {
-        if (syncParse) {
-            if (syncDoc != null && retainedDoc !== syncDoc) {
+    if (streaming && syncDoc != null) {
+        SideEffect {
+            if (retainedDoc !== syncDoc) {
                 retainedDoc = syncDoc
                 parseFailed = false
-            } else if (syncDoc == null) {
-                parseFailed = true
             }
-        } else {
+        }
+    }
+
+    // Only allocate the conflated Channel and background worker coroutine when this row actually
+    // needs off-main parsing; cached, prewarmed, short, and immediate settled rows pay zero coroutine
+    // or Channel allocation overhead.
+    if (!syncParse) {
+        val asyncQueue = remember { Channel<MarkdownParseRequest>(Channel.CONFLATED) }
+        SideEffect {
             val current = retainedDoc
             if (current == null || current.rawMarkdown != markdown || current.streaming != streaming) {
                 asyncQueue.trySend(MarkdownParseRequest(markdown = markdown, streaming = streaming))
             }
         }
-    }
-
-    LaunchedEffect(asyncQueue) {
-        for (req in asyncQueue) {
-            val current = retainedDoc
-            if (current != null && current.rawMarkdown == req.markdown && current.streaming == req.streaming) {
-                continue
-            }
-            val parsed = withContext(Dispatchers.Default) {
-                prepareAndParseDocument(req.markdown, req.streaming)
-            }
-            if (parsed != null) {
-                retainedDoc = parsed
-                parseFailed = false
-            } else {
-                parseFailed = true
+        LaunchedEffect(asyncQueue) {
+            for (req in asyncQueue) {
+                val current = retainedDoc
+                if (current != null && current.rawMarkdown == req.markdown && current.streaming == req.streaming) {
+                    continue
+                }
+                val parsed = withContext(Dispatchers.Default) {
+                    prepareAndParseDocument(req.markdown, req.streaming)
+                }
+                if (parsed != null) {
+                    retainedDoc = parsed
+                    parseFailed = false
+                } else {
+                    parseFailed = true
+                }
             }
         }
     }
 
     val activeDoc = syncDoc ?: retainedDoc
+    val isFailed = (syncParse && syncDoc == null) || (!syncParse && parseFailed)
     val hasGrid = activeDoc?.hasDisplayGrid == true
     val activeInlineMath = activeDoc?.inlineMath
 
@@ -240,8 +242,10 @@ internal fun PiMarkdownText(
         activeDoc.rawMarkdown == markdown &&
         activeDoc.streaming == streaming
     val onParsed = LocalPiMarkdownParsed.current
-    LaunchedEffect(isCurrentParsed, markdown, streaming, onParsed) {
-        if (onParsed != null && isCurrentParsed) onParsed()
+    if (onParsed != null && isCurrentParsed) {
+        LaunchedEffect(markdown, streaming, onParsed) {
+            onParsed()
+        }
     }
 
     CompositionLocalProvider(
@@ -263,7 +267,7 @@ internal fun PiMarkdownText(
                     modifier = modifier,
                 )
             }
-            parseFailed -> {
+            isFailed -> {
                 Text(
                     text = markdown,
                     style = typography.text,

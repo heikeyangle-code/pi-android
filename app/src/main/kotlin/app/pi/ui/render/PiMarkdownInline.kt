@@ -6,9 +6,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -109,6 +109,7 @@ internal fun normalizeReferenceLabel(raw: String): String =
         .replace(REF_WS_REGEX, " ")
         .lowercase()
 
+private val INLINE_IMAGE_SHAPE = RoundedCornerShape(6.dp)
 private val REF_WS_REGEX = Regex("\\s+")
 private val HTML_HREF_REGEX = Regex("""(?i)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))""")
 private val CODE_SPAN_QUOTE_BREAK_REGEX = Regex("""\r?\n[ ]{0,3}(?:>[ ]?)+""")
@@ -135,10 +136,7 @@ internal fun PiInlineMarkdownText(
 ) {
     val palette = PiTheme.palette
     val inlineMath = LocalPiInlineMathTable.current
-    val imageLoader = LocalPiImageTransformer.current
     val streaming = LocalPiMarkdownStreaming.current
-    val configuration = LocalConfiguration.current
-    val density = LocalDensity.current
 
     val fgColor = if (style.color.alpha > 0f) style.color else colors.text
     val resolvedStyle = if (style.color.alpha > 0f) style else style.copy(color = fgColor)
@@ -148,82 +146,78 @@ internal fun PiInlineMarkdownText(
     val rawSlice = safeSlice(content, node)
     val nodeType = node.type
 
-    // Inline math indices present inside this AST subtree.
-    val neededMathIndices = remember(rawSlice, inlineMath) {
-        if (inlineMath == null || rawSlice.indexOf(inlineMath.markerPrefix) < 0) {
-            emptyList()
-        } else {
-            PiInlineMath.splitSegments(rawSlice, inlineMath.markerPrefix, inlineMath.markerSuffix)
+    // Only allocate math theme/state and launch the math render effect when this slice actually
+    // contains inline math markers; non-math paragraphs and rich table cells pay zero coroutine cost.
+    val hasMathMarker = inlineMath != null && rawSlice.indexOf(inlineMath.markerPrefix) >= 0
+    val readyMathByIndex: Map<Int, PiMathDraw.Ready> = if (!hasMathMarker) {
+        emptyMap()
+    } else {
+        val mathTable = inlineMath!!
+        val neededMathIndices = remember(rawSlice, mathTable) {
+            PiInlineMath.splitSegments(rawSlice, mathTable.markerPrefix, mathTable.markerSuffix)
                 .mapNotNull { (it as? PiInlineMath.Segment.MathRef)?.index }
                 .distinct()
         }
-    }
-
-    val widthPx = remember(configuration.screenWidthDp, density) {
-        with(density) { configuration.screenWidthDp.dp.toPx() }
-            .roundToInt()
-            .coerceIn(240, 1600)
-    }
-    val mathTheme = remember(palette, fgColor) {
-        piMathThemeFor(
-            background = palette.pageBg,
-            foreground = fgColor,
-            accent = palette.accent,
-            muted = palette.muted,
-        )
-    }
-
-    var mathEpoch by remember(rawSlice, mathTheme) { mutableIntStateOf(0) }
-    LaunchedEffect(neededMathIndices, widthPx, mathTheme, inlineMath) {
-        val entries = inlineMath?.entries ?: return@LaunchedEffect
-        if (neededMathIndices.isEmpty()) return@LaunchedEffect
-        var lastBumpMs = android.os.SystemClock.uptimeMillis()
-        var dirty = false
-        for (idx in neededMathIndices) {
-            val entry = entries.getOrNull(idx) ?: continue
-            if (piMathInlineCached(entry.tex, widthPx, mathTheme) != null) continue
-            val rendered = piMathRenderInline(entry.tex, widthPx, mathTheme)
-            if (rendered != null) {
-                dirty = true
-                val now = android.os.SystemClock.uptimeMillis()
-                if (now - lastBumpMs >= INLINE_MATH_BATCH_MS) {
-                    mathEpoch++
-                    lastBumpMs = now
-                    dirty = false
+        val screenWidthDp = LocalConfiguration.current.screenWidthDp
+        val mathDensity = LocalDensity.current
+        val widthPx = remember(screenWidthDp, mathDensity) {
+            with(mathDensity) { screenWidthDp.dp.toPx() }
+                .roundToInt()
+                .coerceIn(240, 1600)
+        }
+        val mathTheme = remember(palette, fgColor) {
+            piMathThemeFor(
+                background = palette.pageBg,
+                foreground = fgColor,
+                accent = palette.accent,
+                muted = palette.muted,
+            )
+        }
+        var mathEpoch by remember(rawSlice, mathTheme) { mutableIntStateOf(0) }
+        if (neededMathIndices.isNotEmpty()) {
+            LaunchedEffect(neededMathIndices, widthPx, mathTheme, mathTable) {
+                val entries = mathTable.entries
+                var lastBumpMs = android.os.SystemClock.uptimeMillis()
+                var dirty = false
+                for (idx in neededMathIndices) {
+                    val entry = entries.getOrNull(idx) ?: continue
+                    if (piMathInlineCached(entry.tex, widthPx, mathTheme) != null) continue
+                    val rendered = piMathRenderInline(entry.tex, widthPx, mathTheme)
+                    if (rendered != null) {
+                        dirty = true
+                        val now = android.os.SystemClock.uptimeMillis()
+                        if (now - lastBumpMs >= INLINE_MATH_BATCH_MS) {
+                            mathEpoch++
+                            lastBumpMs = now
+                            dirty = false
+                        }
+                    }
                 }
+                if (dirty) mathEpoch++
             }
         }
-        if (dirty) mathEpoch++
-    }
-
-    val readyMathByIndex = remember(neededMathIndices, widthPx, mathTheme, inlineMath, mathEpoch) {
-        val entries = inlineMath?.entries
-        if (entries == null || neededMathIndices.isEmpty()) {
-            emptyMap()
-        } else {
-            val map = HashMap<Int, PiMathDraw.Ready>(neededMathIndices.size)
-            for (idx in neededMathIndices) {
-                val entry = entries.getOrNull(idx) ?: continue
-                piMathInlineCached(entry.tex, widthPx, mathTheme)?.let { map[idx] = it }
+        remember(neededMathIndices, widthPx, mathTheme, mathTable, mathEpoch) {
+            if (neededMathIndices.isEmpty()) {
+                emptyMap()
+            } else {
+                val entries = mathTable.entries
+                val map = HashMap<Int, PiMathDraw.Ready>(neededMathIndices.size)
+                for (idx in neededMathIndices) {
+                    val entry = entries.getOrNull(idx) ?: continue
+                    piMathInlineCached(entry.tex, widthPx, mathTheme)?.let { map[idx] = it }
+                }
+                map
             }
-            map
         }
     }
 
-    // Collect inline images inside this subtree using slice-relative offsets for stable caching.
-    val inlineImages = remember(rawSlice, nodeType, referenceLinks) {
-        collectInlineImages(content, node, referenceLinks)
+    // Collect inline images inside this subtree only when CommonMark image syntax `![` is present.
+    val mayHaveImages = rawSlice.indexOf("![") >= 0
+    val inlineImages = remember(rawSlice, nodeType, referenceLinks, mayHaveImages) {
+        if (!mayHaveImages) emptyList() else collectInlineImages(content, node, referenceLinks)
     }
 
     val bodyFontSizeSp = resolvedStyle.fontSize.value.takeIf { it.isFinite() && it > 0f } ?: 16f
-    val inlineCodeFontPx = with(density) {
-        val sz = typography.inlineCode.fontSize.value.takeIf { it.isFinite() && it > 0f } ?: (bodyFontSizeSp * 0.86f)
-        sz.sp.toPx()
-    }
-    val maxInlineWidthSp = remember(configuration.screenWidthDp, density, cellImageMaxWidthDp) {
-        val capDp = cellImageMaxWidthDp ?: (configuration.screenWidthDp - 36).coerceAtLeast(160).toFloat()
-        with(density) { capDp.dp.toSp().value }
-    }
 
     val buildResult = remember(
         rawSlice,
@@ -302,9 +296,24 @@ internal fun PiInlineMarkdownText(
                 }
             }
 
+            val inlineDensity = if (readyMathByIndex.isNotEmpty() || inlineImages.isNotEmpty()) {
+                LocalDensity.current
+            } else {
+                null
+            }
+            val maxInlineWidthSp = if (inlineDensity != null) {
+                val screenWidthDp = LocalConfiguration.current.screenWidthDp
+                remember(screenWidthDp, inlineDensity, cellImageMaxWidthDp) {
+                    val capDp = cellImageMaxWidthDp ?: (screenWidthDp - 36).coerceAtLeast(160).toFloat()
+                    with(inlineDensity) { capDp.dp.toSp().value }
+                }
+            } else {
+                0f
+            }
+
             // 1. Inline MathJax vector slots
             val entries = inlineMath?.entries
-            if (entries != null) {
+            if (entries != null && readyMathByIndex.isNotEmpty()) {
                 for ((idx, ready) in readyMathByIndex) {
                     val entry = entries.getOrNull(idx) ?: continue
                     val metrics = computeInlineMathBoxSp(ready, bodyFontSizeSp, maxInlineWidthSp)
@@ -349,6 +358,9 @@ internal fun PiInlineMarkdownText(
             }
 
             // 2. Inline image slots (3-state: Loading skeleton -> Ready image -> Failure card)
+            if (inlineImages.isNotEmpty()) {
+                val imageLoader = LocalPiImageTransformer.current
+                val density = inlineDensity!!
             for (img in inlineImages) {
                 val mediaKind = piMediaKind(img.url)
                 val loadState = if (mediaKind == null && img.url.isNotBlank()) {
@@ -397,7 +409,7 @@ internal fun PiInlineMarkdownText(
                                     contentScale = readyData.contentScale,
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .clip(RoundedCornerShape(6.dp)),
+                                        .clip(INLINE_IMAGE_SHAPE),
                                 )
                             }
                         }
@@ -405,7 +417,7 @@ internal fun PiInlineMarkdownText(
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .clip(RoundedCornerShape(6.dp))
+                                    .clip(INLINE_IMAGE_SHAPE)
                                     .background(palette.cardBg),
                             )
                         }
@@ -421,11 +433,12 @@ internal fun PiInlineMarkdownText(
                     }
                 }
             }
+            }
             map
         }
 
     if (codePillRanges.isEmpty() && linkUnderlineRanges.isEmpty()) {
-        Text(
+        BasicText(
             text = annotated,
             style = resolvedStyle,
             inlineContent = inlineContent,
@@ -439,7 +452,9 @@ internal fun PiInlineMarkdownText(
         val codeBorder = palette.borderMuted.copy(alpha = if (colors.darkTheme) 0.34f else 0.45f)
         val kbdBorder = palette.borderMuted.copy(alpha = if (colors.darkTheme) 0.72f else 0.78f)
         val linkLineColor = palette.mdLink.copy(alpha = if (colors.darkTheme) 0.44f else 0.38f)
-        Text(
+        val inlineCodeFontSp = typography.inlineCode.fontSize.value.takeIf { it.isFinite() && it > 0f }
+            ?: (bodyFontSizeSp * 0.86f)
+        BasicText(
             text = annotated,
             style = resolvedStyle,
             inlineContent = inlineContent,
@@ -452,6 +467,7 @@ internal fun PiInlineMarkdownText(
 
                 // 1) Optical inline code & <kbd> pills: height hugs glyph metrics instead of bloating with loose lineHeight.
                 if (codePillRanges.isNotEmpty()) {
+                    val inlineCodeFontPx = inlineCodeFontSp.sp.toPx()
                     val codeRadius = CornerRadius(4.5.dp.toPx(), 4.5.dp.toPx())
                     val kbdRadius = CornerRadius(5.dp.toPx(), 5.dp.toPx())
                     val codeStroke = Stroke(width = 0.5.dp.toPx())

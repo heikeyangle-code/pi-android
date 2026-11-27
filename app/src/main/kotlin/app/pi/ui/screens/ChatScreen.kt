@@ -1692,7 +1692,7 @@ internal fun ChatBody(
                         } ?: firstIdx
                         val texts = buildList(4) {
                             fun maybeAdd(idx: Int) {
-                                if (idx !in items.indices) return
+                                if (size >= 4 || idx !in items.indices) return
                                 val single = (items[idx] as? ChatRow.Single)?.item ?: return
                                 val t = when (single) {
                                     is AssistantText -> if (!single.streaming) single.text else null
@@ -1707,9 +1707,10 @@ internal fun ChatBody(
                                     add(t)
                                 }
                             }
-                            for (offset in 1..2) {
+                            for (offset in 1..4) {
                                 maybeAdd(firstIdx - offset)
                                 maybeAdd(lastIdx + offset)
+                                if (size >= 4) break
                             }
                         }
                         if (texts.isNotEmpty()) {
@@ -1884,7 +1885,7 @@ internal fun ChatBody(
                     CompositionLocalProvider(
                         LocalTranscriptRowAnchor provides rowAnchor,
                         LocalPiMarkdownImmediate provides immediateMarkdown,
-                        LocalPiMarkdownParsed provides onMarkdownParsed,
+                        LocalPiMarkdownParsed provides if (markdownParsed.value) null else onMarkdownParsed,
                     ) {
                         when (row) {
                             is ChatRow.Single -> BlockRenderer(
