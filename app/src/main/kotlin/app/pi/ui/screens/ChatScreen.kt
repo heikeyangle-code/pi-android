@@ -23,7 +23,9 @@ import app.pi.ui.extension.ExtensionHubShortcut
 import app.pi.ui.extension.ExtensionWidgetsSheet
 import app.pi.ui.extension.stripAnsiControls
 import app.pi.ui.extension.widgetCaption
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.semantics.semantics
 import app.pi.settings.readBoolean
 import kotlinx.coroutines.withContext
@@ -138,6 +140,7 @@ import app.pi.ui.render.LocalPiMarkdownParsed
 import app.pi.ui.render.RowHeightCache
 import app.pi.ui.render.gapFor
 import app.pi.ui.render.hasPiMarkdownDocCached
+import app.pi.ui.render.prewarmPiMarkdownDoc
 import app.pi.ui.render.piMarkdownParseBudget
 import app.pi.ui.render.rememberedRowHeight
 import app.pi.ui.extension.ExtensionWidgetStack
@@ -1670,6 +1673,53 @@ internal fun ChatBody(
             }
             val onImageClick: (PiImage) -> Unit = remember {
                 { viewedImage = it }
+            }
+            val latestRenderedItems by rememberUpdatedState(renderedItems)
+            LaunchedEffect(listState) {
+                snapshotFlow {
+                    val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+                    listState.firstVisibleItemIndex to (lastVisible ?: listState.firstVisibleItemIndex)
+                }
+                    .distinctUntilChanged()
+                    .collectLatest { (firstIdx, lastIdx) ->
+                        val items = latestRenderedItems
+                        if (items.isEmpty()) return@collectLatest
+                        val texts = buildList(4) {
+                            for (offset in 1..2) {
+                                val up = firstIdx - offset
+                                if (up in items.indices) {
+                                    val single = (items[up] as? ChatRow.Single)?.item
+                                    val t = when (single) {
+                                        is AssistantText -> if (!single.streaming) single.text else null
+                                        is UserMessage -> single.text
+                                        else -> null
+                                    }
+                                    if (!t.isNullOrEmpty() && t.length in 513..65_536 && !hasPiMarkdownDocCached(t)) {
+                                        add(t)
+                                    }
+                                }
+                                val down = lastIdx + offset
+                                if (down in items.indices) {
+                                    val single = (items[down] as? ChatRow.Single)?.item
+                                    val t = when (single) {
+                                        is AssistantText -> if (!single.streaming) single.text else null
+                                        is UserMessage -> single.text
+                                        else -> null
+                                    }
+                                    if (!t.isNullOrEmpty() && t.length in 513..65_536 && !hasPiMarkdownDocCached(t)) {
+                                        add(t)
+                                    }
+                                }
+                            }
+                        }
+                        if (texts.isNotEmpty()) {
+                            withContext(Dispatchers.Default) {
+                                for (t in texts) {
+                                    prewarmPiMarkdownDoc(t)
+                                }
+                            }
+                        }
+                    }
             }
             val listTopInWindowRef = remember { floatArrayOf(0f) }
             val latestFollowing by rememberUpdatedState(following)

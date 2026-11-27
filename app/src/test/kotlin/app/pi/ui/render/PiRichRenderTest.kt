@@ -848,6 +848,22 @@ class PiRichRenderTest {
         assertFalse(emptyDetails.hasBody)
     }
 
+    @Test
+    fun `isPlainTableCellText accepts plain values and rejects inline markup or links`() {
+        assertTrue(isPlainTableCellText("2026-11-27"))
+        assertTrue(isPlainTableCellText("正常 · 12.5 ms (99.9%)"))
+        assertTrue(isPlainTableCellText("方案 A：稳健"))
+        assertFalse(isPlainTableCellText("**加粗**"))
+        assertFalse(isPlainTableCellText("`code`"))
+        assertFalse(isPlainTableCellText("[链接](https://example.com)"))
+        assertFalse(isPlainTableCellText("https://example.com"))
+        assertFalse(isPlainTableCellText("www.example.com"))
+        assertFalse(isPlainTableCellText("user@example.com"))
+        assertFalse(isPlainTableCellText("a &amp; b"))
+        assertFalse(isPlainTableCellText("a <br> b"))
+        assertFalse(isPlainTableCellText("\$x^2\$"))
+    }
+
     private fun parseGfm(markdown: String): ASTNode =
         PiSharedMarkdownParser.buildMarkdownTreeFromString(markdown as CharSequence)
 }

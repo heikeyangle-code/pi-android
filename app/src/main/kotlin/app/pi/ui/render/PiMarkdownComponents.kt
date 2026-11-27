@@ -1497,23 +1497,33 @@ private fun PiTable(
     val inlineMath = LocalPiInlineMathTable.current
     val tableSlice = safeSlice(content, node)
     val headerNode = node.findChildOfType(GFMElementTypes.HEADER) ?: return
-    val rowNodes = node.children.filter { it.type == GFMElementTypes.ROW }
-    val columns = headerNode.children.count { it.type == GFMTokenTypes.CELL }
+    val headerCells = remember(tableSlice) {
+        headerNode.children.filter { it.type == GFMTokenTypes.CELL }
+    }
+    val rowCellsList = remember(tableSlice) {
+        node.children.mapNotNull { child ->
+            if (child.type == GFMElementTypes.ROW) {
+                child.children.filter { it.type == GFMTokenTypes.CELL }
+            } else {
+                null
+            }
+        }
+    }
+    val columns = headerCells.size
     if (columns <= 0) return
 
     val alignments = remember(tableSlice) { piTableAlignments(content, node) }
     val columnDisplayChars = remember(tableSlice, columns, inlineMath) {
         val maxChars = IntArray(columns)
-        fun sampleRow(r: ASTNode) {
-            val cells = r.children.filter { it.type == GFMTokenTypes.CELL }
+        fun sampleCells(cells: List<ASTNode>) {
             for (c in 0 until minOf(columns, cells.size)) {
                 val w = estimateTableCellDisplayChars(safeSlice(content, cells[c]), inlineMath)
                 if (w > maxChars[c]) maxChars[c] = w
             }
         }
-        sampleRow(headerNode)
-        val sampleLimit = minOf(rowNodes.size, 12)
-        for (i in 0 until sampleLimit) sampleRow(rowNodes[i])
+        sampleCells(headerCells)
+        val sampleLimit = minOf(rowCellsList.size, 12)
+        for (i in 0 until sampleLimit) sampleCells(rowCellsList[i])
         maxChars.toList()
     }
 
@@ -1620,7 +1630,6 @@ private fun PiTable(
                             .fillMaxWidth()
                             .background(headerBg),
                     ) {
-                        val headerCells = headerNode.children.filter { it.type == GFMTokenTypes.CELL }
                         for (col in 0 until columns) {
                             val colW = colWidthsDp[col]
                             val cell = headerCells.getOrNull(col)
@@ -1665,7 +1674,7 @@ private fun PiTable(
                     )
 
                     // Data rows
-                    rowNodes.forEachIndexed { rowIdx, rowNode ->
+                    rowCellsList.forEachIndexed { rowIdx, rowCells ->
                         if (rowIdx > 0) {
                             Box(
                                 Modifier
@@ -1674,7 +1683,6 @@ private fun PiTable(
                                     .background(rowHairlineColor),
                             )
                         }
-                        val rowCells = rowNode.children.filter { it.type == GFMTokenTypes.CELL }
                         Row(
                             verticalAlignment = Alignment.Top,
                             modifier = Modifier
@@ -1731,6 +1739,30 @@ private fun PiTableCellContent(
     cellContentWidthDp: Float,
 ) {
     val textAlign = align.textAlign
+    val inlineMath = LocalPiInlineMathTable.current
+    val raw = safeSlice(content, cell).trim()
+    val isPlain = raw.isEmpty() || (
+        (inlineMath == null || raw.indexOf(inlineMath.markerPrefix) < 0) &&
+            isPlainTableCellText(raw) &&
+            cell.children.all { it.children.isEmpty() }
+        )
+    if (isPlain) {
+        val fgColor = if (style.color.alpha > 0f) style.color else colors.text
+        val resolvedStyle = when {
+            textAlign != null && style.color.alpha > 0f -> style.copy(textAlign = textAlign)
+            textAlign != null -> style.copy(color = fgColor, textAlign = textAlign)
+            style.color.alpha > 0f -> style
+            else -> style.copy(color = fgColor)
+        }
+        Text(
+            text = raw,
+            style = resolvedStyle,
+            maxLines = TABLE_MAX_LINES,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        return
+    }
     PiInlineMarkdownText(
         content = content,
         node = cell,
@@ -1744,6 +1776,26 @@ private fun PiTableCellContent(
         cellImageMaxWidthDp = cellContentWidthDp,
         modifier = Modifier.fillMaxWidth(),
     )
+}
+
+/**
+ * Conservative check for table cells that contain only plain text (no inline Markdown syntax,
+ * HTML tags/entities, escapes, math markers, line breaks, or autolink candidates), allowing
+ * [PiTableCellContent] to render a lightweight `Text` without per-cell `AnnotatedString` builds.
+ */
+internal fun isPlainTableCellText(trimmed: String): Boolean {
+    for (i in trimmed.indices) {
+        when (trimmed[i]) {
+            '*', '_', '`', '[', ']', '~', '\\', '<', '>', '&', '!', '$', '@', '\n', '\r' -> return false
+        }
+    }
+    if (trimmed.contains("http://", ignoreCase = true) ||
+        trimmed.contains("https://", ignoreCase = true) ||
+        trimmed.contains("www.", ignoreCase = true)
+    ) {
+        return false
+    }
+    return true
 }
 
 private fun List<PiTableAlign>.alignAt(column: Int): PiTableAlign =

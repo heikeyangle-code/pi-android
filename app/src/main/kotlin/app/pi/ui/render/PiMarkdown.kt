@@ -100,6 +100,17 @@ private object PiMarkdownDocCache {
 
 internal fun hasPiMarkdownDocCached(markdown: String): Boolean = PiMarkdownDocCache.contains(markdown)
 
+/**
+ * Pre-parses a settled Markdown message on a background thread (`Dispatchers.Default`) into
+ * [PiMarkdownDocCache] before it enters the viewport, eliminating frame-0 main-thread parse spikes
+ * when scrolling back over long messages or large tables.
+ */
+internal fun prewarmPiMarkdownDoc(markdown: String) {
+    if (markdown.length <= 512 || markdown.length > 65_536) return
+    if (PiMarkdownDocCache.contains(markdown)) return
+    prepareAndParseDocument(markdown, streaming = false)
+}
+
 internal fun clearPiMarkdownDocCache() {
     PiMarkdownDocCache.clear()
 }
