@@ -634,10 +634,15 @@ internal fun Modifier.toggleContent(
     enabled: Boolean = true,
 ): Modifier {
     val anchor = LocalTranscriptRowAnchor.current
+    val nestedInRow = LocalInActivitySpine.current
     return then(
         if (enabled) {
             Modifier.clickable(onClickLabel = if (expanded) tr("收起", "Collapse") else tr("展开", "Expand")) {
-                anchor?.onBeforeToggle(expanding = !expanded)
+                if (nestedInRow) {
+                    anchor?.onBeforeNestedToggle()
+                } else {
+                    anchor?.onBeforeToggle(expanding = !expanded)
+                }
                 onToggle()
             }
         } else {
