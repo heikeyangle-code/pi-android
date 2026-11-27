@@ -268,6 +268,11 @@ private fun PiMarkdownDetailsBlock(
             root.children.firstOrNull { it.type == MarkdownElementTypes.PARAGRAPH } ?: root
         }
     }
+    val leadingMarkdownRoot = remember(details.leadingMarkdown) {
+        details.leadingMarkdown?.let { md ->
+            PiSharedMarkdownParser.buildMarkdownTreeFromString(md as CharSequence)
+        }
+    }
     val inlineMarkdownBodyRoot = remember(details.bodyMarkdown) {
         details.bodyMarkdown?.let { md ->
             PiSharedMarkdownParser.buildMarkdownTreeFromString(md as CharSequence)
@@ -303,7 +308,26 @@ private fun PiMarkdownDetailsBlock(
         bodyContent = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 var renderedAny = false
+                if (leadingMarkdownRoot != null && !details.leadingMarkdown.isNullOrBlank()) {
+                    PiMarkdownBlockSequence(
+                        content = details.leadingMarkdown,
+                        children = leadingMarkdownRoot.children,
+                        colors = colors,
+                        typography = typography,
+                        spacing = spacing,
+                        referenceLinks = referenceLinks,
+                        eolAsNewLine = eolAsNewLine,
+                        blockGap = spacing.block,
+                        listDepth = listDepth,
+                        quoteDepth = quoteDepth,
+                        stripQuotePrefix = false,
+                        detailsDepth = detailsDepth + 1,
+                        leadingRendered = renderedAny,
+                    )
+                    renderedAny = true
+                }
                 if (!details.leadingHtml.isNullOrBlank()) {
+                    if (renderedAny) Spacer(Modifier.height(spacing.block))
                     PiHtmlTextBlock(text = details.leadingHtml)
                     renderedAny = true
                 }
@@ -1481,6 +1505,8 @@ internal fun PiImageViewerTap(link: String?, content: @Composable () -> Unit) {
 
 // ------------------------------------------------------------------ Tables (Proportional + Inline Math!)
 
+private val TABLE_CARD_SHAPE = RoundedCornerShape(12.dp)
+
 @Composable
 private fun PiTable(
     content: String,
@@ -1497,10 +1523,10 @@ private fun PiTable(
     val inlineMath = LocalPiInlineMathTable.current
     val tableSlice = safeSlice(content, node)
     val headerNode = node.findChildOfType(GFMElementTypes.HEADER) ?: return
-    val headerCells = remember(tableSlice) {
+    val headerCells = remember(node) {
         headerNode.children.filter { it.type == GFMTokenTypes.CELL }
     }
-    val rowCellsList = remember(tableSlice) {
+    val rowCellsList = remember(node) {
         node.children.mapNotNull { child ->
             if (child.type == GFMElementTypes.ROW) {
                 child.children.filter { it.type == GFMTokenTypes.CELL }
@@ -1512,8 +1538,8 @@ private fun PiTable(
     val columns = headerCells.size
     if (columns <= 0) return
 
-    val alignments = remember(tableSlice) { piTableAlignments(content, node) }
-    val columnDisplayChars = remember(tableSlice, columns, inlineMath) {
+    val alignments = remember(node, tableSlice) { piTableAlignments(content, node) }
+    val columnDisplayChars = remember(node, columns, inlineMath) {
         val maxChars = IntArray(columns)
         fun sampleCells(cells: List<ASTNode>) {
             for (c in 0 until minOf(columns, cells.size)) {
@@ -1548,7 +1574,7 @@ private fun PiTable(
     }.coerceAtLeast(1)
     val cellImageLoader = rememberPiGuestImageTransformer(maxColWidthPx)
 
-    val tableShape = RoundedCornerShape(12.dp)
+    val tableShape = TABLE_CARD_SHAPE
     val scrollState = rememberScrollState()
     val surfaceBg = colors.tableBackground
     val headerBg = remember(palette, colors.darkTheme) {

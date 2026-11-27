@@ -105,8 +105,11 @@ internal fun hasPiMarkdownDocCached(markdown: String): Boolean = PiMarkdownDocCa
  * [PiMarkdownDocCache] before it enters the viewport, eliminating frame-0 main-thread parse spikes
  * when scrolling back over long messages or large tables.
  */
+internal const val PI_MARKDOWN_PREWARM_MIN_CHARS = 513
+internal const val PI_MARKDOWN_PREWARM_MAX_CHARS = 65_536
+
 internal fun prewarmPiMarkdownDoc(markdown: String) {
-    if (markdown.length <= 512 || markdown.length > 65_536) return
+    if (markdown.length < PI_MARKDOWN_PREWARM_MIN_CHARS || markdown.length > PI_MARKDOWN_PREWARM_MAX_CHARS) return
     if (PiMarkdownDocCache.contains(markdown)) return
     prepareAndParseDocument(markdown, streaming = false)
 }

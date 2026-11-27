@@ -259,14 +259,17 @@ internal data class TailObservation(
  *  - `80dp` 双层纸面留白框承载自定义 Pi 形象徽标，在深/浅主题下立体克制；
  *  - 一行按本地时段自然问候（工作区、模型与引擎状态均由顶栏/底栏承载，零冗余动画与重组）。
  */
+private val WELCOME_EMBLEM_OUTER_SHAPE = RoundedCornerShape(24.dp)
+private val WELCOME_EMBLEM_INNER_SHAPE = RoundedCornerShape(21.dp)
+
 @Composable
 internal fun ChatEmptyWelcome(
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
     val isDark = PiTheme.isDark
-    val emblemOuterShape = RoundedCornerShape(24.dp)
-    val emblemInnerShape = RoundedCornerShape(21.dp)
+    val emblemOuterShape = WELCOME_EMBLEM_OUTER_SHAPE
+    val emblemInnerShape = WELCOME_EMBLEM_INNER_SHAPE
     val cardBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerLow else palette.cardBg
     val hairline = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.80f)
     val hour = remember { java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY) }

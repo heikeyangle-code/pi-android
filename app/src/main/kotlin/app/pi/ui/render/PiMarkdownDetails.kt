@@ -70,9 +70,11 @@ internal sealed interface PiGroupedBlock {
         val bodyMarkdown: String?,
         val trailingHtml: String?,
         override val stableKey: Int,
+        val leadingMarkdown: String? = null,
     ) : PiGroupedBlock {
         val hasBody: Boolean
-            get() = !leadingHtml.isNullOrBlank() ||
+            get() = !leadingMarkdown.isNullOrBlank() ||
+                !leadingHtml.isNullOrBlank() ||
                 bodyNodes.isNotEmpty() ||
                 !bodyMarkdown.isNullOrBlank() ||
                 !trailingHtml.isNullOrBlank()
@@ -91,8 +93,24 @@ private val BLOCK_HTML_TAG_REGEX = Regex(
 private val INERT_WRAPPER_TAGS = setOf(
     "div", "span", "p", "section", "article", "aside",
     "header", "footer", "main", "nav", "center",
-    "figure", "figcaption", "blockquote", "details", "summary", "br",
+    "figure", "figcaption", "blockquote", "br",
 )
+
+// Closing `</details>` / `</summary>` with no surrounding content are stray wrappers;
+// opening `<details>` / `<summary>` are NEVER inert because they open a collapsible card.
+private val INERT_CLOSING_ONLY_TAGS = setOf("details", "summary")
+
+private val SUMMARY_STRONG_OPEN_REGEX = Regex("""<\s*(?:strong|b)\b[^>]*>""", RegexOption.IGNORE_CASE)
+private val SUMMARY_STRONG_CLOSE_REGEX = Regex("""</\s*(?:strong|b)\s*>""", RegexOption.IGNORE_CASE)
+private val SUMMARY_EM_OPEN_REGEX = Regex("""<\s*(?:em|i)\b[^>]*>""", RegexOption.IGNORE_CASE)
+private val SUMMARY_EM_CLOSE_REGEX = Regex("""</\s*(?:em|i)\s*>""", RegexOption.IGNORE_CASE)
+private val SUMMARY_CODE_OPEN_REGEX = Regex("""<\s*code\b[^>]*>""", RegexOption.IGNORE_CASE)
+private val SUMMARY_CODE_CLOSE_REGEX = Regex("""</\s*code\s*>""", RegexOption.IGNORE_CASE)
+private val SUMMARY_STRIP_TAG_REGEX = Regex("""<[^>]+>""")
+private val SUMMARY_WHITESPACE_REGEX = Regex("""\s+""")
+
+private val DETAILS_CARD_SHAPE = RoundedCornerShape(12.dp)
+private val DETAILS_CHEVRON_SHAPE = RoundedCornerShape(6.dp)
 
 private val LEADING_DISCLOSURE_GLYPHS = setOf(
     '▶', '▸', '►', '▷', '▻', '▼', '▾', '▽', '❯', '›', '»', '‣',
@@ -138,8 +156,10 @@ internal fun isInertHtmlWrapperBlock(raw: String): Boolean {
     var sawTag = false
     for (match in HTML_TAG_TOKEN_REGEX.findAll(cleaned)) {
         if (cleaned.substring(pos, match.range.first).isNotBlank()) return false
+        val isClosing = match.groupValues[1].isNotEmpty()
         val tagName = match.groupValues[2].lowercase()
-        if (tagName !in INERT_WRAPPER_TAGS) return false
+        val allowed = tagName in INERT_WRAPPER_TAGS || (isClosing && tagName in INERT_CLOSING_ONLY_TAGS)
+        if (!allowed) return false
         sawTag = true
         pos = match.range.last + 1
     }
@@ -198,92 +218,91 @@ internal fun groupMarkdownBlocks(
             nextIndex = i + 1
         }
 
-        if (rawHtml.isEmpty() || isInertHtmlWrapperBlock(rawHtml)) {
+        if (rawHtml.isEmpty()) {
             i = nextIndex
             continue
         }
 
         val tags = DETAILS_TAG_REGEX.findAll(rawHtml).toList()
         if (tags.isEmpty()) {
-            if (currentNode != null) {
-                out.add(PiGroupedBlock.Single(currentNode, stableKey = baseOffset))
-            } else {
-                out.add(PiGroupedBlock.RawHtml(rawHtml, stableKey = baseOffset))
+            if (!isInertHtmlWrapperBlock(rawHtml)) {
+                if (currentNode != null) {
+                    out.add(PiGroupedBlock.Single(currentNode, stableKey = baseOffset))
+                } else {
+                    out.add(PiGroupedBlock.RawHtml(rawHtml, stableKey = baseOffset))
+                }
             }
             i = nextIndex
             continue
         }
 
-        val openCount = tags.count { it.groupValues[1].isEmpty() }
-        val closeCount = tags.count { it.groupValues[1].isNotEmpty() }
-        val netDelta = openCount - closeCount
-
-        // Balanced single-block `<details>...</details>` (including multiple back-to-back blocks
-        // with no blank line between them): peel off the first top-level `<details>...</details>`
-        // pair so plain Markdown bodies render via native Markdown instead of being flattened by
-        // jsoup, and feed any trailing `<details>` into the next iteration via `pendingHtml`.
-        if (netDelta == 0 && openCount >= 1 && closeCount == openCount) {
-            val firstOpenIdx = tags.indexOfFirst { it.groupValues[1].isEmpty() }
-            var matchedCloseIdx = -1
-            if (firstOpenIdx >= 0) {
-                var depth = 0
-                for (tIdx in firstOpenIdx until tags.size) {
-                    if (tags[tIdx].groupValues[1].isEmpty()) {
-                        depth++
-                    } else {
-                        depth--
-                        if (depth == 0) {
-                            matchedCloseIdx = tIdx
-                            break
-                        }
+        val firstOpenIdx = tags.indexOfFirst { it.groupValues[1].isEmpty() }
+        var matchedCloseIdx = -1
+        var unclosedDepth = 0
+        if (firstOpenIdx >= 0) {
+            var depth = 0
+            for (tIdx in firstOpenIdx until tags.size) {
+                if (tags[tIdx].groupValues[1].isEmpty()) {
+                    depth++
+                } else {
+                    depth--
+                    if (depth == 0) {
+                        matchedCloseIdx = tIdx
+                        break
                     }
                 }
             }
-            if (firstOpenIdx >= 0 && matchedCloseIdx > firstOpenIdx) {
-                val openTag = tags[firstOpenIdx]
-                val closeTag = tags[matchedCloseIdx]
-                val before = rawHtml.substring(0, openTag.range.first).trim()
-                val inner = rawHtml.substring(openTag.range.last + 1, closeTag.range.first)
-                val after = rawHtml.substring(closeTag.range.last + 1).trim()
-                val parsedInner = parseDetailsHeaderAndRest(openTag.value, inner)
-                val bodyCandidate = parsedInner.rest.trim()
-                val hasNestedDetailsInInner = matchedCloseIdx > firstOpenIdx + 1
-                val useNativeMarkdown = !hasNestedDetailsInInner &&
-                    (bodyCandidate.isEmpty() || !BLOCK_HTML_TAG_REGEX.containsMatchIn(bodyCandidate))
+            unclosedDepth = depth
+        }
 
-                if (useNativeMarkdown || after.isNotEmpty()) {
-                    if (before.isNotEmpty() && !isInertHtmlWrapperBlock(before)) {
-                        out.add(PiGroupedBlock.RawHtml(before, stableKey = baseOffset))
-                    }
-                    if (useNativeMarkdown) {
-                        out.add(
-                            PiGroupedBlock.Details(
-                                open = parsedInner.open,
-                                summary = parsedInner.summary,
-                                leadingHtml = null,
-                                bodyNodes = emptyList(),
-                                bodyMarkdown = bodyCandidate.ifEmpty { null },
-                                trailingHtml = null,
-                                stableKey = baseOffset + openTag.range.first,
-                            ),
-                        )
-                    } else {
-                        val detailsSlice = rawHtml.substring(openTag.range.first, closeTag.range.last + 1).trim()
-                        if (detailsSlice.isNotEmpty()) {
-                            out.add(PiGroupedBlock.RawHtml(detailsSlice, stableKey = baseOffset + openTag.range.first))
-                        }
-                    }
-                    if (after.isNotEmpty() && !isInertHtmlWrapperBlock(after)) {
-                        if (DETAILS_TAG_REGEX.containsMatchIn(after)) {
-                            pendingHtml = after
-                            pendingOffset = baseOffset + closeTag.range.last + 1
-                        } else {
-                            out.add(PiGroupedBlock.RawHtml(after, stableKey = baseOffset + closeTag.range.last + 1))
-                        }
-                    }
-                    i = nextIndex
-                    continue
+        // First top-level `<details>...</details>` closes within this HTML block (including
+        // consecutive single-block `<details>` OR a closed `<details>` immediately followed by an
+        // unclosed multi-block `<details>` without a blank line): peel off the closed pair and
+        // feed any remaining trailing HTML into the next loop iteration via `pendingHtml`.
+        if (firstOpenIdx >= 0 && matchedCloseIdx > firstOpenIdx) {
+            val openTag = tags[firstOpenIdx]
+            val closeTag = tags[matchedCloseIdx]
+            val before = rawHtml.substring(0, openTag.range.first).trim()
+            val inner = rawHtml.substring(openTag.range.last + 1, closeTag.range.first)
+            val after = rawHtml.substring(closeTag.range.last + 1).trim()
+            val parsedInner = parseDetailsHeaderAndRest(openTag.value, inner)
+            val bodyCandidate = parsedInner.rest.trim()
+            val hasNestedDetailsInInner = matchedCloseIdx > firstOpenIdx + 1
+            val useNativeMarkdown = !hasNestedDetailsInInner &&
+                (bodyCandidate.isEmpty() || !BLOCK_HTML_TAG_REGEX.containsMatchIn(bodyCandidate))
+
+            if (useNativeMarkdown || after.isNotEmpty() || before.isNotEmpty()) {
+                if (before.isNotEmpty() && !isInertHtmlWrapperBlock(before)) {
+                    out.add(PiGroupedBlock.RawHtml(before, stableKey = baseOffset))
                 }
+                if (useNativeMarkdown) {
+                    out.add(
+                        PiGroupedBlock.Details(
+                            open = parsedInner.open,
+                            summary = parsedInner.summary,
+                            leadingHtml = null,
+                            bodyNodes = emptyList(),
+                            bodyMarkdown = bodyCandidate.ifEmpty { null },
+                            trailingHtml = null,
+                            stableKey = baseOffset + openTag.range.first,
+                        ),
+                    )
+                } else {
+                    val detailsSlice = rawHtml.substring(openTag.range.first, closeTag.range.last + 1).trim()
+                    if (detailsSlice.isNotEmpty()) {
+                        out.add(PiGroupedBlock.RawHtml(detailsSlice, stableKey = baseOffset + openTag.range.first))
+                    }
+                }
+                if (after.isNotEmpty() && !isInertHtmlWrapperBlock(after)) {
+                    if (DETAILS_TAG_REGEX.containsMatchIn(after)) {
+                        pendingHtml = after
+                        pendingOffset = baseOffset + closeTag.range.last + 1
+                    } else {
+                        out.add(PiGroupedBlock.RawHtml(after, stableKey = baseOffset + closeTag.range.last + 1))
+                    }
+                }
+                i = nextIndex
+                continue
             }
             if (currentNode != null) {
                 out.add(PiGroupedBlock.Single(currentNode, stableKey = baseOffset))
@@ -295,17 +314,8 @@ internal fun groupMarkdownBlocks(
         }
 
         // Unclosed `<details>` opening block (split from its body & `</details>` by blank lines):
-        if (netDelta > 0) {
-            val firstOpen = tags.firstOrNull { it.groupValues[1].isEmpty() }
-            if (firstOpen == null) {
-                if (currentNode != null) {
-                    out.add(PiGroupedBlock.Single(currentNode, stableKey = baseOffset))
-                } else {
-                    out.add(PiGroupedBlock.RawHtml(rawHtml, stableKey = baseOffset))
-                }
-                i = nextIndex
-                continue
-            }
+        if (firstOpenIdx >= 0 && unclosedDepth > 0) {
+            val firstOpen = tags[firstOpenIdx]
             val before = rawHtml.substring(0, firstOpen.range.first).trim()
             if (before.isNotEmpty() && !isInertHtmlWrapperBlock(before)) {
                 out.add(PiGroupedBlock.RawHtml(before, stableKey = baseOffset))
@@ -314,20 +324,22 @@ internal fun groupMarkdownBlocks(
             val afterOpenTag = rawHtml.substring(firstOpen.range.last + 1)
             val header = parseDetailsHeaderAndRest(firstOpen.value, afterOpenTag)
             var summary = header.summary
-            val leadingHtml = header.rest.trim().takeIf { it.isNotEmpty() && !isInertHtmlWrapperBlock(it) }
+            val leadCandidate = header.rest.trim().takeIf { it.isNotEmpty() && !isInertHtmlWrapperBlock(it) }
+            val leadingMarkdown = leadCandidate?.takeIf { !HTML_TAG_TOKEN_REGEX.containsMatchIn(it) }
+            val leadingHtml = if (leadingMarkdown == null) leadCandidate else null
             val bodyNodes = ArrayList<ASTNode>()
             var trailingHtml: String? = null
             var afterCloseHtml: String? = null
             var afterCloseOffset = baseOffset + rawHtml.length
 
-            var depth = netDelta
+            var depth = unclosedDepth
             var j = nextIndex
             while (j < visible.size && depth > 0) {
                 val sibling = visible[j]
                 if (sibling.type == MarkdownElementTypes.HTML_BLOCK) {
                     val sibHtml = extractHtmlBlockText(content, sibling, stripQuotePrefix)
                     // Standalone `<summary>...</summary>` block right after `<details>` + blank line.
-                    if (summary == null && leadingHtml == null && bodyNodes.isEmpty()) {
+                    if (summary == null && leadingHtml == null && leadingMarkdown == null && bodyNodes.isEmpty()) {
                         val standaloneSummary = SUMMARY_BLOCK_REGEX.matchEntire(sibHtml.trim())
                         if (standaloneSummary != null) {
                             summary = decodeSummaryText(standaloneSummary.groupValues[1])
@@ -385,6 +397,7 @@ internal fun groupMarkdownBlocks(
                     bodyMarkdown = null,
                     trailingHtml = trailingHtml,
                     stableKey = baseOffset + firstOpen.range.first,
+                    leadingMarkdown = leadingMarkdown,
                 ),
             )
             if (afterCloseHtml != null) {
@@ -430,20 +443,20 @@ private fun decodeSummaryText(rawInner: String): String {
     val noComments = PiHtml.stripHtmlComments(rawInner)
     // Convert common inline HTML emphasis tags to Markdown equivalents so summary stays rich & crisp.
     val mdFriendly = noComments
-        .replace(Regex("""<\s*(?:strong|b)\b[^>]*>""", RegexOption.IGNORE_CASE), "**")
-        .replace(Regex("""</\s*(?:strong|b)\s*>""", RegexOption.IGNORE_CASE), "**")
-        .replace(Regex("""<\s*(?:em|i)\b[^>]*>""", RegexOption.IGNORE_CASE), "*")
-        .replace(Regex("""</\s*(?:em|i)\s*>""", RegexOption.IGNORE_CASE), "*")
-        .replace(Regex("""<\s*code\b[^>]*>""", RegexOption.IGNORE_CASE), "`")
-        .replace(Regex("""</\s*code\s*>""", RegexOption.IGNORE_CASE), "`")
-        .replace(Regex("""<[^>]+>"""), "")
+        .replace(SUMMARY_STRONG_OPEN_REGEX, "**")
+        .replace(SUMMARY_STRONG_CLOSE_REGEX, "**")
+        .replace(SUMMARY_EM_OPEN_REGEX, "*")
+        .replace(SUMMARY_EM_CLOSE_REGEX, "*")
+        .replace(SUMMARY_CODE_OPEN_REGEX, "`")
+        .replace(SUMMARY_CODE_CLOSE_REGEX, "`")
+        .replace(SUMMARY_STRIP_TAG_REGEX, "")
         .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&#39;", "'")
         .replace("&nbsp;", " ")
-        .replace(Regex("""\s+"""), " ")
+        .replace(SUMMARY_WHITESPACE_REGEX, " ")
         .trim()
     return stripLeadingDisclosurePrefix(mdFriendly)
 }
@@ -485,8 +498,8 @@ internal fun PiDetailsCardShell(
     val darkTheme = PiContrast.luminance(palette.pageBg) < 0.5
     val haptic = LocalHapticFeedback.current
     val rowAnchor = LocalTranscriptRowAnchor.current
-    val shape = RoundedCornerShape(12.dp)
-    val chevronShape = RoundedCornerShape(6.dp)
+    val shape = DETAILS_CARD_SHAPE
+    val chevronShape = DETAILS_CHEVRON_SHAPE
 
     var expanded by rememberSaveable(saveKey) { mutableStateOf(initialOpen) }
 

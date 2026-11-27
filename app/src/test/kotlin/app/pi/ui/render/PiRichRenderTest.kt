@@ -18,6 +18,7 @@ import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -862,6 +863,73 @@ class PiRichRenderTest {
         assertFalse(isPlainTableCellText("a &amp; b"))
         assertFalse(isPlainTableCellText("a <br> b"))
         assertFalse(isPlainTableCellText("\$x^2\$"))
+    }
+
+    @Test
+    fun `groupMarkdownBlocks never swallows opening details tags and handles mixed consecutive or markdown-lead details`() {
+        assertFalse(isInertHtmlWrapperBlock("<details>"))
+        assertFalse(isInertHtmlWrapperBlock("<details open>"))
+        assertFalse(isInertHtmlWrapperBlock("<summary>标题</summary>"))
+        assertTrue(isInertHtmlWrapperBlock("</details>"))
+        assertTrue(isInertHtmlWrapperBlock("</summary>"))
+
+        // Closed single-block `<details>` immediately followed (no blank line) by unclosed multi-block `<details>`
+        val mixedConsecutive = """
+            <details><summary>单块 A</summary>正文 A</details>
+            <details><summary>多块 B</summary>
+
+            - B1
+            - B2
+
+            </details>
+        """.trimIndent()
+        val mixedGrouped = groupMarkdownBlocks(mixedConsecutive, parseGfm(mixedConsecutive).children)
+        assertEquals("Expected 2 Details blocks, got $mixedGrouped", 2, mixedGrouped.size)
+        val first = mixedGrouped[0] as PiGroupedBlock.Details
+        val second = mixedGrouped[1] as PiGroupedBlock.Details
+        assertEquals("单块 A", first.summary)
+        assertEquals("正文 A", first.bodyMarkdown)
+        assertEquals("多块 B", second.summary)
+        assertEquals(1, second.bodyNodes.size)
+        assertEquals(MarkdownElementTypes.UNORDERED_LIST, second.bodyNodes[0].type)
+
+        // Consecutive multi-block `<details>` where second has blank line before `<summary>`
+        val blankSummaryAfterClose = """
+            <details>
+            <summary>第一段</summary>
+
+            - a1
+
+            </details>
+            <details>
+
+            <summary>第二段</summary>
+
+            - b1
+
+            </details>
+        """.trimIndent()
+        val afterCloseGrouped = groupMarkdownBlocks(blankSummaryAfterClose, parseGfm(blankSummaryAfterClose).children)
+        assertEquals("Expected 2 Details blocks, got $afterCloseGrouped", 2, afterCloseGrouped.size)
+        assertEquals("第一段", (afterCloseGrouped[0] as PiGroupedBlock.Details).summary)
+        assertEquals("第二段", (afterCloseGrouped[1] as PiGroupedBlock.Details).summary)
+        assertEquals(1, (afterCloseGrouped[1] as PiGroupedBlock.Details).bodyNodes.size)
+
+        // Plain Markdown lead right after `<summary>` (no blank line before lead, blank line before list)
+        val mdLead = """
+            <details>
+            <summary>导语测试</summary>
+            **加粗**首段
+
+            - 列表项
+            </details>
+        """.trimIndent()
+        val mdLeadGrouped = groupMarkdownBlocks(mdLead, parseGfm(mdLead).children)
+        assertEquals(1, mdLeadGrouped.size)
+        val leadDetails = mdLeadGrouped[0] as PiGroupedBlock.Details
+        assertEquals("**加粗**首段", leadDetails.leadingMarkdown)
+        assertNull(leadDetails.leadingHtml)
+        assertEquals(1, leadDetails.bodyNodes.size)
     }
 
     private fun parseGfm(markdown: String): ASTNode =

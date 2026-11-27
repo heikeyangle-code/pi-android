@@ -140,7 +140,10 @@ import app.pi.ui.render.LocalPiMarkdownParsed
 import app.pi.ui.render.RowHeightCache
 import app.pi.ui.render.gapFor
 import app.pi.ui.render.hasPiMarkdownDocCached
+import app.pi.ui.render.PI_MARKDOWN_PREWARM_MAX_CHARS
+import app.pi.ui.render.PI_MARKDOWN_PREWARM_MIN_CHARS
 import app.pi.ui.render.prewarmPiMarkdownDoc
+import kotlinx.coroutines.ensureActive
 import app.pi.ui.render.piMarkdownParseBudget
 import app.pi.ui.render.rememberedRowHeight
 import app.pi.ui.extension.ExtensionWidgetStack
@@ -1676,45 +1679,43 @@ internal fun ChatBody(
             }
             val latestRenderedItems by rememberUpdatedState(renderedItems)
             LaunchedEffect(listState) {
-                snapshotFlow {
-                    val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
-                    listState.firstVisibleItemIndex to (lastVisible ?: listState.firstVisibleItemIndex)
-                }
+                // Observe only `firstVisibleItemIndex` (changes strictly on item-boundary crossings,
+                // NOT every pixel frame like `layoutInfo`), and read `lastVisible` without snapshot
+                // subscription so scrolling pays zero 60/120 Hz flow wakeup overhead.
+                snapshotFlow { listState.firstVisibleItemIndex }
                     .distinctUntilChanged()
-                    .collectLatest { (firstIdx, lastIdx) ->
+                    .collectLatest { firstIdx ->
                         val items = latestRenderedItems
                         if (items.isEmpty()) return@collectLatest
+                        val lastIdx = androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation {
+                            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+                        } ?: firstIdx
                         val texts = buildList(4) {
+                            fun maybeAdd(idx: Int) {
+                                if (idx !in items.indices) return
+                                val single = (items[idx] as? ChatRow.Single)?.item ?: return
+                                val t = when (single) {
+                                    is AssistantText -> if (!single.streaming) single.text else null
+                                    is UserMessage -> single.text
+                                    else -> null
+                                }
+                                if (
+                                    !t.isNullOrEmpty() &&
+                                    t.length in PI_MARKDOWN_PREWARM_MIN_CHARS..PI_MARKDOWN_PREWARM_MAX_CHARS &&
+                                    !hasPiMarkdownDocCached(t)
+                                ) {
+                                    add(t)
+                                }
+                            }
                             for (offset in 1..2) {
-                                val up = firstIdx - offset
-                                if (up in items.indices) {
-                                    val single = (items[up] as? ChatRow.Single)?.item
-                                    val t = when (single) {
-                                        is AssistantText -> if (!single.streaming) single.text else null
-                                        is UserMessage -> single.text
-                                        else -> null
-                                    }
-                                    if (!t.isNullOrEmpty() && t.length in 513..65_536 && !hasPiMarkdownDocCached(t)) {
-                                        add(t)
-                                    }
-                                }
-                                val down = lastIdx + offset
-                                if (down in items.indices) {
-                                    val single = (items[down] as? ChatRow.Single)?.item
-                                    val t = when (single) {
-                                        is AssistantText -> if (!single.streaming) single.text else null
-                                        is UserMessage -> single.text
-                                        else -> null
-                                    }
-                                    if (!t.isNullOrEmpty() && t.length in 513..65_536 && !hasPiMarkdownDocCached(t)) {
-                                        add(t)
-                                    }
-                                }
+                                maybeAdd(firstIdx - offset)
+                                maybeAdd(lastIdx + offset)
                             }
                         }
                         if (texts.isNotEmpty()) {
                             withContext(Dispatchers.Default) {
                                 for (t in texts) {
+                                    coroutineContext.ensureActive()
                                     prewarmPiMarkdownDoc(t)
                                 }
                             }
