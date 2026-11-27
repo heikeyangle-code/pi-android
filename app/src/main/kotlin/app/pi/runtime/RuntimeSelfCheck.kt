@@ -104,7 +104,7 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         // together with the tree it describes.
         val revision = paths.stampRevision()
         val checkKey = selfCheckKey(revision)
-        if (!checkKey.isNullOrEmpty() && passedAtKey(checkKey, revision)) {
+        if (!checkKey.isNullOrEmpty() && passedAtKey(checkKey)) {
             return@withContext Outcome(
                 Status.Ok,
                 "运行时可用（这个解包版本上次已通过自检，本次没有重复探测）",
@@ -275,12 +275,11 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         return "v2:$ubuntuDigest:${proot.length()}:${proot.lastModified()}:${loader.length()}:${loader.lastModified()}"
     }
 
-    /** Has a probe already passed at this key (or legacy revision stamp)? */
-    private fun passedAtKey(key: String, legacyRevision: String?): Boolean = runCatching {
+    /** Has a probe already passed at this key? */
+    private fun passedAtKey(key: String): Boolean = runCatching {
         val stamp = paths.selfCheckStamp()
         if (!stamp.isFile) return@runCatching false
-        val saved = stamp.readText().trim()
-        saved == key || (!legacyRevision.isNullOrEmpty() && saved == legacyRevision)
+        stamp.readText().trim() == key
     }.getOrDefault(false)
 
     private fun looksLikeExecDenial(stderr: String): Boolean {

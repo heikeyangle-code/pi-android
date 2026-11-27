@@ -670,10 +670,17 @@ internal fun ChatBody(
     val pairedDiffByCallId = remember(state.transcript) {
         pairEditDiffs(state.transcript)
     }
-    val visibleItems = remember(state.transcript, pairedDiffByCallId, prefs.showTimestamps, entryRenderable) {
+    val visibleItems = remember(
+        state.transcript,
+        pairedDiffByCallId,
+        prefs.showTimestamps,
+        prefs.hideThinkingBlock,
+        entryRenderable,
+    ) {
         state.transcript.filter { item ->
             when (item) {
                 is ModelChange -> false
+                is ThinkingBlock -> !prefs.hideThinkingBlock
                 is DateSeparator -> prefs.showTimestamps
                 is app.pi.protocol.ExtensionEntry -> item.customType in entryRenderable
                 // Pair edit ToolDiff into its EditBlock so edit renders as one official-parity card.

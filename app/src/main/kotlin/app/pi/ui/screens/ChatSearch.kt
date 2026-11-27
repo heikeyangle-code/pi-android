@@ -114,7 +114,7 @@ internal fun searchHits(item: TranscriptItem, query: String): Boolean = when (it
     is BranchSummary -> item.summary.hits(query)
     is HookMessage -> item.markdown.hits(query)
     is app.pi.protocol.ExtensionEntry -> false
-    is ModelChange -> listOfNotNull(item.provider, item.modelId).joinToString("/").hits(query)
+    is ModelChange -> false
     is SkillInvocation -> listOf(item.skillName, item.body).joinToString("\n").hits(query)
     is ErrorText -> listOfNotNull(item.message, item.detail).joinToString("\n").hits(query)
     is Notice -> item.text.hits(query)

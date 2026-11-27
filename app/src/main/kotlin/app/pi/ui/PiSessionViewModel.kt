@@ -186,15 +186,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Live facts about the session, mirrored from pi.
      *
-     * Everything here is read back from pi (`get_state`,
-     * `get_available_thinking_levels`, `get_session_stats`) rather than tracked
-     * optimistically, with one documented exception:
-     *
-     *  - [autoRetry] — `get_state` has no field for it. pi keeps it in
-     *    `settingsManager.getRetryEnabled()` (`settings-manager.ts:914-916`:
-     *    `retry?.enabled ?? true`), so the value is seeded from the same settings
-     *    document the settings screens read and then updated from what
-     *    `set_auto_retry` accepted.
+     * Everything here is read back from the SDK host (`session.open` / `state`
+     * snapshots, `session.thinkingLevels`, `session.stats`) rather than tracked
+     * optimistically.
      *
      * [thinkingLevel] is likewise not written optimistically:
      * `set_thinking_level` clamps to the model's supported set and only emits
@@ -1858,9 +1852,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     if (fullReload || method == "setEnableSkillCommands") {
                         refreshCommands()
                     }
-                    if (fullReload || method == "setRetryEnabled") {
-                        seedAutoRetryFromSettings()
-                    }
                 }
             }
         }
@@ -2198,7 +2189,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 releaseBusy(replayToken)
             }
             refreshCommands()
-            seedAutoRetryFromSettings()
             // The agent dir exists for sure by now, so a theme dropped into it
             // while the app was closed is discovered here as well.
             refreshPrefs()
@@ -4083,20 +4073,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             val forkMessages = api.getForkMessages()
             _state.update { s -> s.copy(forkMessages = forkMessages) }
         }
-    }
-
-    /**
-     * Seed [EngineMeta.autoRetry] from pi's settings document.
-     *
-     * `get_state` has no retry field, and pi's own source of truth is the setting
-     * (`settings-manager.ts:914-916`: `retry?.enabled ?? true`), which lives in
-     * the same `settings.json` the settings screens already read. The `true`
-     * default is pi's, not a preference of this app.
-     */
-    private fun seedAutoRetryFromSettings() {
-        val value = runCatching { settingsStore.read("retry.enabled") }.getOrNull()
-        val enabled = (value as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: return
-        _state.update { s -> s.copy(meta = s.meta.copy(autoRetry = enabled)) }
     }
 
     // ------------------------------------------------------------------ actions

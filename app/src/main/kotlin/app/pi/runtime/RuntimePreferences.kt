@@ -42,18 +42,12 @@ class RuntimePreferences private constructor(context: Context) {
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    /** The user's switch. **False unless the user turned it on.** */
-    /**
-     * 用户选的运行时（三选一）。proot 是默认，也是任何一关不过时的回退。
-     *
-     * 迁移：只有旧的布尔 `proroot.enabled` 的安装，`true` 读作 [GuestEngine.Proroot]；一旦写过新键，
-     * 新键说了算。旧键仍会同步写，所以退回旧版本时「开着 proroot」的用户依然是开着的。
-     */
+    /** 用户选的运行时（三选一）。proot 是默认，也是任何一关不过时的回退。 */
     val selectedEngine: GuestEngine
         get() {
             val stored = prefs.getString(KEY_ENGINE, null)
                 ?.let { name -> GuestEngine.entries.firstOrNull { it.name.equals(name, ignoreCase = true) } }
-            return stored ?: if (prefs.getBoolean(KEY_ENABLED, false)) GuestEngine.Proroot else GuestEngine.Proot
+            return stored ?: GuestEngine.Proot
         }
 
     /** Consecutive proroot launches that failed before doing any work. */
@@ -63,7 +57,6 @@ class RuntimePreferences private constructor(context: Context) {
     fun setSelectedEngine(engine: GuestEngine) {
         prefs.edit()
             .putString(KEY_ENGINE, engine.name)
-            .putBoolean(KEY_ENABLED, engine == GuestEngine.Proroot)
             .putInt(KEY_FAILURES, 0)
             .apply()
     }
@@ -76,10 +69,7 @@ class RuntimePreferences private constructor(context: Context) {
         /** Private to the app; named after the decision, not the binary. */
         const val PREFS_NAME = "pi-runtime-choice"
 
-        /** The switch's key inside [PREFS_NAME]. */
-        const val KEY_ENABLED = "proroot.enabled"
-
-        /** 三选一的新键，值是 [GuestEngine.name]。 */
+        /** 三选一的引擎键，值是 [GuestEngine.name]。 */
         const val KEY_ENGINE = "runtime.engine"
 
         /** The consecutive-failure counter's key inside [PREFS_NAME]. */
