@@ -21,7 +21,7 @@ function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function serverToWire(e) {
+function serverToWire(e, oauthSignedIn = false) {
   return {
     name: e.name,
     scope: e.scope ?? "global",
@@ -41,6 +41,7 @@ function serverToWire(e) {
     auth: e.config.auth ?? null,
     type: e.config.type ?? null,
     description: e.config.description ?? null,
+    oauthSignedIn: Boolean(oauthSignedIn),
   };
 }
 
@@ -70,11 +71,18 @@ function convertForeignMcpEntry(entry) {
 export function register(reg, { controller, hub }) {
   const dist = (rel) => import(pathToFileURL(join(controller.cfg.piDir, "dist", "extensions", "mcp", rel)).href);
   const coreMcp = () => import(pathToFileURL(join(controller.cfg.piDir, "dist", "core", "mcp-servers.js")).href);
+  const coreAuth = () => import(pathToFileURL(join(controller.cfg.piDir, "dist", "core", "auth-storage.js")).href);
   const ctx = () => {
     if (!controller.opened) throw new HostError(ERR.NOT_OPEN, "先 session.open");
     return { cwd: controller.cwd, agentDir: controller.cfg.agentDir };
   };
   const filePath = (local) => (local ? join(controller.cwd, ".pi", "mcp.json") : join(controller.cfg.agentDir, "mcp.json"));
+
+  async function openOauthStore(rt) {
+    const dir = ctx().agentDir;
+    const { FileAuthStorageBackend } = await coreAuth();
+    return new rt.McpOAuthCredentialStore(new FileAuthStorageBackend(join(dir, "mcp-auth.json")), dir);
+  }
 
   /** 跑 `pi mcp <args>`，收集输出。 */
   async function runCli(args, extra = {}) {
@@ -91,13 +99,30 @@ export function register(reg, { controller, hub }) {
   reg.add("mcp.servers", async () => {
     const { loadMcpConfig } = await dist("config.js");
     const trusted = controller.isProjectTrusted();
-    const loaded = loadMcpConfig({ ...ctx(), projectTrusted: trusted });
-    const globalOnly = loadMcpConfig({ ...ctx(), projectTrusted: false });
+    const c = ctx();
+    const loaded = loadMcpConfig({ ...c, projectTrusted: trusted });
+    const globalOnly = loadMcpConfig({ ...c, projectTrusted: false });
+    let creds = null;
+    if (existsSync(join(c.agentDir, "mcp-auth.json"))) {
+      try {
+        creds = await openOauthStore(await dist("runtime.js"));
+      } catch {
+        creds = null;
+      }
+    }
+    const isSignedIn = (e) => {
+      if (!creds || typeof e.config?.url !== "string" || !e.config.url) return false;
+      try {
+        return Boolean(creds.tokens(e.name, e.config.url)?.access_token);
+      } catch {
+        return false;
+      }
+    };
     return {
-      servers: loaded.servers.map(serverToWire),
+      servers: loaded.servers.map((e) => serverToWire(e, isSignedIn(e))),
       autoEnableCodemode: loaded.autoEnableCodemode !== false,
       global: {
-        servers: globalOnly.servers.map(serverToWire),
+        servers: globalOnly.servers.map((e) => serverToWire(e, isSignedIn(e))),
         autoEnableCodemode: globalOnly.autoEnableCodemode !== false,
         errors: globalOnly.errors ?? [],
       },
@@ -317,7 +342,7 @@ export function register(reg, { controller, hub }) {
         `${name} 使用「${authProvider}」供应商账号认证，请在模型与供应商页登录 ${authProvider}（或运行 /login ${authProvider}）。`,
       );
     }
-    const credentials = new rt.McpOAuthCredentialStore();
+    const credentials = await openOauthStore(rt);
     const connection = new rt.McpServerConnection({
       entry,
       cwd: ctx().cwd,

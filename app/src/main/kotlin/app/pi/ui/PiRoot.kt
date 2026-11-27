@@ -360,7 +360,7 @@ fun PiTopBarIcon(
 }
 
 /**
- * 统一分段切换控件：支持平滑色变与真正的禁用态（`disabledIndices`，彻底消除点禁用页无反应的困惑）。
+ * 统一分段切换控件：支持等宽铺满（`fillWidth`）、平滑色变与真正的禁用态（`disabledIndices`）。
  */
 @Composable
 fun PiSeg(
@@ -369,6 +369,7 @@ fun PiSeg(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
     disabledIndices: Set<Int> = emptySet(),
+    fillWidth: Boolean = false,
 ) {
     val haptic = LocalHapticFeedback.current
     val isDark = PiTheme.isDark
@@ -383,11 +384,14 @@ fun PiSeg(
     } else {
         Color.White
     }
+    val trackBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.72f)
+    val activeBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.75f else 0.90f)
     Row(
         modifier = modifier
+            .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
             .clip(SEG_SHAPE)
             .background(trackBg)
-            .border(PiSpacing.hairlineThin, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f), SEG_SHAPE)
+            .border(PiSpacing.hairlineThin, trackBorder, SEG_SHAPE)
             .padding(SEG_PADDING),
         horizontalArrangement = Arrangement.spacedBy(SEG_ITEM_GAP),
     ) {
@@ -410,15 +414,16 @@ fun PiSeg(
             )
             Box(
                 modifier = Modifier
+                    .then(if (fillWidth) Modifier.weight(1f) else Modifier)
                     .height(SEG_ITEM_HEIGHT)
                     .alpha(if (enabled) 1f else 0.48f)
                     .clip(SEG_ITEM_SHAPE)
                     .background(bg)
                     .then(
-                        if (selected && !isDark) {
+                        if (selected) {
                             Modifier.border(
                                 PiSpacing.hairlineThin,
-                                MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                                activeBorder,
                                 SEG_ITEM_SHAPE,
                             )
                         } else {
@@ -441,6 +446,7 @@ fun PiSeg(
                     ),
                     color = fg,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -448,11 +454,11 @@ fun PiSeg(
 }
 
 private val SEG_SHAPE = RoundedCornerShape(10.dp)
-private val SEG_ITEM_SHAPE = RoundedCornerShape(8.dp)
+private val SEG_ITEM_SHAPE = RoundedCornerShape(7.dp)
 private val SEG_PADDING = 3.dp
 private val SEG_ITEM_GAP = 3.dp
-private val SEG_ITEM_HEIGHT = 30.dp
-private val SEG_ITEM_PADDING = 12.dp
+private val SEG_ITEM_HEIGHT = 32.dp
+private val SEG_ITEM_PADDING = 10.dp
 
 @Composable
 fun PiRoot() {

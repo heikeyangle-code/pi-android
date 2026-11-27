@@ -41,12 +41,13 @@ import app.pi.packages.PiResourceCatalog.Type
 import app.pi.ui.PiSeg
 import app.pi.ui.PiTopBar
 import app.pi.ui.components.PiSheet
+import app.pi.ui.components.PiType
 import app.pi.ui.models.ModelsCard
 import app.pi.ui.models.ModelsCardPadding
 import app.pi.ui.models.ModelsDivider
+import app.pi.ui.models.ModelsSearchBar
 import app.pi.ui.models.ModelsSectionLabel
 import app.pi.ui.models.TagRow
-import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiInfoNote
 import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
@@ -113,6 +114,7 @@ internal fun ResourceTypeScreen(
                     selectedIndex = if (layer == Layer.Global) 0 else 1,
                     disabledIndices = if (model.projectUsable) emptySet() else setOf(1),
                     onSelect = { if (model.projectUsable) model.layer = if (it == 0) Layer.Global else Layer.Project },
+                    fillWidth = true,
                     modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
                 )
             }
@@ -142,7 +144,7 @@ internal fun ResourceTypeScreen(
             }
             model.error?.let { item { PiInfoNote(it, tone = PiTheme.palette.error) } }
             item {
-                PiEditorField(
+                ModelsSearchBar(
                     value = query,
                     onValueChange = { query = it },
                     placeholder = tr("搜索名字、描述、路径", "Search name, description, path"),
@@ -339,7 +341,7 @@ private fun ResourceDetailSheet(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
             verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter + PiSpacing.inline),
         ) {
-            Text(item.name, style = PiTheme.text.prose, color = PiTheme.palette.text)
+            Text(item.name, style = PiType.title, color = PiTheme.palette.text)
             TagRow(listOf(item.type.label) + (if (row.effective) listOf(tr("已开启", "Enabled")) else listOf(tr("已关闭", "Disabled"))) + (if (row.info.loaded) listOf(tr("已加载", "Loaded")) else emptyList()))
             Fact(tr("路径", "Path"), item.path)
             // 内置扩展（`builtin:名字`）没有文件可看；其余都能打开：自己的可改/可删，来自包的只读。

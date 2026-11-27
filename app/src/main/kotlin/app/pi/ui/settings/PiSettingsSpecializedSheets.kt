@@ -1,6 +1,7 @@
 package app.pi.ui.settings
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,11 +9,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -227,7 +231,7 @@ fun PiCompactionOverridesSheet(
 
             val activeKey = editingKey
             if (activeKey != null) {
-                Text(activeKey, style = PiTheme.text.mono, color = MaterialTheme.colorScheme.primary)
+                Text(activeKey, style = PiTheme.text.mono, color = PiTheme.palette.accent)
                 Spacer(Modifier.height(PiSpacing.unit))
                 PiEditorField(
                     value = reserveText,
@@ -316,7 +320,7 @@ fun PiCompactionOverridesSheet(
                             Text(
                                 tr("使用自定义键：$needle", "Use custom key: $needle"),
                                 style = PiTheme.text.mono,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = PiTheme.palette.accent,
                             )
                         }
                     }
@@ -328,12 +332,19 @@ fun PiCompactionOverridesSheet(
                                 .clickable { beginEdit(key, items.firstOrNull { it.modelKey == key }) }
                                 .padding(vertical = PiOptionRowPadding),
                             verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(m.name.ifBlank { m.id }, style = PiType.rowTitle, color = MaterialTheme.colorScheme.onSurface)
                                 Text(key, style = PiTheme.text.monoSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Text(tr("选择 ›", "Select ›"), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.primary)
+                            Text(tr("选择", "Select"), style = PiTheme.text.meta, color = PiTheme.palette.accent)
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = PiTheme.palette.accent,
+                                modifier = Modifier.size(16.dp),
+                            )
                         }
                     }
                     if (matched.isEmpty() && !needle.contains('/')) {

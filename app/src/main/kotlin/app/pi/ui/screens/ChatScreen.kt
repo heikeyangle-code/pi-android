@@ -79,6 +79,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -203,7 +205,10 @@ fun ChatScreen(
             // The explicit repair path (`ensureReady(rebuild = true)`), reachable from
             // this one button and nowhere else. A plain retry never deletes anything.
             onRebuild = { session.boot(rebuild = true) },
-            modifier = Modifier.padding(bottom = bottomInset),
+            modifier = Modifier.padding(
+                top = contentPadding.calculateTopPadding(),
+                bottom = bottomInset,
+            ),
         )
         return
     }
@@ -1623,7 +1628,9 @@ internal fun ChatBody(
         }
     }
     val visibleHeader = state.ext.header?.takeIf { app.pi.ui.extension.HIDE_KEY_HEADER !in hiddenWidgetSet }
-    val emptyTranscript = state.transcript.isEmpty() && visibleHeader == null
+    val emptyTranscript = displayRows.none { row ->
+        row !is ChatRow.Single || row.item !is DateSeparator
+    }
     val emptyStatusNote = when {
         !state.busy.isNullOrBlank() -> state.busy
         state.engine == null || state.engine == PiEngineSession.EngineState.Starting ->
@@ -1663,6 +1670,25 @@ internal fun ChatBody(
             val onImageClick: (PiImage) -> Unit = remember {
                 { viewedImage = it }
             }
+            val listTopInWindowRef = remember { floatArrayOf(0f) }
+            val latestFollowing by rememberUpdatedState(following)
+            val viewportTopCompensator = remember(listState) {
+                { blockBottomInWindowPx: Float, deltaHeightPx: Int ->
+                    // 仅当发生高度变化的异步块完全位于列表视口顶缘之上，且当前处于非触底、非拖动、
+                    // 首行已向上滚出一截（firstVisibleItemScrollOffset > 0）状态时，同向平移偏移量，
+                    // 锁定正在阅读的下半部分（如表格）像素位置不跳屏。
+                    if (
+                        deltaHeightPx != 0 &&
+                        blockBottomInWindowPx <= listTopInWindowRef[0] + 4f &&
+                        !latestFollowing &&
+                        !listState.isScrollInProgress &&
+                        listState.firstVisibleItemScrollOffset > 0
+                    ) {
+                        val targetOffset = (listState.firstVisibleItemScrollOffset + deltaHeightPx).coerceAtLeast(0)
+                        listState.requestScrollToItem(listState.firstVisibleItemIndex, targetOffset)
+                    }
+                }
+            }
             CompositionLocalProvider(
                 app.pi.ui.extension.LocalToolRenderer provides sharedToolRenderer,
                 app.pi.ui.extension.LocalEntryRenderer provides sharedEntryRenderer,
@@ -1670,10 +1696,15 @@ internal fun ChatBody(
                 app.pi.ui.extension.LocalMessageRenderer provides sharedMessageRenderer,
                 app.pi.ui.chat.LocalMessageActions provides messageActions,
                 app.pi.ui.blocks.LocalThinkingLabel provides sharedThinkingLabel,
+                app.pi.ui.render.LocalViewportTopCompensator provides viewportTopCompensator,
             ) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onGloballyPositioned { coords ->
+                        listTopInWindowRef[0] = coords.positionInWindow().y
+                    },
                 contentPadding = PaddingValues(
                     start = PiSpacing.pageHorizontal,
                     end = PiSpacing.pageHorizontal,
@@ -1708,8 +1739,6 @@ internal fun ChatBody(
                     val index = sliceIndex + hiddenCount
                     val isMatch = searchMatches.value.present.contains(index)
                     val isCurrentMatch = isMatch && searchMatches.value.ordered.getOrNull(searchCursor) == index
-                    val markdownParsed = remember(row.key) { mutableStateOf(false) }
-                    val onMarkdownParsed: () -> Unit = remember(markdownParsed) { { markdownParsed.value = true } }
                     val extraTop = (
                         prefs.typographyProfile
                             .gapFor(chatRowGap(displayRows, hiddenCount + sliceIndex)) - blockSpacing
@@ -1735,27 +1764,35 @@ internal fun ChatBody(
                     val hasMarkdownContent = !streamingRow &&
                         (singleItem is AssistantText || singleItem is UserMessage) &&
                         !itemText.isNullOrBlank()
-                    val rowModifier = (if (extraTop > 0.dp) Modifier.padding(top = extraTop) else Modifier)
-                        .then(highlightModifier)
-                        .rememberedRowHeight(
-                            rowKey = row.key,
-                            contentReady = markdownParsed.value,
-                            hasMarkdown = hasMarkdownContent,
-                        )
                     val enteringFromAbove = androidx.compose.runtime.snapshots.Snapshot
                         .withoutReadObservation { sliceIndex <= listState.firstVisibleItemIndex }
                     val itemCharCount = itemText?.length ?: 0
                     val docCached = !itemText.isNullOrEmpty() && hasPiMarkdownDocCached(itemText)
-                    // 屏幕上方即将滑入视口的已定稿消息（含大表格，<=24 KiB，实测 ~5ms 解析一次后永久命中
+                    // 屏幕上方即将滑入视口的已定稿消息（含大表格，<=64 KiB，解析一次后永久命中
                     // PiMarkdownDocCache）必须在帧 0 同步解析，绝不回落到 0px 异步占位——否则快速下拉时
-                    // 列表先滑过 0px 占位、5ms 后表格撑高 1000+px 就会在视口上方直接顶跳一整屏。
-                    val allowSyncFromAbove = enteringFromAbove && !docCached && itemCharCount <= 24_000
+                    // 列表先滑过 0px 占位、数毫秒后表格撑高 1000+px 就会在视口上方直接顶跳一整屏。
+                    val allowSyncFromAbove = enteringFromAbove && !docCached && itemCharCount <= 65_536
                     val immediateMarkdown = !streamingRow && (
                         allowSyncFromAbove || (
                             RowHeightCache.shared.of(row.key) == null &&
                                 (row.key in freshRowKeys || restoring) &&
                                 piMarkdownParseBudget.allow(System.nanoTime())
                             )
+                        )
+                    // 帧 0 即可同步出完整 AST 的行直接标为就绪，避免每行滑入屏幕后多走一次
+                    // LaunchedEffect → 重组 → 丢 floor → 重测量的二次开销与陈旧高度回弹。
+                    val syncReadyOnFrame0 = !hasMarkdownContent ||
+                        docCached ||
+                        immediateMarkdown ||
+                        itemCharCount <= app.pi.ui.render.PI_MARKDOWN_SYNC_SETTLED_LIMIT
+                    val markdownParsed = remember(row.key) { mutableStateOf(syncReadyOnFrame0) }
+                    val onMarkdownParsed: () -> Unit = remember(markdownParsed) { { markdownParsed.value = true } }
+                    val rowModifier = (if (extraTop > 0.dp) Modifier.padding(top = extraTop) else Modifier)
+                        .then(highlightModifier)
+                        .rememberedRowHeight(
+                            rowKey = row.key,
+                            contentReady = markdownParsed.value,
+                            hasMarkdown = hasMarkdownContent,
                         )
                     val rowAnchor = remember(listState, sliceIndex, row.key) {
                         TranscriptRowAnchor(

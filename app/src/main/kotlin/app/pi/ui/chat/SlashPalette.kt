@@ -117,7 +117,7 @@ private fun SlashPaletteGroupHeader(source: PiCommandSource, count: Int, showTop
             Text(
                 source.label,
                 style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.primary,
+                color = PiTheme.palette.accent,
             )
             Text(
                 "$count",
@@ -160,7 +160,7 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
                 Text(
                     text = buildAnnotatedString {
                         if (slash) {
-                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.80f))) { append("/") }
+                            withStyle(SpanStyle(color = PiTheme.palette.accent.copy(alpha = 0.85f))) { append("/") }
                         }
                         withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
                             append(if (slash) invocation.drop(1) else invocation)

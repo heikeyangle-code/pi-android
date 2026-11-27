@@ -203,7 +203,11 @@ fun PiMermaidView(
     var retryTick by remember(source) { mutableIntStateOf(0) }
     val haptic = LocalHapticFeedback.current
 
-    Box(modifier.fillMaxWidth()) {
+    Box(
+        with(app.pi.ui.render.PiRichViewportHelper) {
+            modifier.fillMaxWidth().compensate(source)
+        },
+    ) {
         LaunchedEffect(source, settled, widthPx, theme, retryTick) {
             if (!settled) {
                 draw = PiMermaidDraw.Streaming
@@ -330,6 +334,8 @@ fun PiMermaidView(
                 }
                 val canvasHeight = (targetWidthDp / aspect.coerceIn(0.08f, 30f))
                     .coerceIn(96.dp, heightCap)
+                val heightKey = "mermaid:${widthPx}:${source.hashCode()}:${source.length}"
+                app.pi.ui.render.PiRichBlockHeightCache.put(heightKey, canvasHeight.value)
                 val maxFitScale = Float.POSITIVE_INFINITY
                 Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)) {
                     Canvas(
@@ -440,12 +446,14 @@ fun PiMermaidView(
                     }
                 }
             } else if (draw == PiMermaidDraw.Rendering && pinned != true) {
-                // 已问管线、还没回答：固定高度的占位，而不是先摊一整块源码再缩成图 —— 后者让行高
-                // 突变、列表跳动。
+                // 已问管线、还没回答：优先沿用该图上次成品高度（再回落固定占位），避免位图淘汰后重滚跳屏。
+                val heightKey = "mermaid:${widthPx}:${source.hashCode()}:${source.length}"
+                val placeholderHeight = app.pi.ui.render.PiRichBlockHeightCache.get(heightKey)?.dp
+                    ?: PI_MERMAID_PLACEHOLDER_HEIGHT
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(PI_MERMAID_PLACEHOLDER_HEIGHT),
+                        .height(placeholderHeight),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(

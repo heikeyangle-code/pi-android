@@ -5,6 +5,7 @@ import app.pi.bridge.PiAnimatedImages
 import app.pi.bridge.PiGuestImageTransformer
 import app.pi.ui.blocks.ParseCaches
 import app.pi.ui.blocks.PiImageCache
+import app.pi.ui.render.PiRichBlockHeightCache
 import app.pi.ui.render.RowHeightCache
 import app.pi.ui.render.clearPiCodeHighlightCache
 import app.pi.ui.render.clearPiMarkdownDocCache
@@ -30,6 +31,7 @@ internal object PiMemoryTrimmer {
         clearPiMarkdownDocCache()
         clearPiCodeHighlightCache()
         RowHeightCache.shared.clear()
+        PiRichBlockHeightCache.clear()
     }
 
     /**
@@ -59,6 +61,7 @@ internal object PiMemoryTrimmer {
             PiMathRenderEngine.clearCaches()
             PiMathDrawCache.clear()
             RowHeightCache.shared.clear()
+            PiRichBlockHeightCache.clear()
             app.pi.update.AppUpdater.clearCache()
         }
     }
@@ -77,6 +80,7 @@ internal object PiMemoryTrimmer {
         PiMathRenderEngine.clearCaches()
         PiMathDrawCache.clear()
         RowHeightCache.shared.clear()
+        PiRichBlockHeightCache.clear()
         app.pi.update.AppUpdater.clearCache()
     }
 }

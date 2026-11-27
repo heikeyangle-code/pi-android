@@ -17,15 +17,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,6 +46,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -237,11 +242,30 @@ fun PiOptionPickerSheet(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
                     ) {
-                        Text(
-                            if (selected) "✓" else "○",
-                            style = PiTheme.text.monoSmall,
-                            color = if (selected) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
-                        )
+                        Box(
+                            modifier = Modifier.size(18.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (selected) {
+                                Icon(
+                                    imageVector = Icons.Filled.Check,
+                                    contentDescription = null,
+                                    tint = PiTheme.palette.accent,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .clip(CircleShape)
+                                        .border(
+                                            PiSpacing.hairline,
+                                            MaterialTheme.colorScheme.outlineVariant,
+                                            CircleShape,
+                                        ),
+                                )
+                            }
+                        }
                         Column(Modifier.weight(1f)) {
                             Text(
                                 if (showGroups) option.label.substringAfter(" / ") else option.label,
@@ -674,7 +698,7 @@ fun PiListEditorSheet(
             Text(setting.description, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(PiSpacing.inline))
             if (setting.presets.isNotEmpty()) {
-                Text(tr("快捷添加", "Quick add"), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.primary)
+                Text(tr("快捷添加", "Quick add"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = PiTheme.palette.accent)
                 Spacer(Modifier.height(PiSpacing.gutter))
                 Row(
                     Modifier
@@ -849,9 +873,9 @@ internal fun PiEditorField(
         if (label != null) {
             Text(
                 label,
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f),
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(PiFieldLabelGap))

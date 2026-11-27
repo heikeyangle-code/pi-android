@@ -1,7 +1,7 @@
 package app.pi.ui.models
 
+import android.content.ClipboardManager
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -30,7 +30,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,7 +68,8 @@ internal fun ProviderFormSheet(
     onDone: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     var f by remember(initial) { mutableStateOf(initial) }
     var error by remember(initial) { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
@@ -220,8 +223,13 @@ internal fun ProviderFormSheet(
                             labelTrailing = {
                                 Surface(
                                     onClick = {
-                                        val pasted = clipboard.getText()?.text?.trim().orEmpty()
-                                        if (pasted.isNotEmpty()) f = f.copy(apiKey = pasted)
+                                        val cm = context.getSystemService(ClipboardManager::class.java)
+                                        val pasted = cm?.primaryClip?.takeIf { it.itemCount > 0 }
+                                            ?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
+                                        if (pasted.isNotEmpty()) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            f = f.copy(apiKey = pasted)
+                                        }
                                     },
                                     shape = RoundedCornerShape(7.dp),
                                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -351,7 +359,15 @@ internal fun ProviderFormSheet(
             )
             f.models.forEachIndexed { i, m ->
                 val expanded = open == i
-                var modelCompatOpen by remember(i, m.id) { mutableStateOf(m.compat.hasUiFields) }
+                val hasModelAdvanced = m.api.isNotBlank() ||
+                    m.baseUrl.isNotBlank() ||
+                    m.costInput.isNotBlank() ||
+                    m.costOutput.isNotBlank() ||
+                    m.costCacheRead.isNotBlank() ||
+                    m.costCacheWrite.isNotBlank() ||
+                    m.compat.hasUiFields ||
+                    m.compat.extra.isNotEmpty()
+                var modelAdvancedOpen by remember(i) { mutableStateOf(hasModelAdvanced) }
                 ModelsCard(accent = expanded) {
                     Column {
                         Row(
@@ -374,6 +390,9 @@ internal fun ProviderFormSheet(
                                     Text(m.id, style = PiTheme.text.monoSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                                 }
                             }
+                            if (hasModelAdvanced && !expanded) {
+                                TagPill(tr("已调优", "Tuned"), tone = palette.accent)
+                            }
                             Icon(
                                 imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                                 contentDescription = null,
@@ -390,33 +409,6 @@ internal fun ProviderFormSheet(
                                     LabeledField(tr("上下文窗口", "Context Window"), m.contextWindow, "128000", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(contextWindow = v) } }
                                     LabeledField(tr("最大输出", "Max Output"), m.maxTokens, "8192", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(maxTokens = v) } }
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    LabeledField(
-                                        tr("协议覆盖（可选）", "API Override"),
-                                        m.api,
-                                        f.api.ifBlank { "openai-completions" },
-                                        Modifier.weight(1f),
-                                    ) { v -> updateModel(i) { it.copy(api = v) } }
-                                    LabeledField(
-                                        tr("地址覆盖（可选）", "URL Override"),
-                                        m.baseUrl,
-                                        tr("沿用供应商", "Inherits"),
-                                        Modifier.weight(1f),
-                                    ) { v -> updateModel(i) { it.copy(baseUrl = v) } }
-                                }
-                                Text(
-                                    tr("价格（美元 / 百万 token，均可选）", "Pricing (USD / 1M tokens, optional)"),
-                                    style = PiTheme.text.meta,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    LabeledField(tr("输入", "Input"), m.costInput, "3", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costInput = v) } }
-                                    LabeledField(tr("输出", "Output"), m.costOutput, "15", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costOutput = v) } }
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    LabeledField(tr("缓存读", "Cache Read"), m.costCacheRead, "0.3", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costCacheRead = v) } }
-                                    LabeledField(tr("缓存写", "Cache Write"), m.costCacheWrite, "3.75", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costCacheWrite = v) } }
-                                }
                             }
                             ModelsDivider()
                             PiSettingsToggleRow(tr("支持深度思考（推理模型）", "Reasoning Model"), null, m.reasoning, { v -> updateModel(i) { it.copy(reasoning = v) } })
@@ -426,28 +418,58 @@ internal fun ProviderFormSheet(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { modelCompatOpen = !modelCompatOpen }
+                                    .clickable { modelAdvancedOpen = !modelAdvancedOpen }
                                     .padding(horizontal = ModelsCardPadding, vertical = 11.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 Text(
-                                    tr("单模型兼容参数（compat）", "Model Compatibility (compat)"),
+                                    tr("进阶参数（覆盖 · 价格 · compat）", "Advanced (Overrides · Pricing · compat)"),
                                     style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.weight(1f),
                                 )
-                                if (m.compat.hasUiFields || m.compat.extra.isNotEmpty()) {
-                                    TagPill(tr("已覆盖", "Overridden"), tone = palette.accent)
+                                if (hasModelAdvanced) {
+                                    TagPill(tr("已配置", "Configured"), tone = palette.accent)
                                 }
                                 Icon(
-                                    imageVector = if (modelCompatOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                    imageVector = if (modelAdvancedOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    tint = if (modelAdvancedOpen) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp),
                                 )
                             }
-                            if (modelCompatOpen) {
+                            if (modelAdvancedOpen) {
+                                ModelsDivider()
+                                Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        LabeledField(
+                                            tr("协议覆盖", "API Override"),
+                                            m.api,
+                                            f.api.ifBlank { "openai-completions" },
+                                            Modifier.weight(1f),
+                                        ) { v -> updateModel(i) { it.copy(api = v) } }
+                                        LabeledField(
+                                            tr("地址覆盖", "URL Override"),
+                                            m.baseUrl,
+                                            tr("沿用供应商", "Inherits"),
+                                            Modifier.weight(1f),
+                                        ) { v -> updateModel(i) { it.copy(baseUrl = v) } }
+                                    }
+                                    Text(
+                                        tr("价格（美元 / 百万 token，均可选）", "Pricing (USD / 1M tokens, optional)"),
+                                        style = PiTheme.text.meta,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        LabeledField(tr("输入", "Input"), m.costInput, "3", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costInput = v) } }
+                                        LabeledField(tr("输出", "Output"), m.costOutput, "15", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costOutput = v) } }
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        LabeledField(tr("缓存读", "Cache Read"), m.costCacheRead, "0.3", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costCacheRead = v) } }
+                                        LabeledField(tr("缓存写", "Cache Write"), m.costCacheWrite, "3.75", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costCacheWrite = v) } }
+                                    }
+                                }
                                 ModelsDivider()
                                 CompatEditorFields(
                                     compat = m.compat,
@@ -462,8 +484,10 @@ internal fun ProviderFormSheet(
                                     .padding(ModelsCardPadding),
                                 horizontalArrangement = Arrangement.End,
                             ) {
-                                DestructiveAction(
-                                    text = tr("删除该模型", "Remove Model"),
+                                PiSecondaryButton(
+                                    label = tr("删除该模型", "Remove Model"),
+                                    tone = palette.error,
+                                    compact = true,
                                     onClick = {
                                         f = f.copy(models = f.models.filterIndexed { j, _ -> j != i })
                                         open = null

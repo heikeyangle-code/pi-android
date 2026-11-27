@@ -300,11 +300,10 @@ internal fun ToolsScreen(
                         },
                     )
                     if (list.size > 8) {
-                        PiEditorField(
+                        app.pi.ui.models.ModelsSearchBar(
                             value = query,
                             onValueChange = { query = it },
                             placeholder = tr("搜索工具名、描述或来源", "Search tool name, description, or source"),
-                            height = PiSettingsMetrics.searchFieldHeight,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = PiSettingsMetrics.pageHorizontal),

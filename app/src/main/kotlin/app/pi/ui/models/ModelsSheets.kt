@@ -1,5 +1,6 @@
 package app.pi.ui.models
 
+import android.content.ClipboardManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -25,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
@@ -47,7 +49,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -1020,7 +1021,7 @@ internal fun ModelThinkingLevelsSheet(
 
 // ------------------------------------------------------------------ 官方 models.json 导入 / 编辑 / 修复
 
-private val prettyModelsJson = Json { prettyPrint = true }
+private val prettyModelsJson = Json { prettyPrint = true; prettyPrintIndent = "  " }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1032,7 +1033,7 @@ internal fun ModelsJsonImportSheet(
     onSaved: (String) -> Unit,
 ) {
     val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
+    val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val palette = PiTheme.palette
 
@@ -1127,22 +1128,46 @@ internal fun ModelsJsonImportSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 PiSecondaryButton(
-                    label = tr("选择 .json 文件", "Pick .json"),
+                    label = tr("选文件", "Pick File"),
                     leadingIcon = Icons.Filled.FolderOpen,
+                    compact = true,
                     modifier = Modifier.weight(1f),
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     onClick = { filePicker.launch(arrayOf("application/json", "text/plain", "*/*")) },
                 )
                 PiSecondaryButton(
-                    label = tr("粘贴剪贴板", "Paste"),
+                    label = tr("粘贴", "Paste"),
                     leadingIcon = Icons.Filled.ContentPaste,
+                    compact = true,
                     modifier = Modifier.weight(1f),
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     onClick = {
-                        val pasted = clipboard.getText()?.text.orEmpty()
+                        val cm = context.getSystemService(ClipboardManager::class.java)
+                        val pasted = cm?.primaryClip?.takeIf { it.itemCount > 0 }
+                            ?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
                         if (pasted.isNotBlank()) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             error = null
                             text = pasted
+                        }
+                    },
+                )
+                PiSecondaryButton(
+                    label = tr("格式化", "Format"),
+                    leadingIcon = Icons.Filled.AutoFixHigh,
+                    compact = true,
+                    enabled = text.isNotBlank(),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    onClick = {
+                        runCatching {
+                            val el = Json.parseToJsonElement(text.trim())
+                            prettyModelsJson.encodeToString(kotlinx.serialization.json.JsonElement.serializer(), el)
+                        }.onSuccess { formatted ->
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            error = null
+                            text = formatted
+                        }.onFailure {
+                            error = tr("JSON 语法有误，无法格式化", "Invalid JSON syntax; cannot format")
                         }
                     },
                 )

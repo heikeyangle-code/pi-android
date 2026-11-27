@@ -54,9 +54,9 @@ check(
 // 4: DeviceBridgeController.kt
 const bridgeKt = readFileSync(join(repo, "app/src/main/kotlin/app/pi/bridge/DeviceBridgeController.kt"), "utf8");
 check(
-  "DeviceBridgeController.kt .pi-android-apk-stamp & usableCapabilities",
-  bridgeKt.includes(".pi-android-apk-stamp") && bridgeKt.includes("usableCapabilities"),
-  "DeviceBridgeController must keep .pi-android-apk-stamp fast-path and write usableCapabilities into device-bridge.json",
+  "DeviceBridgeController.kt zero disk extension copy & usableCapabilities snapshot",
+  !bridgeKt.includes("installExtensionAssets") && bridgeKt.includes("usableCapabilities"),
+  "DeviceBridgeController must not copy extensions to disk and must write usableCapabilities into device-bridge.json",
 );
 
 // 5: PiSessionViewModel.kt

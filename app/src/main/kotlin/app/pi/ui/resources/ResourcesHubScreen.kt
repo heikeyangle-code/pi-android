@@ -266,6 +266,7 @@ private fun Hub(
                         model.layer = if (idx == 0) Layer.Global else Layer.Project
                     }
                 },
+                fillWidth = true,
                 modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
             )
         }
@@ -502,7 +503,12 @@ private fun TrustCard(model: ResourcesModel, onSettingsSynced: () -> Unit) {
                         modifier = Modifier
                             .size(34.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(tone.copy(alpha = 0.14f)),
+                            .background(tone.copy(alpha = 0.12f))
+                            .border(
+                                PiSpacing.hairlineThin,
+                                tone.copy(alpha = 0.35f),
+                                RoundedCornerShape(10.dp),
+                            ),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(

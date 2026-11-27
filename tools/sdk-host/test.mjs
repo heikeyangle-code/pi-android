@@ -710,7 +710,7 @@ try {
   expect("mcp.add 同时给 url 和 command → bad_args", !addBoth.ok && addBoth.error.code === "bad_args");
   const cfg = await h.call("mcp.servers");
   const cfgEcho = cfg.data?.servers?.find((x) => x.name === "echo");
-  expect("mcp.servers 只读配置、不连接（带来源 / 暴露方式 / 启停）", cfg.ok && cfgEcho?.enabled === true && typeof cfgEcho.exposure === "string" && cfgEcho.scope, JSON.stringify(cfg.error ?? cfg.data));
+  expect("mcp.servers 只读配置、不连接（带来源 / 暴露方式 / 启停 / OAuth状态）", cfg.ok && cfgEcho?.enabled === true && typeof cfgEcho.exposure === "string" && typeof cfgEcho.oauthSignedIn === "boolean" && cfgEcho.scope, JSON.stringify(cfg.error ?? cfg.data));
   const mcpList = await h.call("mcp.list", {}, 120000);
   const echo = mcpList.data?.servers?.find((s) => s.name === "echo");
   expect("mcp.list 真连上了服务器并列出工具", mcpList.ok && echo?.state === "connected" && echo.tools.includes("echo"), JSON.stringify(mcpList.error ?? mcpList.data));

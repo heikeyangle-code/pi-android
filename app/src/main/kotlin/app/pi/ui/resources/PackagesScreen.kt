@@ -1,6 +1,7 @@
 package app.pi.ui.resources
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,11 +37,12 @@ import app.pi.host.ExtensionsAccess
 import app.pi.host.HostException
 import app.pi.host.HostExtensions
 import app.pi.i18n.tr
+import app.pi.ui.PiSeg
 import app.pi.ui.PiTopBar
+import app.pi.ui.components.PiPrimaryButton
 import app.pi.ui.models.ModelsCard
 import app.pi.ui.models.ModelsCardPadding
 import app.pi.ui.models.ModelsSectionLabel
-import app.pi.ui.models.PrimaryAction
 import app.pi.ui.models.TagRow
 import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiInfoNote
@@ -191,10 +194,15 @@ internal fun PackagesScreen(
                                 if (v.tags.isNotEmpty()) TagRow(v.tags)
                                 v.warning?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.warning) }
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small), verticalAlignment = Alignment.CenterVertically) {
-                                PiSettingsChip(text = tr("全局", "Global"), active = !useProject, onClick = { project = false })
-                                PiSettingsChip(text = tr("本项目", "Project"), active = useProject, enabled = projectUsable, onClick = { project = true })
-                            }
+                            PiSeg(
+                                options = listOf(tr("全局", "Global"), tr("本项目", "Project")),
+                                selectedIndex = if (useProject) 1 else 0,
+                                disabledIndices = if (projectUsable) emptySet() else setOf(1),
+                                onSelect = { idx ->
+                                    if (idx == 0 || projectUsable) project = idx == 1
+                                },
+                                fillWidth = true,
+                            )
                             Text(
                                 when {
                                     !projectUsable -> tr("项目还没被信任，pi 不允许往项目里装包。先到枢纽页的「项目信任」表态。", "Project is not trusted yet; pi does not allow installing project packages. Review Project Trust on the hub first.")
@@ -204,9 +212,11 @@ internal fun PackagesScreen(
                                 style = PiTheme.text.meta,
                                 color = PiTheme.palette.muted,
                             )
-                            PrimaryAction(
-                                if (busy == "install") tr("安装中…", "Installing…") else tr("安装", "Install"),
+                            PiPrimaryButton(
+                                label = if (busy == "install") tr("安装中…", "Installing…") else tr("安装", "Install"),
                                 enabled = busy == null && source.isNotBlank(),
+                                compact = true,
+                                modifier = Modifier.fillMaxWidth(),
                                 onClick = {
                                     val s = source.trim()
                                     run("install") { id -> access.ext.install(s, useProject, id); source = "" }
@@ -307,15 +317,20 @@ internal fun PackagesScreen(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(RoundedCornerShape(9.dp))
-                                    .background(PiTheme.palette.accent.copy(alpha = 0.13f)),
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                    .border(
+                                        PiSpacing.hairlineThin,
+                                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                                        RoundedCornerShape(10.dp),
+                                    ),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
                                     Icons.Filled.Inventory2,
                                     contentDescription = null,
-                                    tint = PiTheme.palette.accent,
+                                    tint = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.size(17.dp),
                                 )
                             }

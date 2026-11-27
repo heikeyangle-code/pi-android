@@ -263,7 +263,7 @@ internal fun PiSettingsListExpander(
             .clickable(onClick = onClick)
             .padding(vertical = PiSettingsMetrics.notePaddingVertical),
         style = PiTheme.text.meta,
-        color = MaterialTheme.colorScheme.primary,
+        color = PiTheme.palette.accent,
     )
 }
 

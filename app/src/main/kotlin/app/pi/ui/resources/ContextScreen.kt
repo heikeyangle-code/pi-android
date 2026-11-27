@@ -418,6 +418,7 @@ internal fun ContextScreen(
                             model.layer = if (idx == 0) Layer.Global else Layer.Project
                         }
                     },
+                    fillWidth = true,
                     modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
                 )
             }

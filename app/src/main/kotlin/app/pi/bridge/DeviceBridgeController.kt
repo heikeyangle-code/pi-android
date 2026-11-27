@@ -120,8 +120,7 @@ object DeviceBridgeController {
         val minted = mintToken()
         token = minted
 
-        val installed = installExtensionAssets(appContext)
-        val published = publishTokenFile(appContext, paths, minted)
+        publishTokenFile(appContext, paths, minted)
 
         val router = DeviceBridgeRouter(
             context = appContext,
@@ -138,8 +137,7 @@ object DeviceBridgeController {
         return try {
             http.start()
             server = http
-            lastReport = "已监听 127.0.0.1:${DeviceBridgeRouter.DEFAULT_PORT}" +
-                "（扩展 $installed，token 写入 $published）"
+            lastReport = "已监听 127.0.0.1:${DeviceBridgeRouter.DEFAULT_PORT}"
             lastReport
         } catch (error: Exception) {
             lastReport = "启动失败：${error::class.java.simpleName}: ${error.message}"
@@ -245,131 +243,6 @@ object DeviceBridgeController {
             lastReport = "无法写入 token 文件（运行时尚未解包）"
         }
         return if (written.isEmpty()) "未写入" else written.joinToString(", ")
-    }
-
-    /** 0600: the proot guest runs as this app's uid, so owner-only is enough. */
-    private fun restrictToOwner(file: File) {
-        runCatching {
-            file.setReadable(false, false)
-            file.setReadable(true, true)
-            file.setWritable(false, false)
-            file.setWritable(true, true)
-            file.setExecutable(false, false)
-        }
-    }
-
-    /**
-     * Nothing is copied any more: the only Android extension, `pi-android-bridge`, is
-     * precompiled into `host.bundle.mjs` as the official `builtin:pi-android-bridge`
-     * factory. What is left is a one-time upgrade cleanup of the copies older builds
-     * wrote (`agent/extensions`, the legacy auto-generated `skills/pi-android-device`
-     * directory, `opt/pi/android-extensions`, and the patched terminal `pi` wrapper),
-     * skipped in O(1) while the APK stamp is unchanged.
-     *
-     * @return a short description, e.g. `已是最新…` / `已清理旧版扩展副本…` / `清理旧版扩展失败: …`
-     */
-    fun installExtensionAssets(context: Context): String {
-        val paths = PiPaths(
-            filesDir = context.filesDir,
-            nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
-        )
-        // App 的 SDK 引擎（host.bundle.mjs）已将唯一的 Android 扩展 `pi-android-bridge` 预编译为官方
-        // `builtin:pi-android-bridge` 工厂，零 jiti / 零 Babel 冷启动；不再往磁盘拷 .ts 副本，也不再生成
-        // 冗余的 `pi-android-device` 技能目录或改写终端 `/opt/pi/bin/pi` 包装脚本。这里只做一次性的旧版升级清理
-        // （并按 APK stamp 缓存零 I/O 跳过）。
-        val legacyRoots = linkedMapOf<String, File>().apply {
-            val agentExt = File(paths.agentDir, "extensions")
-            put(runCatching { agentExt.canonicalPath }.getOrDefault(agentExt.absolutePath), agentExt)
-            if (paths.rootfs.isDirectory) {
-                val rootfsExt = File(paths.rootfs, "root/.pi/agent/extensions")
-                put(runCatching { rootfsExt.canonicalPath }.getOrDefault(rootfsExt.absolutePath), rootfsExt)
-            }
-        }.values.toList()
-        val legacySkillDirs = linkedMapOf<String, File>().apply {
-            val agentSkill = File(paths.agentDir, "skills/pi-android-device")
-            put(runCatching { agentSkill.canonicalPath }.getOrDefault(agentSkill.absolutePath), agentSkill)
-            if (paths.rootfs.isDirectory) {
-                val rootfsSkill = File(paths.rootfs, "root/.pi/agent/skills/pi-android-device")
-                put(runCatching { rootfsSkill.canonicalPath }.getOrDefault(rootfsSkill.absolutePath), rootfsSkill)
-            }
-        }.values.toList()
-        val legacyCliExtRoot = if (paths.rootfs.isDirectory) {
-            File(paths.rootfs, "opt/pi/android-extensions")
-        } else {
-            null
-        }
-        val legacyEntries = listOf(
-            "pi-android-bridge",
-            "pi-android-permission-gate.ts",
-            "pi-highlight",
-            "README.md",
-            ".pi-android-assets",
-            ".pi-android-apk-stamp",
-        )
-        val apkMarker = File(paths.agentDir, ".pi-android-apk-stamp")
-        return try {
-            val apkStamp = runCatching {
-                val info = context.packageManager.getPackageInfo(context.packageName, 0)
-                val code = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(info)
-                "${info.lastUpdateTime}-$code"
-            }.getOrNull()
-            val legacyClean = legacyRoots.all { root ->
-                !root.isDirectory || !File(root, "pi-android-bridge").exists() &&
-                    !File(root, "pi-android-permission-gate.ts").exists() &&
-                    !File(root, "pi-highlight").exists()
-            } && legacySkillDirs.none { it.exists() } && (legacyCliExtRoot == null || !legacyCliExtRoot.exists())
-            if (apkStamp != null && legacyClean && apkMarker.isFile &&
-                runCatching { apkMarker.readText().trim() == apkStamp }.getOrDefault(false)
-            ) {
-                return "已是最新（builtin:pi-android-bridge 预编译内置，APK 缓存命中）"
-            }
-            for (root in legacyRoots) {
-                if (!root.isDirectory) continue
-                for (name in legacyEntries) {
-                    val f = File(root, name)
-                    if (f.exists()) f.deleteRecursively()
-                }
-            }
-            for (skillDir in legacySkillDirs) {
-                if (skillDir.exists()) skillDir.deleteRecursively()
-            }
-            if (legacyCliExtRoot != null && legacyCliExtRoot.exists()) {
-                legacyCliExtRoot.deleteRecursively()
-            }
-            restoreVanillaCliPiIfPatched(paths)
-            if (apkStamp != null) {
-                runCatching {
-                    apkMarker.parentFile?.mkdirs()
-                    apkMarker.writeText(apkStamp)
-                }
-            }
-            "已清理旧版扩展与技能副本（builtin:pi-android-bridge 预编译内置）"
-        } catch (error: Exception) {
-            "清理旧版扩展失败: ${error::class.java.simpleName}: ${error.message}"
-        }
-    }
-
-    /**
-     * 升级自旧版 APK 时，若 `<rootfs>/opt/pi/bin/pi` 曾被旧版写入过 `/opt/pi/android-extensions`
-     * 补丁，自动恢复为官方原版直跑 `cli.js` 的 2 行脚本，不保留任何终端私有补丁。
-     */
-    private fun restoreVanillaCliPiIfPatched(paths: PiPaths) {
-        runCatching {
-            val wrapper = File(paths.rootfs, "opt/pi/bin/pi")
-            if (!wrapper.isFile) return
-            val existing = runCatching { wrapper.readText() }.getOrNull() ?: return
-            if (!existing.contains("opt/pi/android-extensions")) return
-            val hostEngineRoot = File(paths.rootfs, "opt/pi/node_modules/@earendil-works/pi-coding-agent")
-            if (!File(hostEngineRoot, "dist").isDirectory) return
-            val guestEngineRoot = "/opt/pi/node_modules/@earendil-works/pi-coding-agent"
-            val guestCli = if (File(hostEngineRoot, "dist/bundle/cli.js").isFile) {
-                "$guestEngineRoot/dist/bundle/cli.js"
-            } else {
-                "$guestEngineRoot/dist/cli.js"
-            }
-            wrapper.writeText(buildVanillaCliPiScript(guestCli))
-            wrapper.setExecutable(true, false)
-        }
     }
 
     internal fun buildVanillaCliPiScript(guestCli: String): String =

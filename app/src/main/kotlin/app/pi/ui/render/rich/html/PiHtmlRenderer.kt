@@ -642,9 +642,9 @@ private fun HtmlTable(node: PiHtmlNode.Table, style: TextStyle) {
                             )
                         }
                         Row(
+                            verticalAlignment = Alignment.Top,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(IntrinsicSize.Min)
                                 .background(background),
                         ) {
                             row.cells.forEach { cell ->
@@ -669,7 +669,6 @@ private fun HtmlTableCell(
     Box(
         modifier = Modifier
             .width(width)
-            .fillMaxHeight()
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
         RenderBlocks(

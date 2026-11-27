@@ -569,7 +569,7 @@ internal fun ExpandAllLabel(
             .clickable(onClickLabel = tr("展开全部输出", "Show full output"), onClick = onClick)
             .padding(vertical = PiSpacing.tiny),
         style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.primary,
+        color = PiTheme.palette.accent,
     )
 }
 

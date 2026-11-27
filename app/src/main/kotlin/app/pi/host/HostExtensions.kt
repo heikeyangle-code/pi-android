@@ -47,6 +47,7 @@ class HostExtensions(private val commands: HostCommands) {
         val oauth: JsonObject? = null,
         val auth: JsonElement? = null,
         val type: String? = null,
+        val oauthSignedIn: Boolean = false,
     ) {
         val isProject get() = scope == "project"
         /** 一行说明它怎么连：网址或命令行。 */
@@ -288,6 +289,7 @@ class HostExtensions(private val commands: HostCommands) {
         oauth = o["oauth"] as? JsonObject,
         auth = o["auth"]?.takeIf { it !is kotlinx.serialization.json.JsonNull },
         type = str(o["type"]),
+        oauthSignedIn = (o["oauthSignedIn"] as? JsonPrimitive)?.content == "true",
     )
 
     private fun rows(e: JsonElement?): List<JsonObject> = (e as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()

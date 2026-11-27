@@ -1,6 +1,7 @@
 package app.pi.ui.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.components.PiType
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -101,7 +103,7 @@ fun PiSettingRow(
                 titleColor = if (setting.dangerous) {
                     PiTheme.palette.error
                 } else {
-                    MaterialTheme.colorScheme.primary
+                    PiTheme.palette.accent
                 },
             )
             PiSettingsChevron()
@@ -179,7 +181,7 @@ internal fun PiSettingsToggleRow(
     }
 }
 
-/** Navigation / entry row with optional leading tinted icon box and trailing badge. */
+/** Navigation / entry row with optional restrained monochrome hairline icon well and trailing badge. */
 @Composable
 internal fun PiSettingsEntryRow(
     title: String,
@@ -194,18 +196,29 @@ internal fun PiSettingsEntryRow(
 ) {
     PiSettingsRowShell(highlighted = false, modifier = modifier, onClick = onClick) {
         if (leadingIcon != null) {
-            val iconTint = leadingTint ?: PiTheme.palette.accent
+            val palette = PiTheme.palette
+            val semantic = leadingTint == palette.error || leadingTint == palette.warning
+            val wellShape = RoundedCornerShape(10.dp)
             Box(
                 modifier = Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(iconTint.copy(alpha = 0.13f)),
+                    .size(34.dp)
+                    .clip(wellShape)
+                    .background(
+                        if (semantic && leadingTint != null) leadingTint.copy(alpha = 0.12f)
+                        else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    )
+                    .border(
+                        PiSpacing.hairlineThin,
+                        if (semantic && leadingTint != null) leadingTint.copy(alpha = 0.35f)
+                        else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                        wellShape,
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     leadingIcon,
                     contentDescription = null,
-                    tint = iconTint,
+                    tint = if (semantic && leadingTint != null) leadingTint else MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(17.dp),
                 )
             }

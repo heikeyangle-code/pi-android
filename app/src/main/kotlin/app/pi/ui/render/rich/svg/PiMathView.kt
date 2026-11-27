@@ -180,7 +180,15 @@ fun PiMathView(
 
     // 块级占满一行（和 Mermaid 视图一致）；行内不加 `fillMaxWidth`，宽度跟随父级约束，
     // 这样放进段落/行内槽位时不会把整段撑断。
-    Box(modifier = if (display) modifier.fillMaxWidth() else modifier) {
+    Box(
+        modifier = if (display) {
+            with(app.pi.ui.render.PiRichViewportHelper) {
+                modifier.fillMaxWidth().compensate(source)
+            }
+        } else {
+            modifier
+        },
+    ) {
         LaunchedEffect(source, display, settled, widthPx, theme) {
             if (!settled) {
                 draw = PiMathDraw.Streaming
@@ -345,6 +353,10 @@ fun PiMathView(
                                     (maxWidthDp / aspect.coerceIn(0.05f, 60f))
                                         .coerceIn(PI_MATH_MIN_IMAGE_HEIGHT, PI_MATH_MAX_IMAGE_HEIGHT)
                                 }
+                                app.pi.ui.render.PiRichBlockHeightCache.put(
+                                    "math:${widthPx}:${source.hashCode()}:${source.length}",
+                                    canvasHeightDp.value + 28f,
+                                )
                                 val heightPx = canvasHeightDp.roundToPx()
                                     .coerceIn(constraints.minHeight, constraints.maxHeight)
                                 val placeable = measurable.measure(
@@ -393,12 +405,13 @@ fun PiMathView(
                         }
                     }
                 } else if (draw == PiMathDraw.Rendering && pinned != true) {
-                    // 已问管线、还没回答：给一块固定高度的占位，而不是先摊出一整块源码再缩成公式
-                    // ——后者会让行高突变、列表跳动。
+                    val mathHeightKey = "math:${widthPx}:${source.hashCode()}:${source.length}"
+                    val placeholderHeight = app.pi.ui.render.PiRichBlockHeightCache.get(mathHeightKey)?.dp
+                        ?: PI_MATH_PLACEHOLDER_HEIGHT
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(PI_MATH_PLACEHOLDER_HEIGHT),
+                            .height(placeholderHeight),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(

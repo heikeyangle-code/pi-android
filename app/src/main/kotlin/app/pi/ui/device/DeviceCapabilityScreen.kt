@@ -998,11 +998,9 @@ private fun BridgeDiagnosticsCard(
                         append(tr("桥接状态：", "Bridge: "))
                         append(report)
                         append("\n")
-                        append(tr("扩展形态：builtin:pi-android-bridge（预编译内置，0 冗余技能）", "Extension: builtin:pi-android-bridge (precompiled builtin, 0 redundant skills)"))
-                        append("\n")
                         append(
                             if (tokenPresent) {
-                                tr("鉴权令牌：已生成（仅本机 0600 文件可见）", "Bearer token: active (0600 local only)")
+                                tr("鉴权令牌：已就绪（仅本机可读）", "Bearer token: ready (local only)")
                             } else {
                                 tr("鉴权令牌：未生成", "Bearer token: missing")
                             },

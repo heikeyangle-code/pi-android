@@ -170,7 +170,11 @@ fun PiSvgFenceView(
     // 深色主题下的画布底色覆盖：0 = 自动检测，1 = 柔光浅纸底，2 = 透明卡片底。
     var canvasToneOverride by rememberSaveable(source) { mutableStateOf(0) }
 
-    Box(modifier.fillMaxWidth()) {
+    Box(
+        with(app.pi.ui.render.PiRichViewportHelper) {
+            modifier.fillMaxWidth().compensate(source)
+        },
+    ) {
         LaunchedEffect(source, settled, widthPx) {
             if (!settled) {
                 draw = PiSvgDraw.Streaming

@@ -1215,6 +1215,11 @@ private fun PiBlockImageSurface(
     val palette = PiTheme.palette
     val shape = RoundedCornerShape(12.dp)
     val caption = remember(alt) { meaningfulImageCaption(alt) }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .compensateHeightAboveViewport(link ?: ""),
+    ) {
     when (loadState) {
         is PiImageLoadState.Ready -> {
             val decoded = loadState.data
@@ -1278,6 +1283,7 @@ private fun PiBlockImageSurface(
             )
         }
         PiImageLoadState.Failed -> Unit
+    }
     }
 }
 

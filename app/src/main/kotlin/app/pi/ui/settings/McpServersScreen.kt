@@ -1,5 +1,7 @@
 package app.pi.ui.settings
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,14 +20,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,6 +67,7 @@ import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.components.PiPrimaryButton
 import app.pi.ui.components.PiSecondaryButton
+import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -249,16 +259,40 @@ internal fun McpServersScreen(
     var loginJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var loginId by remember { mutableStateOf<String?>(null) }
 
-    // 离开页面时若 MCP OAuth 登录仍在进行，用独立非取消协程向宿主发 mcpCancelLogin，避免下次报 ERR.BUSY。
+    fun cancelOAuth() {
+        val activeId = loginId
+        val activeRedirect = loginUi?.redirectRequestId
+        loginJob?.cancel()
+        loginJob = null
+        loginId = null
+        loginUi = null
+        val host = access()
+        if (host != null && (activeId != null || activeRedirect != null)) {
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                if (activeRedirect != null) {
+                    runCatching { host.respond(activeRedirect, null, true) }
+                }
+                if (activeId != null) {
+                    runCatching { host.ext.mcpCancelLogin(activeId) }
+                }
+            }
+        }
+    }
+
+    // 离开页面时若 MCP OAuth 登录仍在进行，用独立非取消协程取消挂起请求并通知宿主 mcpCancelLogin，避免下次报 ERR.BUSY。
     DisposableEffect(Unit) {
         onDispose {
             val activeId = loginId
+            val activeRedirect = loginUi?.redirectRequestId
             loginJob?.cancel()
-            if (activeId != null) {
-                val ext = access()?.ext
-                if (ext != null) {
-                    CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-                        runCatching { ext.mcpCancelLogin(activeId) }
+            val host = access()
+            if (host != null && (activeId != null || activeRedirect != null)) {
+                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                    if (activeRedirect != null) {
+                        runCatching { host.respond(activeRedirect, null, true) }
+                    }
+                    if (activeId != null) {
+                        runCatching { host.ext.mcpCancelLogin(activeId) }
                     }
                 }
             }
@@ -284,7 +318,8 @@ internal fun McpServersScreen(
                             return@collect
                         }
                         HostExtensions.authUrl(event)?.takeIf { it.loginId == id }?.let { auth ->
-                            loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, auth.url, "")
+                            loginUi = (loginUi ?: LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, null, ""))
+                                .copy(url = auth.url)
                             runCatching { uriHandler.openUri(auth.url) }
                         }
                     }
@@ -302,6 +337,7 @@ internal fun McpServersScreen(
                 loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Done, null, tr("登录成功，${tools.size} 个工具可用。", "Signed in; ${tools.size} tools available."))
                 status = null
                 pendingRestart = true
+                epoch++
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: app.pi.host.HostException) {
@@ -314,6 +350,12 @@ internal fun McpServersScreen(
     }
 
     val cfgNow = hostCfg
+    val oauthSignedInByName = remember(cfgNow) {
+        buildMap {
+            cfgNow?.globalServers?.forEach { put(it.name, it.oauthSignedIn) }
+            cfgNow?.servers?.forEach { put(it.name, it.oauthSignedIn) }
+        }
+    }
     val definitions = if (cfgNow != null) {
         if (project) {
             cfgNow.servers.filter { it.isProject && it.override == null }.map(::hostServerToConfig)
@@ -643,6 +685,7 @@ internal fun McpServersScreen(
                                 McpServerRow(
                                     server = server,
                                     state = status?.of(server.name),
+                                    oauthSignedIn = oauthSignedInByName[server.name] == true,
                                     onLogin = { startLogin(server.name) },
                                     onOpen = {
                                         editSaveError = null
@@ -790,94 +833,26 @@ internal fun McpServersScreen(
         }
     }
 
-    loginUi?.takeIf { it.redirectRequestId == null }?.let { ui ->
-        val waiting = ui.phase == LoginUi.Phase.Waiting
-        PiSettingsDialog(
-            onDismissRequest = { if (!waiting) loginUi = null },
-            title = when (ui.kind) {
-                LoginUi.Kind.Login -> tr("登录「${ui.server}」", "Sign in to \"${ui.server}\"")
-                LoginUi.Kind.Logout -> tr("退出登录「${ui.server}」", "Sign out of \"${ui.server}\"")
-            },
-            body = when (ui.phase) {
-                LoginUi.Phase.Waiting -> if (ui.url == null) {
-                    tr("正在连接服务器…", "Connecting to server…")
-                } else {
-                    tr(
-                        "已在浏览器里打开授权页，授权后回到这里即可，最长等 5 分钟。\n\n${ui.url}",
-                        "Opened the authorization page in your browser. Return here after authorizing (up to 5 minutes).\n\n${ui.url}",
-                    )
-                }
-                LoginUi.Phase.Done -> ui.message
-                LoginUi.Phase.Failed -> ui.message
-            },
-            confirmationLabel = when {
-                waiting && ui.url != null -> tr("再打开一次", "Open Again")
-                waiting -> null
-                else -> tr("知道了", "OK")
-            },
-            onConfirm = {
-                if (waiting) ui.url?.let { uriHandler.openUri(it) } else loginUi = null
-            },
-            dismissalLabel = if (waiting) tr("不等了", "Cancel") else null,
-            onDismissButton = {
-                loginJob?.cancel()
-                loginJob = null
-                loginId?.let { id ->
-                    val ext = access()?.ext
-                    if (ext != null) {
-                        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-                            runCatching { ext.mcpCancelLogin(id) }
-                        }
+    loginUi?.let { ui ->
+        McpOAuthSheet(
+            ui = ui,
+            onOpenUrl = { url -> runCatching { uriHandler.openUri(url) } },
+            onSubmitRedirect = { pasted ->
+                val requestId = ui.redirectRequestId ?: return@McpOAuthSheet
+                loginUi = loginUi?.copy(redirectRequestId = null)
+                scope.launch {
+                    runCatching {
+                        access()?.respond?.invoke(
+                            requestId,
+                            JsonPrimitive(pasted),
+                            false,
+                        )
                     }
                 }
-                loginId = null
-                loginUi = null
             },
+            onCancel = { cancelOAuth() },
+            onClose = { loginUi = null },
         )
-    }
-
-    loginUi?.takeIf { it.redirectRequestId != null }?.let { ui ->
-        var pasted by remember(ui.redirectRequestId) { mutableStateOf("") }
-        val requestId = ui.redirectRequestId.orEmpty()
-        fun answer(value: String?) {
-            loginUi = loginUi?.copy(redirectRequestId = null)
-            scope.launch {
-                runCatching {
-                    access()?.respond?.invoke(
-                        requestId,
-                        value?.let { JsonPrimitive(it) },
-                        value == null,
-                    )
-                }
-            }
-        }
-        app.pi.ui.components.PiSheet(onDismiss = { answer(null) }) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSettingsMetrics.sheetHeadTop),
-                verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
-            ) {
-                Text(tr("粘贴回跳地址", "Paste Callback URL"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
-                Text(
-                    tr("授权后浏览器若停在一个打不开的页面，把地址栏里那串完整网址复制到这里。", "If your browser stops on an unreachable page after authorizing, copy the full URL from the address bar and paste it here."),
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                PiEditorField(
-                    value = pasted,
-                    onValueChange = { pasted = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = tr("回跳网址", "Callback URL"),
-                )
-                PiPrimaryButton(
-                    label = tr("提交", "Submit"),
-                    enabled = pasted.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { answer(pasted.trim()) },
-                )
-            }
-        }
     }
 
     if (importing) {
@@ -942,6 +917,7 @@ internal fun McpServersScreen(
         McpEditSheet(
             initial = current.draft,
             state = current.oldName?.let { status?.of(it) },
+            oauthSignedIn = current.oldName?.let { oauthSignedInByName[it] == true } == true,
             isNew = current.oldName == null,
             isProject = project,
             otherNames = editServers.map { it.name }.filter { it != current.oldName },
@@ -995,6 +971,8 @@ internal fun McpServersScreen(
                     scope.launch {
                         loginUi = try {
                             val message = access()?.ext?.mcpLogout(name, project) ?: tr("已退出登录。", "Signed out.")
+                            status = null
+                            epoch++
                             LoginUi(LoginUi.Kind.Logout, name, LoginUi.Phase.Done, null, message.ifBlank { tr("已退出登录。", "Signed out.") })
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
@@ -1139,12 +1117,13 @@ internal fun McpSegmentedTrack(
     }
 }
 
-/** 克制单色图标槽 + 细腻状态圆点 + 协议/暴露/工具/资源微标 + 开关；点行进编辑。 */
+/** 克制单色图标槽 + 细腻状态圆点 + 协议/暴露/OAuth/工具微标 + 开关；点行进编辑。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun McpServerRow(
     server: PiMcpConfig.Server,
     state: PiMcpStatus.Server?,
+    oauthSignedIn: Boolean,
     onLogin: () -> Unit,
     onOpen: () -> Unit,
     onToggle: (Boolean) -> Unit,
@@ -1152,13 +1131,18 @@ private fun McpServerRow(
     val palette = PiTheme.palette
     val dotColor = when {
         !server.enabled -> palette.dim.copy(alpha = 0.45f)
-        state == null -> palette.muted.copy(alpha = 0.55f)
+        state == null -> if (oauthSignedIn) palette.success.copy(alpha = 0.85f) else palette.muted.copy(alpha = 0.55f)
         state.connected -> palette.success
         state.needsAuth -> palette.warning
         else -> palette.error
     }
     val isHttp = server.kind == PiMcpConfig.Kind.Http
     val authProvider = server.authProvider
+    val hasAuthHeader = (server.config["headers"] as? JsonObject)?.keys?.any {
+        it.equals("Authorization", ignoreCase = true)
+    } == true
+    val oauthEligible = isHttp && authProvider == null && server.config["auth"] == null && !hasAuthHeader
+    val showOauthTag = oauthEligible && (state?.needsAuth == true || oauthSignedIn || server.config["oauth"] != null)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1227,13 +1211,26 @@ private fun McpServerRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (authProvider != null || (state != null)) {
+            if (authProvider != null || showOauthTag || state != null) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     if (authProvider != null) {
                         McpMetaTag(text = tr("凭据：$authProvider", "Auth: $authProvider"))
+                    }
+                    if (showOauthTag) {
+                        when {
+                            state?.needsAuth == true -> McpMetaTag(
+                                text = tr("待 OAuth 登录", "OAuth Required"),
+                                tone = palette.warning,
+                            )
+                            oauthSignedIn -> McpMetaTag(
+                                text = tr("OAuth 已登录", "OAuth Signed In"),
+                                tone = palette.success,
+                            )
+                            else -> McpMetaTag(text = "OAuth")
+                        }
                     }
                     if (state != null) {
                         Text(
@@ -1252,7 +1249,7 @@ private fun McpServerRow(
                 }
             }
         }
-        if (state?.needsAuth == true && server.enabled && authProvider == null) {
+        if (state?.needsAuth == true && server.enabled && oauthEligible) {
             PiPrimaryButton(label = tr("登录", "Sign In"), compact = true, onClick = onLogin)
         }
         PiSettingsSwitch(checked = server.enabled, onCheckedChange = onToggle)
@@ -1414,3 +1411,295 @@ private fun McpMetaTag(text: String, tone: Color? = null) {
         )
     }
 }
+
+/**
+ * 统一 MCP OAuth 授权 / 登出底抽屉：
+ * 合并原来的拆分弹窗与回跳粘贴抽屉——在等待授权期间同时展示
+ * 「步骤 1 · 浏览器授权（打开 / 复制链接）」与「步骤 2 · 手动粘贴回调 URL（备用）」，
+ * 关闭或取消时统一触发宿主 cancel + 挂起回调拒绝，绝不锁死后续登录。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun McpOAuthSheet(
+    ui: LoginUi,
+    onOpenUrl: (String) -> Unit,
+    onSubmitRedirect: (String) -> Unit,
+    onCancel: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    val waiting = ui.phase == LoginUi.Phase.Waiting
+    var copied by remember(ui.url) { mutableStateOf(false) }
+    var pasted by remember(ui.redirectRequestId) { mutableStateOf("") }
+
+    PiSheet(
+        onDismiss = { if (waiting) onCancel() else onClose() },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(top = 6.dp, bottom = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // 顶部状态头
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = PiSettingsMetrics.pageHorizontal + 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .border(
+                            PiSpacing.hairlineThin,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                            RoundedCornerShape(10.dp),
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    when (ui.phase) {
+                        LoginUi.Phase.Waiting -> CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = palette.accent,
+                        )
+                        LoginUi.Phase.Done -> Icon(
+                            Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = palette.success,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        LoginUi.Phase.Failed -> Icon(
+                            Icons.Filled.ErrorOutline,
+                            contentDescription = null,
+                            tint = palette.error,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = when (ui.kind) {
+                            LoginUi.Kind.Login -> tr("OAuth 授权 · ${ui.server}", "OAuth Sign-In · ${ui.server}")
+                            LoginUi.Kind.Logout -> tr("退出登录 · ${ui.server}", "Sign Out · ${ui.server}")
+                        },
+                        style = PiType.title,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = when (ui.phase) {
+                            LoginUi.Phase.Waiting -> when {
+                                ui.kind == LoginUi.Kind.Logout -> tr("正在清除本地 OAuth 凭据…", "Clearing local OAuth credentials…")
+                                ui.url == null -> tr("正在发现 OAuth 端点并准备授权链接…", "Discovering OAuth endpoints…")
+                                else -> tr("请在浏览器完成授权后返回（最长等待 5 分钟）", "Complete authorization in your browser (up to 5 minutes)")
+                            }
+                            LoginUi.Phase.Done -> tr("操作已完成", "Completed")
+                            LoginUi.Phase.Failed -> tr("未能完成", "Failed")
+                        },
+                        style = PiTheme.text.meta,
+                        color = when (ui.phase) {
+                            LoginUi.Phase.Done -> palette.success
+                            LoginUi.Phase.Failed -> palette.error
+                            LoginUi.Phase.Waiting -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+            }
+
+            if (waiting && ui.kind == LoginUi.Kind.Login) {
+                // 步骤 1：浏览器授权
+                PiSettingsCard {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            text = tr("步骤 1 · 在浏览器完成授权", "Step 1 · Authorize in Browser"),
+                            style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        if (ui.url == null) {
+                            Text(
+                                text = tr("正在连接 MCP 服务器并生成 PKCE 授权链接，请稍候…", "Connecting to the MCP server and generating a PKCE authorization URL…"),
+                                style = PiTheme.text.meta,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                                border = BorderStroke(
+                                    PiSpacing.hairlineThin,
+                                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                                ),
+                            ) {
+                                Text(
+                                    text = ui.url,
+                                    style = PiTheme.text.monoSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                PiPrimaryButton(
+                                    label = tr("打开浏览器授权", "Open Browser"),
+                                    compact = true,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { onOpenUrl(ui.url) },
+                                )
+                                PiSecondaryButton(
+                                    label = if (copied) tr("已复制", "Copied") else tr("复制链接", "Copy Link"),
+                                    compact = true,
+                                    onClick = {
+                                        val cm = context.getSystemService(ClipboardManager::class.java)
+                                        cm?.setPrimaryClip(ClipData.newPlainText("MCP OAuth URL", ui.url))
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        copied = true
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 步骤 2：手动回调地址（仅在宿主已发出 redirect 请求时显示，作自动回调失败的备用通道）
+                if (ui.redirectRequestId != null) {
+                    PiSettingsCard {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = tr("步骤 2 · 手动粘贴回调地址（备用）", "Step 2 · Paste Callback URL (Fallback)"),
+                                    style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                                Surface(
+                                    onClick = {
+                                        val cm = context.getSystemService(ClipboardManager::class.java)
+                                        val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }
+                                            ?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
+                                        if (clip.isNotEmpty()) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            pasted = clip
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(7.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    border = BorderStroke(
+                                        PiSpacing.hairlineThin,
+                                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                                    ),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.ContentPaste,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(13.dp),
+                                        )
+                                        Text(
+                                            tr("粘贴", "Paste"),
+                                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                text = tr(
+                                    "多数情况下浏览器会自动跳回完成授权；若停在无法访问的页面，复制地址栏里的完整 URL 粘到下方提交即可。",
+                                    "Usually the browser redirects automatically; if it stops on an unreachable page, copy the full URL from the address bar and paste it here.",
+                                ),
+                                style = PiTheme.text.meta,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            PiEditorField(
+                                value = pasted,
+                                onValueChange = { pasted = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                placeholder = "http://127.0.0.1:.../callback?code=...",
+                                singleLine = true,
+                                height = PiNumberFieldHeight,
+                                container = MaterialTheme.colorScheme.surfaceContainerLowest,
+                                idleBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f),
+                            )
+                            PiPrimaryButton(
+                                label = tr("提交回调地址", "Submit Callback URL"),
+                                enabled = pasted.isNotBlank(),
+                                compact = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { onSubmitRedirect(pasted.trim()) },
+                            )
+                        }
+                    }
+                }
+            } else if (!waiting) {
+                PiSettingsCard {
+                    Text(
+                        text = ui.message.ifBlank {
+                            if (ui.phase == LoginUi.Phase.Done) tr("已完成。", "Done.") else tr("操作失败。", "Operation failed.")
+                        },
+                        style = PiTheme.text.meta,
+                        color = if (ui.phase == LoginUi.Phase.Failed) palette.error else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                    )
+                }
+            }
+
+            // 底部按钮
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+            ) {
+                if (waiting) {
+                    PiSecondaryButton(
+                        label = tr("取消授权", "Cancel"),
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onCancel,
+                    )
+                } else {
+                    PiPrimaryButton(
+                        label = if (ui.phase == LoginUi.Phase.Done) tr("完成", "Done") else tr("知道了", "OK"),
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onClose,
+                    )
+                }
+            }
+        }
+    }
+}
+

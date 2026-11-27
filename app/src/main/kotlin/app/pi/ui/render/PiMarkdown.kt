@@ -59,7 +59,7 @@ internal val PiSharedMarkdownParser: MarkdownParser = MarkdownParser(
  *    frame 0; longer streaming messages switch seamlessly to a conflated `Dispatchers.Default`
  *    worker while retaining [retainedDoc] on screen (zero raw-markdown flash, zero starvation).
  */
-private const val SYNC_PARSE_SETTLED_LIMIT = 2048
+internal const val PI_MARKDOWN_SYNC_SETTLED_LIMIT = 8192
 private const val SYNC_PARSE_STREAMING_LIMIT = 1500
 
 /**
@@ -138,7 +138,7 @@ internal fun PiMarkdownText(
     val syncParse = cachedDoc != null || if (streaming) {
         markdown.length <= SYNC_PARSE_STREAMING_LIMIT
     } else {
-        immediate || markdown.length <= SYNC_PARSE_SETTLED_LIMIT
+        immediate || markdown.length <= PI_MARKDOWN_SYNC_SETTLED_LIMIT
     }
     val syncDoc = remember(markdown, streaming, syncParse, cachedDoc) {
         if (cachedDoc != null) {

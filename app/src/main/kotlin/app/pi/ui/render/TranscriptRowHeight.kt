@@ -9,7 +9,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 
 /**
@@ -180,4 +182,67 @@ internal fun Modifier.rememberedRowHeight(
         }
     }
     return this.then(heightModifier)
+}
+
+/**
+ * 视口上方离屏富内容块高度变化补偿回调：
+ * 当位于长消息上半部分（已滚出视口顶缘之上）的 Mermaid / MathJax / SVG / 图片异步完成渲染并改变高度时，
+ * 通知外层 `ChatScreen` 同向平移 `firstVisibleItemScrollOffset`，防止正在阅读的下半部分（如表格）跳屏。
+ */
+internal val LocalViewportTopCompensator =
+    androidx.compose.runtime.staticCompositionLocalOf<((blockBottomInWindowPx: Float, deltaHeightPx: Int) -> Unit)?> { null }
+
+private class AboveViewportHeightTracker {
+    var lastHeightPx: Int = 0
+    var lastBottomInWindowPx: Float = Float.NaN
+}
+
+@Composable
+internal fun Modifier.compensateHeightAboveViewport(key: Any): Modifier {
+    val compensator = LocalViewportTopCompensator.current ?: return this
+    val tracker = remember(key) { AboveViewportHeightTracker() }
+    return this.onGloballyPositioned { coords ->
+        if (!coords.isAttached) return@onGloballyPositioned
+        val newHeight = coords.size.height
+        val prevHeight = tracker.lastHeightPx
+        val prevBottom = tracker.lastBottomInWindowPx
+        val newBottom = coords.positionInWindow().y + newHeight
+        tracker.lastHeightPx = newHeight
+        tracker.lastBottomInWindowPx = newBottom
+        if (prevHeight > 0 && newHeight > 0 && newHeight != prevHeight && !prevBottom.isNaN()) {
+            compensator(prevBottom, newHeight - prevHeight)
+        }
+    }
+}
+
+internal object PiRichViewportHelper {
+    @Composable
+    fun Modifier.compensate(key: Any): Modifier = this.compensateHeightAboveViewport(key)
+}
+
+/**
+ * 富内容块（Mermaid / MathJax / SVG）上次渲染高度（dp）轻量 LRU 记忆：
+ * 即使位图缓存被 `onTrimMemory` 回收，滚回已渲染过的块时占位高度仍与成品一致，杜绝二次高度跳变。
+ */
+internal object PiRichBlockHeightCache {
+    private const val CAPACITY = 256
+    private val map = object : LinkedHashMap<String, Float>(CAPACITY, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Float>): Boolean =
+            size > CAPACITY
+    }
+
+    @Synchronized
+    fun get(key: String): Float? = map[key]
+
+    @Synchronized
+    fun put(key: String, heightDp: Float) {
+        if (heightDp.isFinite() && heightDp > 0f) {
+            map[key] = heightDp
+        }
+    }
+
+    @Synchronized
+    fun clear() {
+        map.clear()
+    }
 }
