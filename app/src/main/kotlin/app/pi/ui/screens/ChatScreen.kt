@@ -673,6 +673,7 @@ internal fun ChatBody(
     val visibleItems = remember(state.transcript, pairedDiffByCallId, prefs.showTimestamps, entryRenderable) {
         state.transcript.filter { item ->
             when (item) {
+                is ModelChange -> false
                 is DateSeparator -> prefs.showTimestamps
                 is app.pi.protocol.ExtensionEntry -> item.customType in entryRenderable
                 // Pair edit ToolDiff into its EditBlock so edit renders as one official-parity card.
@@ -1631,19 +1632,12 @@ internal fun ChatBody(
     val emptyTranscript = displayRows.none { row ->
         row !is ChatRow.Single || row.item !is DateSeparator
     }
-    val emptyStatusNote = when {
-        !state.busy.isNullOrBlank() -> state.busy
-        state.engine == null || state.engine == PiEngineSession.EngineState.Starting ->
-            tr("正在连接本地引擎…", "Connecting local engine…")
-        else -> null
-    }
 
     // 全高无界聊天画布：从屏幕最顶端（状态栏下方）一路铺到最底端（手势条区域），
     // 顶部双悬浮胶囊与底部悬浮工作台上下对称叠在柔和渐隐羽化层之上。
     Box(Modifier.fillMaxSize().imePadding().clipToBounds()) {
             if (emptyTranscript) {
                 ChatEmptyWelcome(
-                    statusNote = emptyStatusNote,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(top = topChromeHeightDp, bottom = dockHeightDp),

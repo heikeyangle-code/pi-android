@@ -255,15 +255,12 @@ internal data class TailObservation(
 )
 
 /**
- * 极简空对话欢迎画布（纯前端 UI 层，零修改官方 Pi SDK）：
- *  - 视觉焦点：`80dp` 双层纸面留白框承载自定义 Pi 形象徽标，在深/浅主题下立体克制；
- *  - 自然问候：无边框、无多余胶囊（工作区已在顶栏、模型已在底栏），按本地时段轻声问候；
- *  - 零跳动过渡：下方预留固定高度静谧状态槽，仅在引擎连接/会话加载期淡入 `PiSpinner + 文案`，
- *    就绪后平滑淡出，图标与问候语纹丝不动。
+ * 极简空对话欢迎画布（纯静态无状态组件，零修改官方 Pi SDK）：
+ *  - `80dp` 双层纸面留白框承载自定义 Pi 形象徽标，在深/浅主题下立体克制；
+ *  - 一行按本地时段自然问候（工作区、模型与引擎状态均由顶栏/底栏承载，零冗余动画与重组）。
  */
 @Composable
 internal fun ChatEmptyWelcome(
-    statusNote: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
@@ -313,39 +310,6 @@ internal fun ChatEmptyWelcome(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        Spacer(Modifier.height(10.dp))
-        var retainedStatusNote by remember { mutableStateOf(statusNote.orEmpty()) }
-        if (!statusNote.isNullOrBlank()) {
-            retainedStatusNote = statusNote
-        }
-        androidx.compose.foundation.layout.Box(
-            modifier = Modifier.heightIn(min = 22.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            androidx.compose.animation.AnimatedVisibility(
-                visible = !statusNote.isNullOrBlank(),
-                enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(160)),
-                exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(220)),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    app.pi.ui.components.PiSpinner(
-                        size = 12.dp,
-                        strokeWidth = 1.5.dp,
-                        color = palette.muted,
-                    )
-                    Text(
-                        text = retainedStatusNote,
-                        style = PiTheme.text.meta,
-                        color = palette.muted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
     }
 }
 
