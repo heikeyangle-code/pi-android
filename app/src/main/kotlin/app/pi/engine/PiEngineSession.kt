@@ -1208,6 +1208,19 @@ class PiEngineSession(
     }
 
     /**
+     * Append an ephemeral `ctx.ui.notify` / runtime notice into the active chat stream,
+     * matching official Pi 1.7.0 `interactive-mode.js` (`showExtensionNotify`).
+     */
+    fun appendExtensionNotice(text: String, tone: app.pi.protocol.Notice.Tone) {
+        synchronized(transcriptLock) {
+            val change = transcript.appendExtensionNotice(text, tone)
+            if (change != app.pi.protocol.TranscriptChange.None) {
+                publish(change)
+            }
+        }
+    }
+
+    /**
      * Rebuild the whole stream from pi's persisted entries (`get_entries`).
      *
      * `TranscriptReducer.seedFromHistory` resets the reducer first (`reset()`) and

@@ -816,4 +816,62 @@ class TranscriptReducerTest {
         assertFalse(done.streaming)
         assertEquals(2_000L, done.elapsedMs)
     }
+
+    @Test
+    fun `appendExtensionNotice follows official Pi consecutive info replace and warning error append`() {
+        val r = TranscriptReducer { clock }
+        val c1 = r.appendExtensionNotice("Loading 1/2", Notice.Tone.Info)
+        assertTrue(c1 is TranscriptChange.Appended)
+        assertEquals(1, r.transcript.size)
+        val firstKey = r.transcript[0].key
+
+        // Consecutive trailing Info replaces in-place (official showStatus anti-spam)
+        clock += 500L
+        val c2 = r.appendExtensionNotice("Loading 2/2", Notice.Tone.Info)
+        assertTrue(c2 is TranscriptChange.Updated)
+        assertEquals(1, r.transcript.size)
+        val updated = r.transcript[0] as Notice
+        assertEquals(firstKey, updated.key)
+        assertEquals("Loading 2/2", updated.text)
+
+        // Warning always appends a new row and breaks the trailing Info slot
+        clock += 500L
+        val c3 = r.appendExtensionNotice("Careful", Notice.Tone.Warning)
+        assertTrue(c3 is TranscriptChange.Appended)
+        assertEquals(2, r.transcript.size)
+        assertEquals(Notice.Tone.Warning, (r.transcript[1] as Notice).tone)
+
+        // Error always appends
+        clock += 500L
+        val c4 = r.appendExtensionNotice("Failed", Notice.Tone.Error)
+        assertTrue(c4 is TranscriptChange.Appended)
+        assertEquals(3, r.transcript.size)
+
+        // Next Info after non-Info appends a fresh row
+        clock += 500L
+        val c5 = r.appendExtensionNotice("Done", Notice.Tone.Info)
+        assertTrue(c5 is TranscriptChange.Appended)
+        assertEquals(4, r.transcript.size)
+
+        // Blank notice is ignored
+        assertEquals(TranscriptChange.None, r.appendExtensionNotice("   ", Notice.Tone.Info))
+        assertEquals(4, r.transcript.size)
+    }
+
+    @Test
+    fun `parseUsage and turnUsage preserve Pi 1_7_0 imageOutput token count`() {
+        val r = TranscriptReducer { clock }
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"img 1"}],"usage":{"input":100,"output":20,"imageOutput":512,"totalTokens":632,"cost":0.02}}}""",
+            ),
+        )
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"img 2"}],"usage":{"input":50,"output":10,"imageOutput":256,"totalTokens":316,"cost":0.01}}}""",
+            ),
+        )
+        assertEquals(256L, r.lastUsage?.imageOutput)
+        assertEquals(768L, r.turnUsage?.imageOutput)
+    }
 }

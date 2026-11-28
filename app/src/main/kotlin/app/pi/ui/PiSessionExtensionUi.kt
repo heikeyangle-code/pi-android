@@ -52,11 +52,18 @@ internal fun PiSessionViewModel.onExtensionHostEvent(event: HostSignal.Event) {
     when (event.name) {
         "ui.notify" -> {
             val d = event.data as? JsonObject ?: return
-            pushNotice(
-                // Chrome keeps ANSI escapes for the snackbar to paint (`ExtensionUiHost`).
-                message = d.hostStr("message").orEmpty(),
-                tone = noticeToneOf(d.hostStr("tone")),
-            )
+            val message = d.hostStr("message").orEmpty()
+            if (message.isBlank()) return
+            val tone = noticeToneOf(d.hostStr("tone"))
+            // 100% 对齐官方 Pi 1.7.0（interactive-mode.js showExtensionNotify）：
+            // 直接写入当前会话内存聊天流底部（不落盘 .jsonl，连续 info 原地覆盖、长内容折叠、支持复制），
+            // 仅在引擎会话尚未建立时退回顶部轻提示。
+            val activeSession = session
+            if (activeSession != null) {
+                activeSession.appendExtensionNotice(message, tone)
+            } else {
+                pushNotice(message = message, tone = tone)
+            }
         }
 
         // 官方 resetExtensionUI 末尾恢复默认标题（空标题 = 回到屏幕自己的名字）。

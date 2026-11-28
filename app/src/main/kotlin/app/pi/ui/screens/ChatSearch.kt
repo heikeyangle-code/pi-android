@@ -117,7 +117,7 @@ internal fun searchHits(item: TranscriptItem, query: String): Boolean = when (it
     is ModelChange -> false
     is SkillInvocation -> listOf(item.skillName, item.body).joinToString("\n").hits(query)
     is ErrorText -> listOfNotNull(item.message, item.detail).joinToString("\n").hits(query)
-    is Notice -> item.text.hits(query)
+    is Notice -> app.pi.ui.extension.chromeText(item.text).hits(query)
     is DateSeparator -> false
 }
 

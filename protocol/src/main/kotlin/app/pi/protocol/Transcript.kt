@@ -937,6 +937,8 @@ class TranscriptReducer(
      * reports its own row unconditionally, so the normal path never needs it.
      */
     private var suppressedToolUpdate: Int? = null
+    /** Key of the latest ephemeral `Info` status row from `ctx.ui.notify`, for Pi's consecutive-tail replace rule. */
+    private var lastExtensionStatusKey: String? = null
 
     /**
      * The **unpublished** tail of a running tool call's output, per call id.
@@ -1167,6 +1169,31 @@ class TranscriptReducer(
      * applied so a caller that echoes the expanded form (or a re-render of one)
      * gets the same card as history replay.
      */
+    /**
+     * Append an ephemeral runtime/extension notification (`ctx.ui.notify` / diagnostics)
+     * into the in-memory chat stream, matching official Pi 1.7.0 `interactive-mode.js`:
+     *  - Never persisted to `.jsonl`; cleared on session switch/reset.
+     *  - Consecutive `Info` notifications at the tail of the stream replace the previous
+     *    trailing `Info` status row in-place (`showStatus` anti-spam rule).
+     *  - `Warning` and `Error` always append a fresh row.
+     */
+    fun appendExtensionNotice(text: String, tone: Notice.Tone): TranscriptChange {
+        if (text.isBlank()) return TranscriptChange.None
+        val ts = now()
+        if (tone == Notice.Tone.Info) {
+            val lastIdx = items.lastIndex
+            val last = items.getOrNull(lastIdx)
+            if (last is Notice && last.tone == Notice.Tone.Info && last.key == lastExtensionStatusKey) {
+                items[lastIdx] = last.copy(ts = ts, text = text)
+                return TranscriptChange.Updated(lastIdx)
+            }
+        }
+        maybeDaySeparator(ts)
+        val key = nextKey("notify")
+        lastExtensionStatusKey = if (tone == Notice.Tone.Info) key else null
+        return append(Notice(key = key, ts = ts, text = text, tone = tone))
+    }
+
     fun onUserPrompt(text: String, images: List<PiImage> = emptyList()): TranscriptChange {
         val ts = now()
         maybeDaySeparator(ts)
@@ -1987,6 +2014,7 @@ class TranscriptReducer(
         }
         lastToolPublishAt[event.toolCallId] = now
         suppressedToolUpdate = null
+        lastExtensionStatusKey = null
         // This publication materialises the row — the only point at which the accumulated
         // text becomes a `String` — and the accumulator is dropped with it, so the next
         // chunk starts from what was just published.
