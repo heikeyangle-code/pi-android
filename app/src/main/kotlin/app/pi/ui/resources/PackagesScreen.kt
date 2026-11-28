@@ -617,7 +617,7 @@ internal fun PackagesScreen(
                                         }
                                     }
                                     badgeSpec?.let { (label, tone) ->
-                                        TagPill(label = label, tone = tone)
+                                        TagPill(text = label, tone = tone)
                                     }
                                 }
 

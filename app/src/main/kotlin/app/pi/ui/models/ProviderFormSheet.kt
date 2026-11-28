@@ -785,7 +785,7 @@ private fun CompatEditorFields(
             } else {
                 tr(
                     "更多高级兼容字段可通过外部「导入 / 编辑 models.json」配置，此处保存时无损保留。",
-                    "More advanced compat fields can be edited via "Import / Edit models.json" and are preserved lossless here.",
+                    "More advanced compat fields can be edited via \"Import / Edit models.json\" and are preserved lossless here.",
                 )
             },
             style = PiTheme.text.meta,
