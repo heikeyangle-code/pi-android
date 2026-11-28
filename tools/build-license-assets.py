@@ -230,7 +230,7 @@ SOURCE_HAN_SERIF_LICENCE_TITLE = f"Source Han Serif CN {SOURCE_HAN_SERIF_VERSION
 # **byte-identical** (same sha256), so the text we distribute has not changed across
 # any of those bumps.
 PI_LICENCE_URL = "https://raw.githubusercontent.com/earendil-works/pi/v{version}/LICENSE"
-PI_LICENCE_SHA256 = "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
+PI_LICENCE_SHA256 = "4780a6e9d4b2213784027092b8f305d49059728495fab1ddb93f3c6fb8b283c7"
 
 # proroot — the one component in the APK that is neither open source nor a standard
 # licence text, and the one whose licence is carried by **no artifact this app ships**:
@@ -370,9 +370,9 @@ PI_ENGINE_NOTICES = [
         "8 × @earendil-works/* 包",
         engine_version(),
         "MIT",
-        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这八个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2/v1.0.0/v1.0.1/v1.0.2/v1.0.3/v1.5.2/v1.6.0/v1.6.1 各标签的 LICENSE 逐字节相同，sha256 未变）",
+        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这八个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v1.7.0 将版权行更新为 Copyright (c) 2026 Earendil Inc.，仍为 MIT，sha256 {PI_LICENCE_SHA256[:8]}…）",
         f"https://raw.githubusercontent.com/earendil-works/pi/v{engine_version()}/LICENSE",
-        "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
+        "4780a6e9d4b2213784027092b8f305d49059728495fab1ddb93f3c6fb8b283c7",
     ),
     (
         "3 × @aws-sdk/* 包",

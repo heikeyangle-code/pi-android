@@ -350,7 +350,7 @@ private fun Hub(
                         HubRow(
                             icon = Icons.Filled.Tune,
                             title = tr("包安装与命令选项", "Package Install & Command Options"),
-                            summary = tr("/skill:name 命令开关、npm 镜像命令、安装遥测", "/skill:name command toggle, npm mirror command, install telemetry"),
+                            summary = tr("包安装镜像、/skill:name 命令、扩展启动参数、分析共享", "Package install mirror, /skill:name commands, startup flags, analytics"),
                             badge = null,
                             onClick = onOpenCommandSettings,
                         )

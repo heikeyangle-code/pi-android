@@ -5,10 +5,10 @@ pi 引擎依赖的许可与版权声明来源
 同一 monorepo、同一载荷里的兄弟包、或上游仓库。
 下面是逐个核到的位置。每一项的 sha256 都是实际抓到的字节，可以复核，不需要相信这段话。
 
-  8 × @earendil-works/* 包  （1.6.1，MIT）
-      正文与版权声明见列表里的『pi 引擎 1.6.1（MIT）』那一份：这八个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v1.6.1 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2/v1.0.0/v1.0.1/v1.0.2/v1.0.3/v1.5.2/v1.6.0/v1.6.1 各标签的 LICENSE 逐字节相同，sha256 未变）
-      来源    https://raw.githubusercontent.com/earendil-works/pi/v1.6.1/LICENSE
-      sha256  0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48
+  8 × @earendil-works/* 包  （1.7.0，MIT）
+      正文与版权声明见列表里的『pi 引擎 1.7.0（MIT）』那一份：这八个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v1.7.0 标签逐字节核对；v1.7.0 将版权行更新为 Copyright (c) 2026 Earendil Inc.，仍为 MIT，sha256 4780a6e9…）
+      来源    https://raw.githubusercontent.com/earendil-works/pi/v1.7.0/LICENSE
+      sha256  4780a6e9d4b2213784027092b8f305d49059728495fab1ddb93f3c6fb8b283c7
 
   3 × @aws-sdk/* 包  （见上表，Apache-2.0）
       正文见列表里的『Apache-2.0』。AWS SDK 的 LICENSE 就是 Apache-2.0 模板本身，不含逐包版权行；同一载荷里 19 个 @aws-sdk 包有 16 个带该文件，与上游逐字节相同

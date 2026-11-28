@@ -85,6 +85,7 @@ const internals = [
   ["extensions/mcp/cli.js", ["runMcpCommand"], "mcp.mjs"],
   ["extensions/mcp/config.js", ["loadMcpConfig", "updateMcpServerConfig", "addMcpServerConfig", "removeMcpServerConfig"], "mcp.mjs"],
   ["core/mcp-servers.js", ["validateMcpServerConfig"], "mcp.mjs"],
+  ["core/auth-storage.js", ["FileAuthStorageBackend"], "mcp.mjs"],
   ["extensions/mcp/runtime.js", ["McpServerConnection", "createDefaultTransport", "McpOAuthCredentialStore", "McpServerLog", "McpSignInCancelledError", "signInMcpServer"], "mcp.mjs"],
 ];
 for (const [rel, names, who] of internals) {

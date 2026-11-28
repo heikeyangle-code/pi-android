@@ -1049,6 +1049,28 @@ try {
     );
     await h.call("settings.set", { method: "setNotice", params: ["reasoningDrops", false] });
 
+    // Pi 1.7.0：enableInstallTelemetry 已移除；enableAnalytics / npmCommand 保持完整支持。
+    const removedTelemetry = await h.call("settings.set", { method: "setEnableInstallTelemetry", params: [false] });
+    expect(
+      "Pi 1.7.0 settings.set(setEnableInstallTelemetry) 返回错误（上游已移除安装遥测）",
+      removedTelemetry.ok === false,
+      JSON.stringify(removedTelemetry),
+    );
+    const analyticsOn = await h.call("settings.set", { method: "setEnableAnalytics", params: [true] });
+    expect(
+      "Pi 1.7.0 settings.set(setEnableAnalytics) 正常写入",
+      analyticsOn.ok && analyticsOn.data?.effective?.enableAnalytics === true,
+      JSON.stringify(analyticsOn.data?.effective?.enableAnalytics),
+    );
+    await h.call("settings.set", { method: "setEnableAnalytics", params: [false] });
+    const npmMirror = await h.call("settings.set", { method: "setNpmCommand", params: [["npm", "--registry=https://registry.npmmirror.com"]] });
+    expect(
+      "Pi 1.7.0 settings.set(setNpmCommand) 正常写入自定义镜像参数",
+      npmMirror.ok && Array.isArray(npmMirror.data?.effective?.npmCommand) && npmMirror.data.effective.npmCommand[1] === "--registry=https://registry.npmmirror.com",
+      JSON.stringify(npmMirror.data?.effective?.npmCommand),
+    );
+    await h.call("settings.set", { method: "setNpmCommand", params: [undefined] });
+
     const { formatDroppedReasoningNotice, formatCacheWarmingNotice, formatCacheMissNotice } = await import(
       pathToFileURL(join(here, "../../app/src/main/assets/guest/sdk-host/controller.mjs")).href
     );

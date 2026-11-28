@@ -464,6 +464,8 @@ internal fun ProviderSheet(
                                         when {
                                             configured && provider.statusSource == "stored" && !provider.usingOAuth ->
                                                 TagPill(tr("已保存在 auth.json", "Saved in auth.json"), tone = palette.success)
+                                            !configured && provider.statusSource == "stored" && !provider.usingOAuth ->
+                                                TagPill(tr("已保存（未解析）", "Saved (unresolved)"), tone = palette.warning)
                                             configured && provider.statusSource == "environment" ->
                                                 TagPill(tr("环境变量", "Environment"), tone = palette.success)
                                             configured && provider.statusSource == "runtime" ->
@@ -642,7 +644,7 @@ internal fun ProviderSheet(
 
             // ---- 4. 高级配置与凭据管理 ----
             item(key = "advanced-actions") {
-                val canLogout = configured && (provider.statusSource == "stored" || provider.usingOAuth)
+                val canLogout = provider.statusSource == "stored" || (configured && provider.usingOAuth)
                 ModelsCard {
                     Column {
                         Row(

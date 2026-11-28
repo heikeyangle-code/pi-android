@@ -13,6 +13,7 @@ data class TokenUsage(
     val cacheRead: Long? = null,
     val cacheWrite: Long? = null,
     val reasoning: Long? = null,
+    val imageOutput: Long? = null,
     val totalTokens: Long? = null,
     val cost: Double? = null,
 )
@@ -666,6 +667,7 @@ object PiEvents {
         cacheRead = o.long("cacheRead"),
         cacheWrite = o.long("cacheWrite"),
         reasoning = o.long("reasoning"),
+        imageOutput = o.long("imageOutput"),
         totalTokens = o.long("totalTokens"),
         cost = o.dbl("cost"),
     )

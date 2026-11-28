@@ -72,6 +72,12 @@ class PiSettingsFormattingTest {
             assertEquals(JsonPrimitive(false), s!!.defaultValue)
         }
         assertEquals(null, PiSettingsCatalog.byKey["showCacheMissNotices"])
+        // Pi 1.7.0 removed enableInstallTelemetry (core/telemetry.js); keep enableAnalytics opt-in.
+        assertEquals(null, PiSettingsCatalog.byKey["enableInstallTelemetry"])
+        assertEquals(null, PiSettingsCatalog.piOwnedKeys["enableInstallTelemetry"])
+        assertNotNull(PiSettingsCatalog.byKey["npmCommand"])
+        assertNotNull(PiSettingsCatalog.byKey["enableSkillCommands"])
+        assertNotNull(PiSettingsCatalog.byKey["app.extensions.args"])
     }
 
     @Test

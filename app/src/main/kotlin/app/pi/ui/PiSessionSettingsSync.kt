@@ -285,7 +285,6 @@ private fun PiSessionViewModel.sdkSetterFor(key: String): Pair<String, List<Json
         "enableSkillCommands" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setEnableSkillCommands" to listOf(JsonPrimitive(it)) }
         "images.autoResize" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setImageAutoResize" to listOf(JsonPrimitive(it)) }
         "images.blockImages" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setBlockImages" to listOf(JsonPrimitive(it)) }
-        "enableInstallTelemetry" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setEnableInstallTelemetry" to listOf(JsonPrimitive(it)) }
         "enableAnalytics" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setEnableAnalytics" to listOf(JsonPrimitive(it)) }
         "defaultProjectTrust" -> (raw as? JsonPrimitive)?.content?.let { "setDefaultProjectTrust" to listOf(JsonPrimitive(it)) }
         "shellPath" -> (raw as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }?.let { "setShellPath" to listOf(JsonPrimitive(it)) }

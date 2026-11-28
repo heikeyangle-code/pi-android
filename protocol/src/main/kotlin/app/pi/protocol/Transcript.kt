@@ -678,6 +678,7 @@ private fun addUsage(total: TokenUsage?, next: TokenUsage): TokenUsage = TokenUs
     cacheRead = sumReported(total?.cacheRead, next.cacheRead),
     cacheWrite = sumReported(total?.cacheWrite, next.cacheWrite),
     reasoning = sumReported(total?.reasoning, next.reasoning),
+    imageOutput = sumReported(total?.imageOutput, next.imageOutput),
     totalTokens = sumReported(total?.totalTokens, next.totalTokens),
     cost = sumReported(total?.cost, next.cost),
 )

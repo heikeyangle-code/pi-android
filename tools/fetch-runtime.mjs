@@ -287,8 +287,26 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  *  4. **契约与依赖核查**：`core/slash-commands.js`、`theme/{dark,light}.json`、`utils/image-resize-core.js`、
  *     `core/session-manager.d.ts`、`modes/rpc/rpc-types.d.ts` 零破坏；`pi-mcp` 仅增量导出 `toMcpModelContent` /
  *     `createMcpResultSchema`；3 个 `@aws-sdk/*` 补丁升级，许可证资产与引擎锁文件同步更新。
+ *
+ * ## pi 1.6.1 → 1.7.0（2026-11-28；升级评审由 `tools/pi-upgrade-audit.mjs` + 逐包 diff 复核）
+ *
+ *  1. **破坏性移除安装遥测（`enableInstallTelemetry`）**：
+ *     - 上游移除了 `core/telemetry.js`、`enableInstallTelemetry` 设置项、`SettingsManager.getEnableInstallTelemetry()` /
+ *       `setEnableInstallTelemetry()` 与 `PI_TELEMETRY`；保留可选的 `enableAnalytics`（默认关闭）。
+ *     - App 已移除 `PiSettingsRegistry.kt` / `PiSessionSettingsSync.kt` / `ResourcesHubScreen.kt` 中的 `enableInstallTelemetry`，
+ *       并将「包安装与命令选项」独立重构为现代专页 `PackageCommandOptionsScreen`（修复重复标题与旧列表编辑器）。
+ *  2. **`models.json` 解析错误纳入 `diagnostics`（#12523）与用量/认证同步**：
+ *     - `createAgentSessionServices()` 将无效 `models.json` 报告为 `diagnostics` warning；宿主 `controller.mjs`
+ *       已统一经 `takeUnreportedDiagnostics()` 上报并补齐 `test.mjs` 断言。
+ *     - `protocol` `TokenUsage` 同步新增可选 `imageOutput` 字段（对齐 `core/usage-totals.js`）；`ProviderConnectSheet`
+ *       适配 `getProviderAuthStatus()` 对解析失败的 `!command` 凭据返回 `{ configured: false, source: "stored" }`。
+ *     - `!!` 命令输出排除出上下文估算、GitHub Copilot prompt caching / cache warming、codemode Radius 生图与
+ *       `{ aspectRatio, size }`、默认模型更新（Cloudflare / Ant Ling / Qwen）均由新版 SDK 原生继承；OSC 7577 桌面终端恢复不适用移动端。
+ *  3. **契约与许可证核查**：`core/slash-commands.js`、`theme/{dark,light}.json`、`utils/image-resize-core.js`、
+ *     `core/project-trust.js`、`core/session-manager.d.ts` 零破坏；`contract.mjs` 补登记 `core/auth-storage.js`；
+ *     v1.7.0 根 `LICENSE` 版权行更新为 `Copyright (c) 2026 Earendil Inc.`（仍为 MIT，sha256 `4780a6e9…`），许可证资产同步刷新。
  */
-const PI_VERSION = "1.6.1";
+const PI_VERSION = "1.7.0";
 
 /**
  * proroot — the optional second container runtime, and the only artifact here whose

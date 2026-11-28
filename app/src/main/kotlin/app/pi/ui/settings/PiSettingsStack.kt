@@ -431,6 +431,7 @@ fun PiSettingsStack(
         currentGroup == "messages" -> "messages" to 1
         currentGroup == "compaction" -> "compaction" to 1
         currentGroup == "retry" -> "retry" to 1
+        currentGroup == "resources" -> "resources-options" to (if (resources) 2 else 1)
         currentGroup != null -> "group:$currentGroup" to (if (resources) 2 else 1)
         resources -> "resources" to 1
         else -> "home" to 0
@@ -598,6 +599,18 @@ fun PiSettingsStack(
                         groupId = null
                         highlightKey = null
                     },
+                    highlightKey = highlightKey,
+                )
+                route == "resources-options" -> PackageCommandOptionsScreen(
+                    store = activeStore,
+                    freshness = rowsEpoch,
+                    contentPadding = contentPadding,
+                    onSettingWritten = handleSettingWritten,
+                    onBack = {
+                        groupId = null
+                        highlightKey = null
+                    },
+                    onRestartEngine = { restartPrompt = true },
                     highlightKey = highlightKey,
                 )
 
