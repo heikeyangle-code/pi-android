@@ -927,11 +927,23 @@ fun ModelsScreen(
         }
 
         form?.let { req ->
+            val providerHints = remember(d.providers, d.models) {
+                d.providers.associate { p ->
+                    val sampleModel = d.models.firstOrNull { it.provider == p.id }
+                    p.id to BuiltinProviderHint(
+                        defaultBaseUrl = sampleModel?.baseUrl?.takeIf { it.isNotBlank() },
+                        defaultApi = sampleModel?.api?.takeIf { it.isNotBlank() },
+                        externalAuthConfigured = p.configured,
+                        externalAuthSource = p.statusSource,
+                    )
+                }
+            }
             ProviderFormSheet(
                 initial = req.form,
                 isNew = req.isNew,
                 customIds = customIds,
                 knownIds = builtinIds,
+                providerHints = providerHints,
                 host = host,
                 onDismiss = { form = null },
                 onDone = { form = null; reload++; onLoadAvailableModels() },

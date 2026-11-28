@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -51,10 +52,18 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.launch
 
+/** 内置供应商参考信息与外层凭据状态（从已加载的 SDK 状态透传，避免表单误导）。 */
+internal data class BuiltinProviderHint(
+    val defaultBaseUrl: String?,
+    val defaultApi: String?,
+    val externalAuthConfigured: Boolean,
+    val externalAuthSource: String?,
+)
+
 /**
  * 自定义供应商（`models.json`）表单：新增、编辑，以及覆盖内置供应商。
- * 字段严格对齐 Pi 1.6.1 SDK `ProviderConfigSchema` / `ModelDefinitionSchema`：
- * `name` `baseUrl` `api` `apiKey` `authHeader` `headers` `compat` `models[]`（含单模型 `api`/`baseUrl`/`compat`），
+ * 字段严格对齐 Pi 1.7.0 SDK `ProviderConfigSchema` / `ModelDefinitionSchema`：
+ * `name` `baseUrl` `api` `apiKey` `authHeader` `headers` `compat` `models[]`（含单模型 `api`/`baseUrl`/`compat`/`cost.imageOutput`），
  * 其余高级字段（`modelOverrides`、`oauth`、`samplingParams` 等）无损往返保留。
  */
 @Composable
@@ -63,6 +72,7 @@ internal fun ProviderFormSheet(
     isNew: Boolean,
     customIds: Set<String>,
     knownIds: Set<String>,
+    providerHints: Map<String, BuiltinProviderHint> = emptyMap(),
     host: () -> ModelsHost?,
     onDismiss: () -> Unit,
     onDone: () -> Unit,
@@ -79,6 +89,8 @@ internal fun ProviderFormSheet(
 
     val idCheck = if (isNew) checkNewProviderId(f.id, customIds, knownIds) else IdCheck.Ok
     val overriding = if (isNew) idCheck == IdCheck.OverridesBuiltin else initial.id in knownIds
+    val activeId = (if (isNew) f.id else initial.id).trim()
+    val activeHint = providerHints[activeId]
     val palette = PiTheme.palette
 
     fun updateModel(i: Int, fn: (ProviderForm.ModelForm) -> ProviderForm.ModelForm) {
@@ -154,22 +166,48 @@ internal fun ProviderFormSheet(
                                 style = PiTheme.text.meta,
                                 color = palette.error,
                             )
-                            IdCheck.OverridesBuiltin -> Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = palette.accent.copy(alpha = 0.09f),
-                                border = BorderStroke(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.30f)),
+                            IdCheck.OverridesBuiltin -> Unit
+                            else -> Unit
+                        }
+                    }
+                    if (overriding) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = palette.accent.copy(alpha = 0.08f),
+                            border = BorderStroke(PiSpacing.hairlineThin, palette.accent.copy(alpha = 0.28f)),
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 Text(
                                     tr(
-                                        "「${f.id.trim()}」是内置供应商：保存后只覆盖你填写的地址与请求头，内置模型照常可用。",
-                                        "\"${f.id.trim()}\" is a built-in provider: saving overrides only the URL and headers while keeping built-in models.",
+                                        "「$activeId」是内置供应商：保存后只覆盖你填写的 Base URL、请求头或兼容参数，内置模型照常可用。",
+                                        "\"$activeId\" is a built-in provider: saving overrides Base URL, headers, or compat while keeping built-in models.",
                                     ),
                                     style = PiTheme.text.meta,
                                     color = palette.accent,
-                                    modifier = Modifier.padding(10.dp),
+                                )
+                                val defaultRef = buildList {
+                                    activeHint?.defaultBaseUrl?.let { add(tr("默认地址：$it", "Default URL: $it")) }
+                                    activeHint?.defaultApi?.let { add(tr("默认协议：$it", "Default API: $it")) }
+                                }.joinToString(" · ")
+                                if (defaultRef.isNotEmpty()) {
+                                    Text(
+                                        defaultRef,
+                                        style = PiTheme.text.monoSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Text(
+                                    tr(
+                                        "提示：下方「接口协议 (api)」仅作为自定义模型的默认协议，不会改变内置模型；要改单个内置模型的协议，请在底部「添加模型」填入同名 ID 并指定协议。",
+                                        "Note: top-level API only sets the default for custom models below and never changes built-in models; to switch a built-in model's API, add a model entry below with the same ID.",
+                                    ),
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            else -> Unit
                         }
                     }
                     LabeledField(
@@ -178,14 +216,18 @@ internal fun ProviderFormSheet(
                         placeholder = tr("列表里展示的名称，留空则使用 ID", "Name shown in list; defaults to ID"),
                     ) { f = f.copy(name = it) }
                     LabeledField(
-                        label = "Base URL",
+                        label = if (overriding) tr("Base URL（留空沿用内置默认）", "Base URL (blank = built-in default)") else "Base URL",
                         value = f.baseUrl,
-                        placeholder = "https://api.example.com/v1",
+                        placeholder = activeHint?.defaultBaseUrl ?: "https://api.example.com/v1",
                     ) { f = f.copy(baseUrl = it) }
 
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            tr("接口协议（api）", "API Protocol"),
+                            if (overriding) {
+                                tr("自定义模型默认协议（api · 不影响内置模型）", "Default API for Custom Models (does not affect built-in)")
+                            } else {
+                                tr("接口协议（api）", "API Protocol")
+                            },
                             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
                         )
@@ -197,7 +239,10 @@ internal fun ProviderFormSheet(
                                 PiSettingsChip(
                                     text = c.label,
                                     active = f.api == c.api,
-                                    onClick = { f = f.copy(api = c.api) },
+                                    onClick = {
+                                        // 再次点击当前已选协议可取消选择，恢复留空。
+                                        f = f.copy(api = if (f.api == c.api) "" else c.api)
+                                    },
                                 )
                             }
                         }
@@ -205,7 +250,7 @@ internal fun ProviderFormSheet(
                     LabeledField(
                         label = tr("协议标识（可自填或留空）", "Protocol Identifier (custom or blank)"),
                         value = f.api,
-                        placeholder = "openai-completions",
+                        placeholder = activeHint?.defaultApi ?: "openai-completions",
                     ) { f = f.copy(api = it) }
                 }
             }
@@ -215,8 +260,40 @@ internal fun ProviderFormSheet(
             ModelsCard {
                 Column {
                     Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (activeHint?.externalAuthConfigured == true) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = palette.success.copy(alpha = 0.09f),
+                                border = BorderStroke(PiSpacing.hairlineThin, palette.success.copy(alpha = 0.30f)),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Filled.CheckCircle,
+                                        contentDescription = null,
+                                        tint = palette.success,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Text(
+                                        tr(
+                                            "外层凭据已保存（优先级高于此处）· 下方 API Key 留空即可自动沿用，无需重复粘贴。",
+                                            "Credentials are already saved (takes priority over models.json) — leave API Key blank below.",
+                                        ),
+                                        style = PiTheme.text.meta,
+                                        color = palette.success,
+                                    )
+                                }
+                            }
+                        }
                         LabeledField(
-                            label = "API Key",
+                            label = if (activeHint?.externalAuthConfigured == true) {
+                                tr("API Key（可选 · 留空沿用外层凭据）", "API Key (optional · blank uses saved key)")
+                            } else {
+                                tr("API Key（可选）", "API Key (optional)")
+                            },
                             value = f.apiKey,
                             placeholder = tr("直接粘贴密钥、环境变量名，或 !命令", "Paste key, env var name, or !command"),
                             secret = true,
@@ -265,7 +342,10 @@ internal fun ProviderFormSheet(
                     ModelsDivider()
                     PiSettingsToggleRow(
                         title = tr("用 Authorization Bearer 头发密钥", "Send Key via Authorization Bearer"),
-                        supporting = tr("对应 authHeader；关闭则使用协议默认认证头", "Maps to authHeader; off uses the protocol default header"),
+                        supporting = tr(
+                            "对应 authHeader；开启需已配置 API Key（含外层凭据），无密钥本地服务请保持关闭",
+                            "Maps to authHeader; requires a resolved API key (keep off for keyless local servers)",
+                        ),
                         checked = f.authHeader,
                         onCheckedChange = { f = f.copy(authHeader = it) },
                     )
@@ -365,6 +445,7 @@ internal fun ProviderFormSheet(
                     m.costOutput.isNotBlank() ||
                     m.costCacheRead.isNotBlank() ||
                     m.costCacheWrite.isNotBlank() ||
+                    m.costImageOutput.isNotBlank() ||
                     m.compat.hasUiFields ||
                     m.compat.extra.isNotEmpty()
                 var modelAdvancedOpen by remember(i) { mutableStateOf(hasModelAdvanced) }
@@ -469,6 +550,11 @@ internal fun ProviderFormSheet(
                                         LabeledField(tr("缓存读", "Cache Read"), m.costCacheRead, "0.3", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costCacheRead = v) } }
                                         LabeledField(tr("缓存写", "Cache Write"), m.costCacheWrite, "3.75", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costCacheWrite = v) } }
                                     }
+                                    LabeledField(
+                                        tr("图片输出（可选 · imageOutput）", "Image Output (optional · imageOutput)"),
+                                        m.costImageOutput,
+                                        tr("留空沿用输出价", "Defaults to output rate"),
+                                    ) { v -> updateModel(i) { it.copy(costImageOutput = v) } }
                                 }
                                 ModelsDivider()
                                 CompatEditorFields(
@@ -566,12 +652,29 @@ internal fun ProviderFormSheet(
                         when (val r = f.toJson()) {
                             is ProviderForm.Result.Invalid -> error = r.message
                             is ProviderForm.Result.Ok -> {
+                                if (!ProviderForm.hasEffectiveOverride(r.json)) {
+                                    error = ProviderForm.formatSdkProviderError(
+                                        raw = "must specify \"baseUrl\", \"headers\", \"compat\", \"modelOverrides\", or \"models\"",
+                                        providerId = id,
+                                        overriding = overriding,
+                                        hasExistingOverride = !isNew && overriding,
+                                    )
+                                    return@PiPrimaryButton
+                                }
                                 saving = true
                                 error = null
                                 scope.launch {
                                     runCatching { h.advanced.setProvider(id, r.json) }
                                         .onSuccess { onDone() }
-                                        .onFailure { error = it.message; saving = false }
+                                        .onFailure {
+                                            error = ProviderForm.formatSdkProviderError(
+                                                raw = it.message,
+                                                providerId = id,
+                                                overriding = overriding,
+                                                hasExistingOverride = !isNew && overriding,
+                                            )
+                                            saving = false
+                                        }
                                 }
                             }
                         }
@@ -673,16 +776,21 @@ private fun CompatEditorFields(
             onChange = { onChange(compat.copy(supportsStore = it)) },
         )
 
-        if (compat.extra.isNotEmpty()) {
-            Text(
+        Text(
+            if (compat.extra.isNotEmpty()) {
                 tr(
                     "其余 ${compat.extra.size} 项高级 compat 字段（如 ${compat.extra.keys.take(3).joinToString(", ")}）将在保存时原样保留。",
                     "${compat.extra.size} additional compat field(s) (${compat.extra.keys.take(3).joinToString(", ")}) will be preserved on save.",
-                ),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+                )
+            } else {
+                tr(
+                    "更多高级兼容字段可通过外部「导入 / 编辑 models.json」配置，此处保存时无损保留。",
+                    "More advanced compat fields can be edited via "Import / Edit models.json" and are preserved lossless here.",
+                )
+            },
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

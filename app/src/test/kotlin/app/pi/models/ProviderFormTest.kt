@@ -120,4 +120,47 @@ class ProviderFormTest {
         assertNull(m["api"])
         assertNull(m["baseUrl"])
     }
+
+    @Test
+    fun hasEffectiveOverrideMatchesPiSdkRules() {
+        val apiOnly = (ProviderForm(id = "deepseek", api = "openai-responses").toJson() as ProviderForm.Result.Ok).json
+        assertTrue(!ProviderForm.hasEffectiveOverride(apiOnly))
+
+        val nameOnly = (ProviderForm(id = "deepseek", name = "My DeepSeek").toJson() as ProviderForm.Result.Ok).json
+        assertTrue(!ProviderForm.hasEffectiveOverride(nameOnly))
+
+        val withBaseUrl = (ProviderForm(id = "deepseek", baseUrl = "https://proxy.example.com/v1").toJson() as ProviderForm.Result.Ok).json
+        assertTrue(ProviderForm.hasEffectiveOverride(withBaseUrl))
+
+        val withCompat = (ProviderForm(id = "deepseek", compat = ProviderForm.CompatForm(supportsStore = false)).toJson() as ProviderForm.Result.Ok).json
+        assertTrue(ProviderForm.hasEffectiveOverride(withCompat))
+    }
+
+    @Test
+    fun imageOutputCostRoundTripsAndErrorFormatterCleansDuplicatePrefix() {
+        val form = ProviderForm(
+            id = "img-gw",
+            baseUrl = "https://api.example.com/v1",
+            models = listOf(
+                ProviderForm.ModelForm(
+                    id = "img-model",
+                    costInput = "1.5",
+                    costOutput = "6",
+                    costImageOutput = "30",
+                ),
+            ),
+        )
+        val out = (form.toJson() as ProviderForm.Result.Ok).json
+        val parsed = ProviderForm.from("img-gw", out)
+        assertEquals("30", parsed.models.first().costImageOutput)
+
+        val formatted = ProviderForm.formatSdkProviderError(
+            raw = "Provider \"deepseek\": Provider deepseek: must specify \"baseUrl\", \"headers\", \"compat\", \"modelOverrides\", or \"models\".",
+            providerId = "deepseek",
+            overriding = true,
+            hasExistingOverride = false,
+        )
+        assertTrue(!formatted.contains("Provider deepseek:"))
+        assertTrue(formatted.contains("deepseek"))
+    }
 }

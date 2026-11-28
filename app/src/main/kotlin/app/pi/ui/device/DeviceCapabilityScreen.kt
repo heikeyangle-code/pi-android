@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessibilityNew
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -73,6 +74,8 @@ import app.pi.bridge.PiNotificationListener
 import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.components.PiDialog
+import app.pi.ui.components.PiPrimaryButton
+import app.pi.ui.components.PiSecondaryButton
 import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
 import app.pi.ui.components.PiDialogBody
@@ -81,7 +84,6 @@ import app.pi.ui.components.PiType
 import app.pi.ui.rememberPiScreenVisible
 import app.pi.ui.settings.PiSettingsCard
 import app.pi.ui.settings.PiSettingsCardShape
-import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsHairline
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.PiSettingsSwitch
@@ -416,9 +418,11 @@ fun DeviceCapabilityScreen(
                                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        PiSettingsChip(
-                                            text = if (snapshot.hasLocation) tr("定位已授", "Location Granted") else tr("授予定位", "Grant Location"),
-                                            active = snapshot.hasLocation,
+                                        PiSecondaryButton(
+                                            label = if (snapshot.hasLocation) tr("定位已授", "Location Granted") else tr("授予定位", "Grant Location"),
+                                            leadingIcon = if (snapshot.hasLocation) Icons.Filled.CheckCircle else null,
+                                            tone = if (snapshot.hasLocation) palette.success else palette.accent,
+                                            compact = true,
                                             onClick = {
                                                 if (!snapshot.hasLocation) {
                                                     permissionRequester.launch(
@@ -430,9 +434,11 @@ fun DeviceCapabilityScreen(
                                                 }
                                             },
                                         )
-                                        PiSettingsChip(
-                                            text = if (snapshot.hasCamera) tr("手电筒已授", "Flashlight Granted") else tr("相机(手电筒)", "Camera (Flashlight)"),
-                                            active = snapshot.hasCamera,
+                                        PiSecondaryButton(
+                                            label = if (snapshot.hasCamera) tr("手电筒已授", "Flashlight Granted") else tr("相机(手电筒)", "Camera (Flashlight)"),
+                                            leadingIcon = if (snapshot.hasCamera) Icons.Filled.CheckCircle else null,
+                                            tone = if (snapshot.hasCamera) palette.success else palette.accent,
+                                            compact = true,
                                             onClick = {
                                                 if (!snapshot.hasCamera) {
                                                     permissionRequester.launch(arrayOf(Manifest.permission.CAMERA))
@@ -629,8 +635,10 @@ private fun CapabilityHeroCard(
                     }
                 }
                 if (enabledCount > 0) {
-                    PiSettingsChip(
-                        text = tr("全部关闭", "Disable All"),
+                    PiSecondaryButton(
+                        label = tr("全部关闭", "Disable All"),
+                        tone = palette.error,
+                        compact = true,
                         onClick = onDisableAll,
                     )
                 }
@@ -878,15 +886,16 @@ private fun CapabilityCardRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                PiSettingsChip(
-                    text = if (sessionPaused) tr("恢复本会话", "Resume for Session") else tr("本会话暂停", "Pause for Session"),
-                    active = sessionPaused,
+                PiSecondaryButton(
+                    label = if (sessionPaused) tr("恢复本会话", "Resume for Session") else tr("本会话暂停", "Pause for Session"),
+                    tone = if (sessionPaused) palette.accent else null,
+                    compact = true,
                     onClick = { onToggleSessionPause(!sessionPaused) },
                 )
                 if (issueHint != null && actionLabel.isNotEmpty()) {
-                    PiSettingsChip(
-                        text = actionLabel,
-                        active = true,
+                    PiPrimaryButton(
+                        label = actionLabel,
+                        compact = true,
                         onClick = onAction,
                     )
                 }
@@ -1020,13 +1029,26 @@ private fun BridgeDiagnosticsCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    PiSettingsChip(
-                        text = if (restarting) tr("重启中…", "Restarting…") else tr("重启本地桥接", "Restart Bridge"),
-                        active = !running,
-                        onClick = onRestartBridge,
-                    )
-                    PiSettingsChip(
-                        text = tr("刷新日志", "Refresh Log"),
+                    if (!running) {
+                        PiPrimaryButton(
+                            label = if (restarting) tr("重启中…", "Restarting…") else tr("重启本地桥接", "Restart Bridge"),
+                            leadingIcon = Icons.Filled.Refresh,
+                            compact = true,
+                            enabled = !restarting,
+                            onClick = onRestartBridge,
+                        )
+                    } else {
+                        PiSecondaryButton(
+                            label = if (restarting) tr("重启中…", "Restarting…") else tr("重启本地桥接", "Restart Bridge"),
+                            leadingIcon = Icons.Filled.Refresh,
+                            compact = true,
+                            enabled = !restarting,
+                            onClick = onRestartBridge,
+                        )
+                    }
+                    PiSecondaryButton(
+                        label = tr("刷新日志", "Refresh Log"),
+                        compact = true,
                         onClick = onRefresh,
                     )
                 }

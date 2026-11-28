@@ -112,13 +112,16 @@ data class ProviderForm(
         val costOutput: String = "",
         val costCacheRead: String = "",
         val costCacheWrite: String = "",
+        /** Pi 1.7.0 新增：图片输出单价（美元 / 百万 token，留空则沿用 `output`）。 */
+        val costImageOutput: String = "",
         /** `cost` 里表单没有界面的字段（`tiers` 分档价），原样带回。 */
         val costExtra: JsonObject = JsonObject(emptyMap()),
         /** 单模型级 `compat` 覆盖。 */
         val compat: CompatForm = CompatForm(),
         val extra: JsonObject = JsonObject(emptyMap()),
     ) {
-        val hasCost: Boolean get() = listOf(costInput, costOutput, costCacheRead, costCacheWrite).any { it.isNotBlank() }
+        val hasCost: Boolean
+            get() = listOf(costInput, costOutput, costCacheRead, costCacheWrite, costImageOutput).any { it.isNotBlank() }
     }
 
     /** 若该 provider 在 `models.json` 里配置了 `modelOverrides`（用于覆盖内置模型参数），返回覆盖条数。 */
@@ -210,6 +213,7 @@ data class ProviderForm(
             "output" to parse(m.costOutput, tr("输出价格", "Output price")),
             "cacheRead" to parse(m.costCacheRead, tr("缓存读取价格", "Cache read price")),
             "cacheWrite" to parse(m.costCacheWrite, tr("缓存写入价格", "Cache write price")),
+            "imageOutput" to parse(m.costImageOutput, tr("图片输出价格", "Image output price")),
         )
         parsed.forEach { (_, v) -> if (v is CostResult.Invalid) return v }
         val byKey = parsed.associate { (k, v) -> k to (v as Double?) }
@@ -223,6 +227,8 @@ data class ProviderForm(
         }
         val out = LinkedHashMap<String, JsonElement>(m.costExtra)
         for (key in listOf("input", "output", "cacheRead", "cacheWrite")) out[key] = number(byKey[key] ?: 0.0)
+        val imgOut = byKey["imageOutput"]
+        if (imgOut != null) out["imageOutput"] = number(imgOut) else out.remove("imageOutput")
         return CostResult.Value(JsonObject(out))
     }
 
@@ -241,7 +247,7 @@ data class ProviderForm(
                 val knownModel = setOf("id", "name", "api", "baseUrl", "reasoning", "input", "contextWindow", "maxTokens", "cost", "compat")
                 val costObj = m["cost"] as? JsonObject
                 val mCompatObj = m["compat"] as? JsonObject
-                val costKeys = setOf("input", "output", "cacheRead", "cacheWrite")
+                val costKeys = setOf("input", "output", "cacheRead", "cacheWrite", "imageOutput")
                 val input = (m["input"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
                 // input 里除了 text/image 还有别的值时，原样留在 extra，不被「只认图片」吞掉。
                 val inputIsPlain = input.all { it == "text" || it == "image" }
@@ -258,6 +264,7 @@ data class ProviderForm(
                     costOutput = str(costObj?.get("output")),
                     costCacheRead = str(costObj?.get("cacheRead")),
                     costCacheWrite = str(costObj?.get("cacheWrite")),
+                    costImageOutput = str(costObj?.get("imageOutput")),
                     costExtra = JsonObject(costObj?.filterKeys { it !in costKeys }.orEmpty()),
                     compat = CompatForm.from(mCompatObj),
                     extra = JsonObject(
@@ -304,6 +311,71 @@ data class ProviderForm(
         private fun put(into: MutableMap<String, JsonElement>, key: String, value: String) {
             val v = value.trim()
             if (v.isEmpty()) into.remove(key) else into[key] = JsonPrimitive(v)
+        }
+
+        /**
+         * 对齐 Pi 1.7.0 `provider-composer.js` (`applyModelsJson`) 的硬校验规则：
+         * 仅填 `name` 或顶层 `api` 对内置供应商无效，至少必须提供以下字段之一：
+         * `baseUrl`、`headers`、`compat`、`modelOverrides`、`models`、`apiKey`、`oauth`、`authHeader`。
+         */
+        fun hasEffectiveOverride(json: JsonObject): Boolean {
+            val models = json["models"] as? JsonArray
+            val overrides = json["modelOverrides"] as? JsonObject
+            return !models.isNullOrEmpty() ||
+                json.containsKey("baseUrl") ||
+                json.containsKey("headers") ||
+                json.containsKey("compat") ||
+                !overrides.isNullOrEmpty() ||
+                json.containsKey("apiKey") ||
+                json.containsKey("oauth") ||
+                json.containsKey("authHeader")
+        }
+
+        /**
+         * 清理 Pi SDK 返回的重复前缀（如 `Provider "deepseek": Provider deepseek: ...`）
+         * 并把高频校验错误翻译成可操作的中文 / 英文提示。
+         */
+        fun formatSdkProviderError(
+            raw: String?,
+            providerId: String,
+            overriding: Boolean,
+            hasExistingOverride: Boolean,
+        ): String {
+            val cleaned = raw.orEmpty()
+                .trim()
+                .replace(Regex("""^Provider\s+"?[^":]+"?:\s*Provider\s+"?[^":]+"?:\s*"""), "")
+                .replace(Regex("""^Provider\s+"?[^":]+"?:\s*"""), "")
+                .trim()
+            return when {
+                cleaned.contains("must specify \"baseUrl\", \"headers\", \"compat\", \"modelOverrides\", or \"models\"") -> {
+                    val base = if (overriding) {
+                        tr(
+                            "Pi 要求至少填写 Base URL、请求头、兼容参数、API Key 或自定义模型中的一项。注意：单独修改显示名或顶层「接口协议 (api)」不会改变「$providerId」的内置模型；如需为某个内置模型更换协议，请在下方「添加模型」填入同名模型 ID 并指定协议。",
+                            "Pi requires at least one of Base URL, headers, compat, API key, or custom models. Note: changing only Display Name or top-level API does not change built-in models for \"$providerId\" — add a model entry below with the same ID to override a built-in model's protocol.",
+                        )
+                    } else {
+                        tr(
+                            "至少需要填写 Base URL、请求头、兼容参数、API Key 或自定义模型中的一项。",
+                            "Specify at least one of Base URL, headers, compat, API key, or custom models.",
+                        )
+                    }
+                    if (hasExistingOverride) {
+                        base + tr(" 如需恢复内置默认，请点左下角「移除覆盖」。", " To restore defaults, tap \"Remove\" at the bottom left.")
+                    } else {
+                        base
+                    }
+                }
+                cleaned.contains("authHeader requires a resolved API key") -> tr(
+                    "已开启「Authorization Bearer 头发密钥」，但当前未能解析出 API Key。请在外层凭据或上方 API Key 中填写密钥，或关闭该开关。",
+                    "\"Authorization Bearer\" requires a resolved API key. Add one in credentials/above, or turn this switch off.",
+                )
+                cleaned.contains("\"baseUrl\" is required when defining custom models") -> tr(
+                    "定义了自定义模型时，必须填写供应商 Base URL（或在每个模型的高级配置中填写单模型 Base URL）。",
+                    "\"Base URL\" is required when defining custom models (either at provider level or per model).",
+                )
+                cleaned.isNotEmpty() -> cleaned
+                else -> tr("保存失败，请检查配置。", "Save failed. Please check your configuration.")
+            }
         }
 
         private fun str(e: JsonElement?): String = (e as? JsonPrimitive)?.content.orEmpty()

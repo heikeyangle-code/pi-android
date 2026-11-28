@@ -2970,6 +2970,7 @@ class TranscriptReducer(
     /** Drop everything (new session, or a different session was opened). */
     fun reset() {
         items.clear()
+        lastExtensionStatusKey = null
         toolIndexByCallId.clear()
         diffIndexByCallId.clear()
         runningCompactionIndex = null

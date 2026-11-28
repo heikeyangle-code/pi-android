@@ -15,9 +15,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -40,6 +46,7 @@ import app.pi.packages.PiResourceCatalog.SourceKind
 import app.pi.packages.PiResourceCatalog.Type
 import app.pi.ui.PiSeg
 import app.pi.ui.PiTopBar
+import app.pi.ui.components.PiSecondaryButton
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
 import app.pi.ui.models.ModelsCard
@@ -49,7 +56,6 @@ import app.pi.ui.models.ModelsSearchBar
 import app.pi.ui.models.ModelsSectionLabel
 import app.pi.ui.models.TagRow
 import app.pi.ui.settings.PiInfoNote
-import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.PiSettingsSwitch
 import app.pi.ui.theme.PiSpacing
@@ -304,12 +310,41 @@ private fun rowTags(row: ResourceRow, layer: Layer): List<String> = buildList {
 /** 项目层的三态，用 pi 的符号：继承（跟随全局）/ + 加载 / − 屏蔽；点一下走一格。 */
 @Composable
 private fun OverrideChip(item: PiResourceCatalog.Item, effective: Boolean, enabled: Boolean, onClick: () -> Unit) {
-    val (glyph, word) = when (item.override) {
-        Override.Load -> "+" to tr("加载", "Load")
-        Override.Unload -> "−" to tr("屏蔽", "Block")
-        Override.Inherit -> (if (effective) "●" else "○") to (if (effective) tr("继承·开", "Inherit · On") else tr("继承·关", "Inherit · Off"))
+    val palette = PiTheme.palette
+    val (glyph, word, tone) = when (item.override) {
+        Override.Load -> Triple("+", tr("加载", "Load"), palette.accent)
+        Override.Unload -> Triple("−", tr("屏蔽", "Block"), palette.error)
+        Override.Inherit -> Triple(
+            if (effective) "●" else "○",
+            if (effective) tr("继承·开", "Inherit · On") else tr("继承·关", "Inherit · Off"),
+            null,
+        )
     }
-    PiSettingsChip(text = word, glyph = glyph, active = item.override != Override.Inherit, enabled = enabled, onClick = onClick)
+    val fg = tone ?: MaterialTheme.colorScheme.onSurfaceVariant
+    val bg = tone?.copy(alpha = 0.12f) ?: MaterialTheme.colorScheme.surfaceContainerHigh
+    val border = tone?.copy(alpha = 0.36f) ?: MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(9.dp),
+        color = bg,
+        border = BorderStroke(PiSpacing.hairlineThin, border),
+        modifier = Modifier.alpha(if (enabled) 1f else 0.45f),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(glyph, style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold), color = fg)
+            Text(
+                word,
+                style = PiTheme.text.meta.copy(fontWeight = if (tone != null) FontWeight.SemiBold else FontWeight.Medium),
+                color = fg,
+                maxLines = 1,
+            )
+        }
+    }
 }
 
 // ------------------------------------------------------------------ 详情
@@ -346,10 +381,21 @@ private fun ResourceDetailSheet(
             Fact(tr("路径", "Path"), item.path)
             // 内置扩展（`builtin:名字`）没有文件可看；其余都能打开：自己的可改/可删，来自包的只读。
             if (item.path.startsWith("/")) {
-                Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    PiSettingsChip(text = tr("打开 / 编辑文件", "Open / Edit File"), onClick = { onEdit(item.path) })
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PiSecondaryButton(
+                        label = tr("打开 / 编辑文件", "Open / Edit File"),
+                        leadingIcon = Icons.Filled.Edit,
+                        compact = true,
+                        onClick = { onEdit(item.path) },
+                    )
                     if (userOwnedPath) {
-                        PiSettingsChip(text = tr("删除", "Delete"), onClick = { askDelete = true })
+                        PiSecondaryButton(
+                            label = tr("删除", "Delete"),
+                            leadingIcon = Icons.Filled.Delete,
+                            tone = PiTheme.palette.error,
+                            compact = true,
+                            onClick = { askDelete = true },
+                        )
                     }
                 }
             }

@@ -59,6 +59,7 @@ import app.pi.packages.PiResourceCatalog.Type
 import app.pi.ui.PiSeg
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
+import app.pi.ui.components.PiSecondaryButton
 import app.pi.ui.components.PiSheet
 import app.pi.ui.models.ModelsCard
 import app.pi.ui.models.ModelsCardPadding
@@ -68,7 +69,6 @@ import app.pi.ui.models.PrimaryAction
 import app.pi.ui.models.TagPill
 import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiInfoNote
-import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.PiSettingsToggleRow
 import app.pi.ui.settings.settingsPageTopInset
@@ -575,17 +575,24 @@ private fun TrustCard(model: ResourcesModel, onSettingsSynced: () -> Unit) {
                         },
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    PiSettingsChip(
-                        text = if (expanded) tr("收起", "Collapse") else tr("更改", "Change"),
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PiSecondaryButton(
+                        label = if (expanded) tr("收起", "Collapse") else tr("更改信任", "Change"),
+                        tone = if (expanded) PiTheme.palette.accent else null,
+                        compact = true,
                         onClick = {
                             expanded = !expanded
                             if (expanded) policyExpanded = false
                         },
                     )
-                    PiSettingsChip(
-                        text = tr("默认策略：${policyLabel(st.defaultProjectTrust)}", "Default Policy: ${policyLabel(st.defaultProjectTrust)}"),
-                        active = policyExpanded,
+                    PiSecondaryButton(
+                        label = tr("默认策略：${policyLabel(st.defaultProjectTrust)}", "Default: ${policyLabel(st.defaultProjectTrust)}"),
+                        tone = if (policyExpanded) PiTheme.palette.accent else null,
+                        compact = true,
+                        modifier = Modifier.weight(1f),
                         onClick = {
                             policyExpanded = !policyExpanded
                             if (policyExpanded) expanded = false

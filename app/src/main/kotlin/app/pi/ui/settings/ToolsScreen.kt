@@ -33,6 +33,7 @@ import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
+import app.pi.ui.components.PiSecondaryButton
 import app.pi.ui.models.ModelsCardPadding
 import app.pi.ui.models.TagPill
 import app.pi.ui.theme.PiSpacing
@@ -316,12 +317,16 @@ internal fun ToolsScreen(
                                 .padding(horizontal = PiSettingsMetrics.pageHorizontal),
                             horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
                         ) {
-                            PiSettingsChip(
-                                text = tr("设为新会话默认", "Save as Default"),
+                            PiSecondaryButton(
+                                label = tr("设为新会话默认", "Save as Default"),
+                                compact = true,
+                                modifier = Modifier.weight(1f),
                                 onClick = { saveCurrentAsDefault() },
                             )
-                            PiSettingsChip(
-                                text = tr("恢复默认 4 项", "Reset Defaults"),
+                            PiSecondaryButton(
+                                label = tr("恢复默认 4 项", "Reset Defaults"),
+                                compact = true,
+                                modifier = Modifier.weight(1f),
                                 onClick = { resetToDefaultTools() },
                             )
                         }
